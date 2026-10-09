@@ -621,6 +621,29 @@ export default function TeacherAppraisal() {
           </div>
         )}
 
+        {/* Attitude Form Feedback Banner (When Evaluated by Coordinator) */}
+        {existingAppraisal?.attitudeForm?.ratings && (
+          <div className="bg-gradient-to-r from-teal-50 via-emerald-50 to-teal-50 border border-teal-200 p-4 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-teal-900 shadow-xs">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-teal-600 text-white rounded-xl shadow-xs">
+                <Award className="w-5 h-5" />
+              </div>
+              <div>
+                <h4 className="text-xs font-black uppercase tracking-wider text-teal-900">
+                  Attitude & Competency Evaluation Score
+                </h4>
+                <p className="text-xs text-teal-700 mt-0.5 font-medium">
+                  Coordinator Score: <strong className="font-bold text-teal-950">{existingAppraisal.attitudeForm.totalScore}/{existingAppraisal.attitudeForm.maxScore || 80} Marks</strong> ({existingAppraisal.attitudeForm.percentage}%) • Average: <strong className="font-bold text-teal-950">{existingAppraisal.attitudeForm.average}/5.0</strong>
+                  {existingAppraisal.attitudeForm.remarks && ` • Remarks: "${existingAppraisal.attitudeForm.remarks}"`}
+                </p>
+              </div>
+            </div>
+            <span className="text-[10px] font-bold px-3 py-1 bg-teal-100 border border-teal-300 text-teal-800 rounded-full shrink-0">
+              Evaluated by Coordinator
+            </span>
+          </div>
+        )}
+
         {/* Tab Navigation */}
         <div className="flex border-b border-slate-200 overflow-x-auto gap-2 no-scrollbar bg-white p-2 rounded-2xl shadow-xs border border-slate-200/80">
           {tabs.map(t => {

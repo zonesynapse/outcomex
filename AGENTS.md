@@ -1,5 +1,28 @@
 ## Summary of Changes
 
+### 515. Fix Uncaught ReferenceError: Download is not defined (`src/pages/ExamCell/ExamFormSettingPage.jsx`)
+- **Goal**: Fix runtime ReferenceError `Download is not defined` thrown on line 932 when rendering revaluation application subject attachments in `ExamFormSettingPage.jsx`.
+- **Root Cause**: The `<Download size={11} />` icon component was rendered in the Revaluation applications table to allow Exam Cell officers to download student-submitted scripts, but `Download` was omitted from the `lucide-react` import statement.
+- **Changes**:
+  - `src/pages/ExamCell/ExamFormSettingPage.jsx`: Added `Download` to the `lucide-react` named imports.
+- **Result**: Production build succeeds cleanly in 8.31s with 0 errors.
+
+### 514. HOD Attitude & Competency Evaluation Form Questionnaire (`src/pages/AppraisalReviews.jsx`, `hr-portal/src/pages/AppraisalReviews.jsx`)
+- **Goal**:
+  1. Add an **"Attitude Evaluation"** button in `AppraisalReviews.jsx` next to the "Review" button for HOD and Faculty appraisals.
+  2. Implement the full authentic **A.2 College — Head of Department (HoD) / CKGEI — Coordinator / HoD Evaluation Questionnaire** (18 statements with 1 to 5 rating scale: 1 SD, 2 D, 3 N, 4 A, 5 SA, and bottom Remarks / Evidence field).
+  3. Calculate live Total Score (out of 90), Average Rating (out of 5.0), and progress tracker.
+  4. Save evaluation payloads to Firestore in real time (`attitudeEvaluation` and `attitudeForm`) and reflect evaluated score badges across table and review headers.
+- **Changes**:
+  - `src/pages/AppraisalReviews.jsx`:
+    - Defined `HOD_ATTITUDE_EVALUATION_QUESTIONS` (18 questions with title & statement matching the questionnaire sheet) and `ATTITUDE_RATING_OPTIONS` (1 to 5).
+    - Added attitude evaluation modal states, handlers (`handleOpenAttitudeModal`, `handleSaveAttitudeEvaluation`, `handleSetAllRatings`, `handleSetRating`).
+    - Added `Attitude Evaluation` action button next to `Review` in the requests table with evaluated score badge.
+    - Added `Attitude Evaluation` button in the Selected Appraisal header view.
+    - Rendered the complete interactive Questionnaire modal with table layout, remarks/evidence textarea, and Firestore persistence.
+  - `hr-portal/src/pages/AppraisalReviews.jsx`:
+    - Added `HOD_ATTITUDE_EVALUATION_QUESTIONS` (18 items) and updated dynamic target collection routing and modal header titles for HOD appraisals.
+
 ### 513. Removal of Blank Default Subject Row & Read-Only Photocopy Enforcement (`src/pages/student/Revaluation.jsx`)
 - **Goal**:
   1. Prevent candidates from seeing a blank editable row (`Sem #`, `Subject Code`, `Subject Title`) when all photocopy subjects are already applied or when no photocopy application exists.

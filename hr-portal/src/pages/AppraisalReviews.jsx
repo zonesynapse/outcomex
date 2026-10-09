@@ -1,5 +1,4 @@
-import {
-  Paperclip, useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useLocation } from "react-router-dom";
 import { auth, db } from "../firebase";
 import { collection, onSnapshot, doc, updateDoc, getDoc } from "firebase/firestore";
@@ -7,13 +6,206 @@ import { onAuthStateChanged } from "firebase/auth";
 import {
   User, CheckCircle2, AlertCircle, FileText, ChevronRight,
   Eye, Check, Search, Building2, Filter, Loader2, ArrowLeft,
-  X, Star, Printer, Undo2, Award, Sparkles, Send, GraduationCap, Library
+  X, Star, Printer, Undo2, Award, Sparkles, Send, GraduationCap, Library, Paperclip, Save
 } from "lucide-react";
 import HRLayout from "../components/HRLayout";
 import { getSchoolShortName, isSameInstitution } from "../utils/appraisalScore";
 import { loadAppraisalEvidences } from "../utils/appraisalStorage";
 import { jsPDF } from "jspdf";
 import "jspdf-autotable";
+
+export const HOD_ATTITUDE_EVALUATION_QUESTIONS = [
+  {
+    id: 1,
+    title: "Ownership & Accountability",
+    statement: "Takes full responsibility for their role, decisions, and outcomes."
+  },
+  {
+    id: 2,
+    title: "Emotional Intelligence & Collaboration",
+    statement: "Stays self-aware and empathetic, and works effectively with others."
+  },
+  {
+    id: 3,
+    title: "Customer Focus & Empathy",
+    statement: "Keeps the learner, parent, or stakeholder at the centre of their decisions."
+  },
+  {
+    id: 4,
+    title: "Resilience & Adaptability",
+    statement: "Remains steady and effective through setbacks, pressure, and change."
+  },
+  {
+    id: 5,
+    title: "Growth Mindset",
+    statement: "Continuously improves, quickly acquires new skills, and unlearns old habits where needed."
+  },
+  {
+    id: 6,
+    title: "Inquisitiveness & Creative Problem-Solving",
+    statement: "Asks probing questions, evaluates answers critically, and solves problems in novel ways."
+  },
+  {
+    id: 7,
+    title: "AI Literacy & Judgment",
+    statement: "Proactively learns and uses AI tools, and exercises judgment on when to trust AI output versus human intuition."
+  },
+  {
+    id: 8,
+    title: "Integrity & Ethical Judgement",
+    statement: "Acts with consistent honesty, fairness, and principled conduct."
+  },
+  {
+    id: 9,
+    title: "Clarity in Communication",
+    statement: "Articulates ideas clearly and persuasively, in speech and in writing."
+  },
+  {
+    id: 10,
+    title: "Change Agent & Innovation Torch-Bearer",
+    statement: "Actively drives improvement in pedagogy, curriculum, or department practice."
+  },
+  {
+    id: 11,
+    title: "High Consulting Capability",
+    statement: "Advises students, peers, or the department with sound, well-reasoned judgment."
+  },
+  {
+    id: 12,
+    title: "Long-Term Vision & Sustainability",
+    statement: "Prioritises long-term vision and sustainability over short-term approaches."
+  },
+  {
+    id: 13,
+    title: "Analytical & Strategy Torch-Bearer",
+    statement: "Brings rigorous, evidence-based thinking to academic or departmental strategy."
+  },
+  {
+    id: 14,
+    title: "Decisive & Meritocratic",
+    statement: "Practises meritocracy, is decisive, and remains intolerant of mediocrity."
+  },
+  {
+    id: 15,
+    title: "Excellence-Building",
+    statement: "Builds a high-performance culture and strong teams, and champions process discipline for continual improvement."
+  },
+  {
+    id: 16,
+    title: "Systems Thinking (Departmental)",
+    statement: "Sees the interconnectedness of curriculum, faculty capability, student outcomes, and quality/accreditation requirements."
+  },
+  {
+    id: 17,
+    title: "Human-Centric Leadership",
+    statement: "Coaches and builds the capability of their team, and fosters psychological safety."
+  },
+  {
+    id: 18,
+    title: "Departmental Ownership",
+    statement: "Takes full accountability for department-level KRAs, quality outcomes, and compliance timelines."
+  }
+];
+
+export const TEACHER_ATTITUDE_EVALUATION_QUESTIONS = [
+  {
+    id: 1,
+    title: "Ownership & Accountability",
+    statement: "Takes full responsibility for their role, decisions, and outcomes."
+  },
+  {
+    id: 2,
+    title: "Emotional Intelligence & Collaboration",
+    statement: "Stays self-aware and empathetic, and works effectively with others."
+  },
+  {
+    id: 3,
+    title: "Customer Focus & Empathy",
+    statement: "Keeps the learner, parent, or stakeholder at the centre of their decisions."
+  },
+  {
+    id: 4,
+    title: "Resilience & Adaptability",
+    statement: "Remains steady and effective through setbacks, pressure, and change."
+  },
+  {
+    id: 5,
+    title: "Growth Mindset",
+    statement: "Continuously improves, quickly acquires new skills, and unlearns old habits where needed."
+  },
+  {
+    id: 6,
+    title: "Inquisitiveness & Creative Problem-Solving",
+    statement: "Asks probing questions, evaluates answers critically, and solves problems in novel ways."
+  },
+  {
+    id: 7,
+    title: "AI Literacy & Judgment",
+    statement: "Proactively learns and uses AI tools, and exercises judgment on when to trust AI output versus human intuition."
+  },
+  {
+    id: 8,
+    title: "Integrity & Ethical Judgement",
+    statement: "Acts with consistent honesty, fairness, and principled conduct."
+  },
+  {
+    id: 9,
+    title: "Clarity in Communication",
+    statement: "Articulates ideas clearly and persuasively, in speech and in writing."
+  },
+  {
+    id: 10,
+    title: "Diligence & Ownership",
+    statement: "Is consistently punctual and executes assigned duties thoroughly, flawlessly meeting KRAs."
+  },
+  {
+    id: 11,
+    title: "Learning & Applying (EdTech)",
+    statement: "Shows visible progress through IIY and by embracing EdTech in their work."
+  },
+  {
+    id: 12,
+    title: "Classroom EQ & Leadership",
+    statement: "Leads an attentive, engaged classroom, stays open and approachable, motivates students, and builds rapport with parents."
+  },
+  {
+    id: 13,
+    title: "Proactive",
+    statement: "Anticipates needs and acts ahead of requirements."
+  },
+  {
+    id: 14,
+    title: "Going the Extra Mile",
+    statement: "Consistently exceeds baseline expectations in their role."
+  },
+  {
+    id: 15,
+    title: "Change Agent & Innovation Torch-Bearer",
+    statement: "Actively drives improvement in pedagogy, curriculum, or department practice."
+  },
+  {
+    id: 16,
+    title: "High Consulting Capability",
+    statement: "Advises students, peers, or the department with sound, well-reasoned judgment."
+  }
+];
+
+export const ATTITUDE_EVALUATION_QUESTIONS = TEACHER_ATTITUDE_EVALUATION_QUESTIONS;
+
+export const getAttitudeQuestions = (app) => {
+  if (app?.formType === "hod") {
+    return HOD_ATTITUDE_EVALUATION_QUESTIONS;
+  }
+  return TEACHER_ATTITUDE_EVALUATION_QUESTIONS;
+};
+
+export const ATTITUDE_RATING_OPTIONS = [
+  { value: 1, label: "1 SD", fullTitle: "Strongly Disagree", points: 1 },
+  { value: 2, label: "2 D", fullTitle: "Disagree", points: 2 },
+  { value: 3, label: "3 N", fullTitle: "Neutral", points: 3 },
+  { value: 4, label: "4 A", fullTitle: "Agree", points: 4 },
+  { value: 5, label: "5 SA", fullTitle: "Strongly Agree", points: 5 }
+];
 
 const NON_TEACHING_EVALUATION_CATEGORIES = [
   { id: 1, text: "Perceptive to the needs of the student, faculty and institution" },
@@ -65,6 +257,13 @@ export default function AppraisalReviews() {
   const [nonTeachingSpecificComment, setNonTeachingSpecificComment] = useState("");
   const [nonTeachingRecommendation, setNonTeachingRecommendation] = useState("His / Her contribution to be appreciated and recommended");
   const [nonTeachingIncrementGrade, setNonTeachingIncrementGrade] = useState("A");
+
+  // Attitude Form States (Coordinator Evaluation for Teacher Appraisal - CKSPK / CKSPE)
+  const [attitudeModalOpen, setAttitudeModalOpen] = useState(false);
+  const [attitudeAppraisal, setAttitudeAppraisal] = useState(null);
+  const [attitudeRatings, setAttitudeRatings] = useState({});
+  const [attitudeRemarks, setAttitudeRemarks] = useState("");
+  const [savingAttitude, setSavingAttitude] = useState(false);
 
   const isSectionVisible = (id) => {
     const coreMainSections = new Set([
@@ -274,7 +473,7 @@ export default function AppraisalReviews() {
     return false;
   };
 
-    // Unified automated-score source for the review table:
+  // Unified automated-score source for the review table:
   // - Faculty appraisals store it in autoScore.breakdown (+ totals on autoScore)
   // - Teacher appraisals store it in evaluatedScore (part1Rows/part2Rows + totals)
   const reviewScore = useMemo(() => {
@@ -313,7 +512,8 @@ export default function AppraisalReviews() {
     return null;
   }, [selectedAppraisal]);
 
-  const appraisalTabs = useMemo(() => {    const baseTabs = [
+  const appraisalTabs = useMemo(() => {
+    const baseTabs = [
       { id: 1, name: "Profile & Workload" },
       { id: 2, name: "Subjects & Results" },
       { id: 3, name: "Academic Development" },
@@ -791,6 +991,181 @@ export default function AppraisalReviews() {
     setActioning(false);
   };
 
+  const handleOpenAttitudeModal = (app) => {
+    setAttitudeAppraisal(app);
+    if (app.attitudeForm?.ratings) {
+      setAttitudeRatings({ ...app.attitudeForm.ratings });
+      setAttitudeRemarks(app.attitudeForm.remarks || "");
+    } else {
+      setAttitudeRatings({});
+      setAttitudeRemarks("");
+    }
+    setAttitudeModalOpen(true);
+  };
+
+  const handleSelectAttitudeRating = (questionId, ratingValue) => {
+    setAttitudeRatings(prev => ({
+      ...prev,
+      [questionId]: ratingValue
+    }));
+  };
+
+  const handleSaveAttitudeForm = async () => {
+    if (!attitudeAppraisal) return;
+    setSavingAttitude(true);
+    try {
+      const activeQuestions = getAttitudeQuestions(attitudeAppraisal);
+      const ratedValues = Object.entries(attitudeRatings).map(([k, v]) => Number(v) || 0);
+      const totalScore = ratedValues.reduce((sum, v) => sum + v, 0);
+      const ratedCount = Object.keys(attitudeRatings).filter(k => attitudeRatings[k] > 0).length;
+      const maxScore = activeQuestions.length * 5;
+      const percentage = Math.round((totalScore / maxScore) * 1000) / 10;
+      const average = ratedCount > 0 ? (totalScore / ratedCount).toFixed(2) : "0.00";
+
+      const attitudePayload = {
+        ratings: attitudeRatings,
+        totalScore,
+        maxScore,
+        ratedCount,
+        percentage,
+        average,
+        remarks: attitudeRemarks.trim(),
+        evaluatedBy: currentUser?.displayName || currentUser?.email || "Coordinator",
+        evaluatorEmail: currentUser?.email || "",
+        evaluatorRole: userRole || "Coordinator",
+        evaluatedAt: attitudeAppraisal.attitudeForm?.evaluatedAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      const targetColl = attitudeAppraisal.formType === "hod"
+        ? "hod_appraisals"
+        : attitudeAppraisal.formType === "non_teaching"
+          ? "non_teaching_appraisals"
+          : attitudeAppraisal.formType === "teacher"
+            ? "teacher_appraisals"
+            : "faculty_appraisals";
+
+      await updateDoc(doc(db, targetColl, attitudeAppraisal.id), {
+        attitudeForm: attitudePayload,
+        attitudeEvaluation: attitudePayload,
+        updatedAt: new Date().toISOString()
+      });
+
+      // Synchronize in local appraisals list
+      setAppraisals(prev => prev.map(a => a.id === attitudeAppraisal.id ? { ...a, attitudeForm: attitudePayload, attitudeEvaluation: attitudePayload } : a));
+      if (selectedAppraisal?.id === attitudeAppraisal.id) {
+        setSelectedAppraisal(prev => ({ ...prev, attitudeForm: attitudePayload, attitudeEvaluation: attitudePayload }));
+      }
+
+      showToast(`Attitude Form saved successfully! (Score: ${totalScore}/${maxScore})`, "success");
+      setAttitudeModalOpen(false);
+    } catch (err) {
+      console.error("Error saving attitude form:", err);
+      showToast("Failed to save Attitude Form: " + (err.message || "Unknown error"), "error");
+    } finally {
+      setSavingAttitude(false);
+    }
+  };
+
+  const handlePrintAttitudePDF = (app, attitudeData) => {
+    if (!app) return;
+    const doc = new jsPDF("p", "pt", "a4");
+    const data = app.formData || app;
+    const attitude = attitudeData || app.attitudeForm || {};
+    const ratings = attitude.ratings || {};
+    const totalScore = attitude.totalScore || 0;
+    const maxScore = attitude.maxScore || (ATTITUDE_EVALUATION_QUESTIONS.length * 5);
+    const percentage = attitude.percentage || ((totalScore / maxScore) * 100).toFixed(1);
+
+    doc.setFont("Times", "bold");
+    doc.setFontSize(14);
+    const instTitle = (app.institution || data.institution || "CK GROUP OF INSTITUTIONS").toUpperCase();
+    doc.text(instTitle, 40, 45);
+
+    doc.setFontSize(11);
+    doc.setTextColor(28, 53, 94);
+    doc.text("STAFF ATTITUDE & COMPETENCY EVALUATION REPORT", 40, 65);
+
+    doc.setFont("Times", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(80, 80, 80);
+    doc.text(`Academic Session: ${app.academicYear || data.academicYear || "2024-2025"} | Generated on: ${new Date().toLocaleDateString()}`, 40, 80);
+
+    doc.setDrawColor(200, 200, 200);
+    doc.line(40, 90, 555, 90);
+
+    const staffInfo = [
+      ["Staff Name:", data.name || app.facultyName || "—", "Department:", data.department || app.department || "—"],
+      ["Designation:", data.designation || app.designation || "—", "Evaluated By:", attitude.evaluatedBy || "Coordinator"],
+      ["Total Score:", `${totalScore} / ${maxScore} (${percentage}%)`, "Evaluation Date:", attitude.evaluatedAt ? new Date(attitude.evaluatedAt).toLocaleDateString() : "—"]
+    ];
+
+    doc.autoTable({
+      startY: 100,
+      margin: { left: 40, right: 40 },
+      body: staffInfo,
+      theme: "plain",
+      styles: { font: "Times", fontSize: 9, cellPadding: 3 },
+      columnStyles: { 0: { fontStyle: "bold", width: 80 }, 2: { fontStyle: "bold", width: 90 } }
+    });
+
+    const tableRows = ATTITUDE_EVALUATION_QUESTIONS.map((q) => {
+      const val = Number(ratings[q.id]) || 0;
+      return [
+        q.id,
+        `${q.title}\n${q.statement}`,
+        val === 1 ? "✓" : "",
+        val === 2 ? "✓" : "",
+        val === 3 ? "✓" : "",
+        val === 4 ? "✓" : "",
+        val === 5 ? "✓" : ""
+      ];
+    });
+
+    doc.autoTable({
+      startY: doc.lastAutoTable.finalY + 15,
+      margin: { left: 40, right: 40 },
+      head: [["#", "Attitude & Statement", "1 SD", "2 D", "3 N", "4 A", "5 SA"]],
+      body: tableRows,
+      theme: "grid",
+      headStyles: {
+        fillColor: [28, 53, 94],
+        textColor: [255, 255, 255],
+        fontStyle: "bold",
+        halign: "center",
+        fontSize: 9
+      },
+      columnStyles: {
+        0: { halign: "center", width: 25 },
+        1: { halign: "left", width: 310, font: "Times", fontSize: 8 },
+        2: { halign: "center", width: 36, fontStyle: "bold" },
+        3: { halign: "center", width: 36, fontStyle: "bold" },
+        4: { halign: "center", width: 36, fontStyle: "bold" },
+        5: { halign: "center", width: 36, fontStyle: "bold" },
+        6: { halign: "center", width: 36, fontStyle: "bold" }
+      },
+      styles: { cellPadding: 4, overflow: "linebreak" }
+    });
+
+    let finalY = doc.lastAutoTable.finalY + 15;
+    if (finalY > 700) {
+      doc.addPage();
+      finalY = 50;
+    }
+
+    doc.setFont("Times", "bold");
+    doc.setFontSize(9);
+    doc.setTextColor(0, 0, 0);
+    doc.text("Coordinator Remarks:", 40, finalY);
+    doc.setFont("Times", "normal");
+    doc.text(attitude.remarks || "No specific remarks entered.", 40, finalY + 15);
+
+    doc.setFont("Times", "bold");
+    doc.text("Coordinator Signature", 400, finalY + 50);
+
+    doc.save(`Attitude_Evaluation_${(data.name || app.facultyName || "Teacher").replace(/\s+/g, "_")}.pdf`);
+  };
+
   const handlePrintPDF = (app) => {
     const data = app.formData || app;
     const doc = new jsPDF("p", "pt", "a4");
@@ -950,12 +1325,12 @@ export default function AppraisalReviews() {
 
               <div className="flex items-center gap-3">
                 <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${selectedAppraisal.formType === "hod"
-                    ? "bg-purple-500/20 text-purple-700 border border-purple-500/30"
-                    : selectedAppraisal.formType === "non_teaching"
-                      ? "bg-teal-500/20 text-teal-700 border border-teal-500/30"
-                      : selectedAppraisal.formType === "teacher"
-                        ? "bg-amber-500/20 text-amber-700 border border-amber-500/30"
-                        : "bg-indigo-500/20 text-indigo-700 border border-indigo-500/30"
+                  ? "bg-purple-500/20 text-purple-700 border border-purple-500/30"
+                  : selectedAppraisal.formType === "non_teaching"
+                    ? "bg-teal-500/20 text-teal-700 border border-teal-500/30"
+                    : selectedAppraisal.formType === "teacher"
+                      ? "bg-amber-500/20 text-amber-700 border border-amber-500/30"
+                      : "bg-indigo-500/20 text-indigo-700 border border-indigo-500/30"
                   }`}>
                   {selectedAppraisal.formType === "hod" ? "HOD Appraisal" : selectedAppraisal.formType === "non_teaching" ? "Non-Teaching Appraisal" : selectedAppraisal.formType === "teacher" ? "Teacher Appraisal" : "Faculty Appraisal"}
                 </span>
@@ -966,10 +1341,10 @@ export default function AppraisalReviews() {
                   <Printer size={14} /> Print PDF
                 </button>
                 <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${selectedAppraisal.status === "Approved" ? "bg-emerald-500/20 text-emerald-700 border border-emerald-500/30" :
-                    selectedAppraisal.status === "HOD_Approved" ? "bg-blue-500/20 text-blue-700 border border-blue-500/30" :
-                      selectedAppraisal.status === "Submitted" ? "bg-amber-500/20 text-amber-700 border border-amber-500/30" :
-                        selectedAppraisal.status === "Returned" ? "bg-rose-500/20 text-rose-700 border border-rose-500/30" :
-                          "bg-zinc-500/20 text-zinc-700 border border-zinc-500/30"
+                  selectedAppraisal.status === "HOD_Approved" ? "bg-blue-500/20 text-blue-700 border border-blue-500/30" :
+                    selectedAppraisal.status === "Submitted" ? "bg-amber-500/20 text-amber-700 border border-amber-500/30" :
+                      selectedAppraisal.status === "Returned" ? "bg-rose-500/20 text-rose-700 border border-rose-500/30" :
+                        "bg-zinc-500/20 text-zinc-700 border border-zinc-500/30"
                   }`}>
                   {selectedAppraisal.status === "HOD_Approved" ? "COORDINATOR APPROVED" : selectedAppraisal.status.replace("_", " ")}
                 </span>
@@ -1019,8 +1394,8 @@ export default function AppraisalReviews() {
                           key={subTab.id}
                           onClick={() => setActiveDetailsTab(subTab.id)}
                           className={`pb-3 px-3 text-xs font-bold whitespace-nowrap border-b-2 transition-all cursor-pointer ${activeDetailsTab === subTab.id
-                              ? "border-indigo-600 text-indigo-600"
-                              : "border-transparent text-zinc-500 hover:text-zinc-700"
+                            ? "border-indigo-600 text-indigo-600"
+                            : "border-transparent text-zinc-500 hover:text-zinc-700"
                             }`}
                         >
                           {subTab.name}
@@ -1411,6 +1786,37 @@ export default function AppraisalReviews() {
                     {/* Sub-Tab 1: Staff Profile & Experience */}
                     {activeDetailsTab === 1 && (
                       <div className="space-y-6 animate-fadeIn">
+                        {/* Attitude Form Evaluation Banner */}
+                        <div className="bg-gradient-to-r from-[#1c355e]/5 via-[#1c355e]/10 to-indigo-50 border border-[#1c355e]/20 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-xs">
+                          <div className="flex items-center gap-3">
+                            <div className="p-2.5 bg-[#1c355e] text-white rounded-xl shadow-xs">
+                              <Award size={18} />
+                            </div>
+                            <div>
+                              <div className="text-xs font-black text-[#1c355e] uppercase tracking-wider">
+                                Staff Attitude & Competency Evaluation
+                              </div>
+                              <div className="text-xs text-slate-600 mt-0.5 font-medium">
+                                {selectedAppraisal.attitudeForm?.totalScore !== undefined ? (
+                                  <span>
+                                    Evaluated: <strong className="text-teal-700 font-bold">{selectedAppraisal.attitudeForm.totalScore}/{selectedAppraisal.attitudeForm.maxScore || (ATTITUDE_EVALUATION_QUESTIONS.length * 5)} Marks</strong> ({selectedAppraisal.attitudeForm.percentage}%) • Avg: <strong className="text-slate-800">{selectedAppraisal.attitudeForm.average}/5.0</strong>
+                                  </span>
+                                ) : (
+                                  <span className="text-amber-700 font-semibold">Not yet evaluated by Coordinator</span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenAttitudeModal(selectedAppraisal)}
+                            className="px-4 py-2 bg-[#1c355e] hover:bg-[#142644] text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+                          >
+                            <Award size={14} />
+                            {selectedAppraisal.attitudeForm?.ratings ? "View / Edit Attitude Form" : "Fill Attitude Form"}
+                          </button>
+                        </div>
+
                         <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 space-y-4">
                           <span className="text-xs font-black text-indigo-950 uppercase tracking-wider block border-b border-zinc-200 pb-2">
                             Teacher Profile & Designation Details
@@ -2775,65 +3181,65 @@ export default function AppraisalReviews() {
                             </>
                           )}
 
-                        {/* Professional body memberships */}
-                        {isSectionVisible("sec_professional_memberships") && selectedAppraisal.formData?.professionalMembership && selectedAppraisal.formData.professionalMembership.length > 0 && (
-                          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
-                            <span className="text-xs font-black text-slate-800 block uppercase">
-                              {getSectionTitle("sec_professional_memberships", "4.2 Membership in Professional Bodies")}
-                            </span>
-                            {getSectionDescription("sec_professional_memberships") && (
-                              <p className="text-[10px] text-zinc-400 font-semibold uppercase">{getSectionDescription("sec_professional_memberships")}</p>
-                            )}
-                            <div className="space-y-1">
-                              {selectedAppraisal.formData.professionalMembership.map((row, idx) => (
-                                <div key={idx} className="bg-white p-2.5 rounded-lg border border-zinc-150 flex justify-between text-xs items-center">
-                                  <span className="font-bold text-slate-700">{row.name}</span>
-                                  <div className="flex items-center gap-2">
-                                    <span className="font-semibold text-zinc-500">{row.type} (No: {row.membershipNo})</span>
-                                    {isSectionEvidenceRequired("sec_professional_memberships") && row.fileUrl && (
-                                      <a href={row.fileUrl} target="_blank" rel="noreferrer" className="text-[10px] font-extrabold text-blue-600 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded hover:bg-blue-100 transition-all">Proof</a>
-                                    )}
+                          {/* Professional body memberships */}
+                          {isSectionVisible("sec_professional_memberships") && selectedAppraisal.formData?.professionalMembership && selectedAppraisal.formData.professionalMembership.length > 0 && (
+                            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
+                              <span className="text-xs font-black text-slate-800 block uppercase">
+                                {getSectionTitle("sec_professional_memberships", "4.2 Membership in Professional Bodies")}
+                              </span>
+                              {getSectionDescription("sec_professional_memberships") && (
+                                <p className="text-[10px] text-zinc-400 font-semibold uppercase">{getSectionDescription("sec_professional_memberships")}</p>
+                              )}
+                              <div className="space-y-1">
+                                {selectedAppraisal.formData.professionalMembership.map((row, idx) => (
+                                  <div key={idx} className="bg-white p-2.5 rounded-lg border border-zinc-150 flex justify-between text-xs items-center">
+                                    <span className="font-bold text-slate-700">{row.name}</span>
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-semibold text-zinc-500">{row.type} (No: {row.membershipNo})</span>
+                                      {isSectionEvidenceRequired("sec_professional_memberships") && row.fileUrl && (
+                                        <a href={row.fileUrl} target="_blank" rel="noreferrer" className="text-[10px] font-extrabold text-blue-600 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded hover:bg-blue-100 transition-all">Proof</a>
+                                      )}
+                                    </div>
                                   </div>
-                                </div>
-                              ))}
+                                ))}
+                              </div>
                             </div>
-                          </div>
-                        )}
+                          )}
 
-                        {/* Awards & Honors */}
-                        {isSectionVisible("sec_awards_honors") && selectedAppraisal.formData?.awardsHonors && selectedAppraisal.formData.awardsHonors.length > 0 && (
-                          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
-                            <span className="text-xs font-black text-slate-800 block uppercase">
-                              {getSectionTitle("sec_awards_honors", "4.3 Awards & Recognitions")}
-                            </span>
-                            {getSectionDescription("sec_awards_honors") && (
-                              <p className="text-[10px] text-zinc-400 font-semibold uppercase">{getSectionDescription("sec_awards_honors")}</p>
-                            )}
-                            <table className="w-full border-collapse border border-zinc-200 text-xs bg-white">
-                              <tr className="bg-zinc-50 font-bold">
-                                <th className="border border-zinc-200 p-2">Award Title</th>
-                                <th className="border border-zinc-200 p-2">Organization</th>
-                                <th className="border border-zinc-200 p-2 text-center">Year</th>
-                                <th className="border border-zinc-200 p-2 text-center">Level</th>
-                                {renderRowEvidenceHeader("sec_awards_honors")}
-                              </tr>
-                              {selectedAppraisal.formData.awardsHonors.map((row, idx) => (
-                                <tr key={idx}>
-                                  <td className="border border-zinc-200 p-2 font-bold text-slate-750">{row.awardName}</td>
-                                  <td className="border border-zinc-200 p-2 font-medium text-zinc-655">{row.organization}</td>
-                                  <td className="border border-zinc-200 p-2 text-center font-semibold">{row.year}</td>
-                                  <td className="border border-zinc-200 p-2 text-center font-bold text-indigo-750">{row.level}</td>
-                                  {renderRowEvidenceCellReadOnly(row, "sec_awards_honors")}
+                          {/* Awards & Honors */}
+                          {isSectionVisible("sec_awards_honors") && selectedAppraisal.formData?.awardsHonors && selectedAppraisal.formData.awardsHonors.length > 0 && (
+                            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
+                              <span className="text-xs font-black text-slate-800 block uppercase">
+                                {getSectionTitle("sec_awards_honors", "4.3 Awards & Recognitions")}
+                              </span>
+                              {getSectionDescription("sec_awards_honors") && (
+                                <p className="text-[10px] text-zinc-400 font-semibold uppercase">{getSectionDescription("sec_awards_honors")}</p>
+                              )}
+                              <table className="w-full border-collapse border border-zinc-200 text-xs bg-white">
+                                <tr className="bg-zinc-50 font-bold">
+                                  <th className="border border-zinc-200 p-2">Award Title</th>
+                                  <th className="border border-zinc-200 p-2">Organization</th>
+                                  <th className="border border-zinc-200 p-2 text-center">Year</th>
+                                  <th className="border border-zinc-200 p-2 text-center">Level</th>
+                                  {renderRowEvidenceHeader("sec_awards_honors")}
                                 </tr>
-                              ))}
-                            </table>
-                          </div>
-                        )}
+                                {selectedAppraisal.formData.awardsHonors.map((row, idx) => (
+                                  <tr key={idx}>
+                                    <td className="border border-zinc-200 p-2 font-bold text-slate-750">{row.awardName}</td>
+                                    <td className="border border-zinc-200 p-2 font-medium text-zinc-655">{row.organization}</td>
+                                    <td className="border border-zinc-200 p-2 text-center font-semibold">{row.year}</td>
+                                    <td className="border border-zinc-200 p-2 text-center font-bold text-indigo-750">{row.level}</td>
+                                    {renderRowEvidenceCellReadOnly(row, "sec_awards_honors")}
+                                  </tr>
+                                ))}
+                              </table>
+                            </div>
+                          )}
 
-                        {renderReviewCustomFields(4, selectedAppraisal.formData?.customFields)}
-                      </div>
-                    );
-                  })()}
+                          {renderReviewCustomFields(4, selectedAppraisal.formData?.customFields)}
+                        </div>
+                      );
+                    })()}
 
                     {/* Sub-Tab 5: Library & Leaves */}
                     {activeDetailsTab === 5 && (
@@ -3230,11 +3636,10 @@ export default function AppraisalReviews() {
                       </div>
                       <div className="text-right shrink-0">
                         <span className="block text-[9px] font-black text-indigo-400 uppercase tracking-widest">Calculated Grade</span>
-                        <span className={`text-xl font-black ${
-                          calculateNonTeachingGrade(Object.values(nonTeachingEvalMarks).reduce((a, b) => a + (Number(b) || 0), 0)) === 'A' ? 'text-emerald-600' :
-                          calculateNonTeachingGrade(Object.values(nonTeachingEvalMarks).reduce((a, b) => a + (Number(b) || 0), 0)) === 'B' ? 'text-blue-600' :
-                          calculateNonTeachingGrade(Object.values(nonTeachingEvalMarks).reduce((a, b) => a + (Number(b) || 0), 0)) === 'C' ? 'text-amber-600' : 'text-rose-600'
-                        }`}>
+                        <span className={`text-xl font-black ${calculateNonTeachingGrade(Object.values(nonTeachingEvalMarks).reduce((a, b) => a + (Number(b) || 0), 0)) === 'A' ? 'text-emerald-600' :
+                            calculateNonTeachingGrade(Object.values(nonTeachingEvalMarks).reduce((a, b) => a + (Number(b) || 0), 0)) === 'B' ? 'text-blue-600' :
+                              calculateNonTeachingGrade(Object.values(nonTeachingEvalMarks).reduce((a, b) => a + (Number(b) || 0), 0)) === 'C' ? 'text-amber-600' : 'text-rose-600'
+                          }`}>
                           Grade {calculateNonTeachingGrade(Object.values(nonTeachingEvalMarks).reduce((a, b) => a + (Number(b) || 0), 0))}
                         </span>
                       </div>
@@ -3265,11 +3670,10 @@ export default function AppraisalReviews() {
                                         type="button"
                                         disabled={selectedAppraisal.status === "Approved"}
                                         onClick={() => setNonTeachingEvalMarks({ ...nonTeachingEvalMarks, [cat.id]: mVal })}
-                                        className={`w-7 h-7 rounded-lg text-xs font-black transition-all cursor-pointer ${
-                                          currentScore === mVal
+                                        className={`w-7 h-7 rounded-lg text-xs font-black transition-all cursor-pointer ${currentScore === mVal
                                             ? "bg-indigo-600 text-white shadow-md scale-105"
                                             : "bg-zinc-100 hover:bg-zinc-200 text-zinc-700"
-                                        } disabled:opacity-75`}
+                                          } disabled:opacity-75`}
                                       >
                                         {mVal}
                                       </button>
@@ -3517,6 +3921,22 @@ export default function AppraisalReviews() {
 
                 {/* Interactive Action Buttons */}
                 <div className="space-y-2.5 pt-4">
+                  {selectedAppraisal.formType === "teacher" && (
+                    <button
+                      type="button"
+                      onClick={() => handleOpenAttitudeModal(selectedAppraisal)}
+                      className={`w-full py-2.5 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer ${selectedAppraisal.attitudeForm?.ratings && Object.keys(selectedAppraisal.attitudeForm.ratings).length > 0
+                          ? "bg-teal-700 hover:bg-teal-800 text-white"
+                          : "bg-amber-600 hover:bg-amber-700 text-white"
+                        }`}
+                    >
+                      <Award size={14} />
+                      {selectedAppraisal.attitudeForm?.ratings && Object.keys(selectedAppraisal.attitudeForm.ratings).length > 0
+                        ? `Edit Attitude Form (${selectedAppraisal.attitudeForm.totalScore}/${selectedAppraisal.attitudeForm.maxScore || (ATTITUDE_EVALUATION_QUESTIONS.length * 5)})`
+                        : `Fill Attitude Form (${ATTITUDE_EVALUATION_QUESTIONS.length} Items)`}
+                    </button>
+                  )}
+
                   {(userRole === "HOD" || isCoordinatorRole) && selectedAppraisal.status === "Submitted" && (
                     <>
                       <button
@@ -3668,10 +4088,10 @@ export default function AppraisalReviews() {
                           </td>
                           <td className="p-4 text-center">
                             <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider ${app.status === "Approved" ? "bg-emerald-500/10 text-emerald-700" :
-                                app.status === "HOD_Approved" ? "bg-blue-500/10 text-blue-700" :
-                                  app.status === "Submitted" ? "bg-amber-500/10 text-amber-700" :
-                                    app.status === "Returned" ? "bg-rose-500/10 text-rose-700" :
-                                      "bg-zinc-500/10 text-zinc-700"
+                              app.status === "HOD_Approved" ? "bg-blue-500/10 text-blue-700" :
+                                app.status === "Submitted" ? "bg-amber-500/10 text-amber-700" :
+                                  app.status === "Returned" ? "bg-rose-500/10 text-rose-700" :
+                                    "bg-zinc-500/10 text-zinc-700"
                               }`}>
                               {app.status === "HOD_Approved" ? "Coordinator Approved" : app.status.replace("_", " ")}
                             </span>
@@ -3683,6 +4103,11 @@ export default function AppraisalReviews() {
                               </span>
                             ) : (
                               <span className="text-zinc-300">-</span>
+                            )}
+                            {app.attitudeForm?.totalScore !== undefined && (
+                              <div className="text-[10px] font-bold text-teal-700 mt-1 flex items-center justify-center gap-1">
+                                <Award size={10} /> Attitude: {app.attitudeForm.totalScore}/{app.attitudeForm.maxScore || (ATTITUDE_EVALUATION_QUESTIONS.length * 5)}
+                              </div>
                             )}
                           </td>
                           <td className="p-4 text-center font-bold text-emerald-950">
@@ -3699,12 +4124,31 @@ export default function AppraisalReviews() {
                             )}
                           </td>
                           <td className="p-4 text-center">
-                            <button
-                              onClick={() => handleOpenDetails(app)}
-                              className="px-3 py-1.5 bg-[#120c7a] hover:bg-[#1a10a0] text-white rounded-lg text-[10px] font-bold tracking-wide uppercase transition-all inline-flex items-center gap-1 cursor-pointer"
-                            >
-                              <Eye size={12} /> Review
-                            </button>
+                            <div className="flex items-center justify-center gap-1.5 flex-wrap min-w-[170px]">
+                              <button
+                                onClick={() => handleOpenDetails(app)}
+                                className="px-3 py-1.5 bg-[#120c7a] hover:bg-[#1a10a0] text-white rounded-lg text-[10px] font-bold tracking-wide uppercase transition-all inline-flex items-center gap-1 cursor-pointer shadow-xs"
+                              >
+                                <Eye size={12} /> Review
+                              </button>
+                              {app.formType === "teacher" && (
+                                <button
+                                  onClick={() => handleOpenAttitudeModal(app)}
+                                  className={`px-3 py-1.5 rounded-lg text-[10px] font-bold tracking-wide uppercase transition-all inline-flex items-center gap-1 cursor-pointer shadow-xs ${app.attitudeForm?.ratings && Object.keys(app.attitudeForm.ratings).length > 0
+                                      ? "bg-teal-700 hover:bg-teal-800 text-white"
+                                      : "bg-amber-600 hover:bg-amber-700 text-white"
+                                    }`}
+                                  title="Attitude & Competency Evaluation Form"
+                                >
+                                  <Award size={12} /> Attitude Form
+                                  {app.attitudeForm?.totalScore !== undefined && (
+                                    <span className="ml-0.5 bg-black/25 text-white px-1.5 py-0.2 rounded text-[9px]">
+                                      {app.attitudeForm.totalScore}/{app.attitudeForm.maxScore || (ATTITUDE_EVALUATION_QUESTIONS.length * 5)}
+                                    </span>
+                                  )}
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       ))
@@ -3755,6 +4199,194 @@ export default function AppraisalReviews() {
                   Return to Faculty
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Attitude Form Evaluation Modal (CKSPK / CKSPE Teacher Appraisals) */}
+        {attitudeModalOpen && attitudeAppraisal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-2 sm:p-4 overflow-y-auto">
+            <div className="bg-white rounded-3xl w-full max-w-5xl border border-slate-200 shadow-2xl overflow-hidden my-auto max-h-[92vh] flex flex-col">
+              {/* Deep Navy Header matching reference sheet */}
+              <div className="bg-[#1c355e] text-white p-5 sm:p-6 shrink-0 flex items-center justify-between border-b border-[#2b4c80]">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="px-2.5 py-0.5 rounded-full bg-white/20 text-white text-[11px] font-bold uppercase tracking-wider">
+                      {attitudeAppraisal.institution || "CK Group"}
+                    </span>
+                    <span className="text-white/60">•</span>
+                    <span className="text-xs text-white/80 font-medium">Teacher Appraisal Evaluation</span>
+                  </div>
+                  <h2 className="text-xl sm:text-2xl font-black font-heading tracking-tight mt-1">
+                    Staff Attitude & Competency Evaluation Form
+                  </h2>
+                  <div className="flex flex-wrap items-center gap-3 text-xs text-white/85 mt-1 font-medium">
+                    <span>Teacher: <strong className="text-white font-bold">{attitudeAppraisal.formData?.name || attitudeAppraisal.facultyName}</strong></span>
+                    <span>•</span>
+                    <span>Dept: <strong className="text-white font-bold">{attitudeAppraisal.formData?.department || attitudeAppraisal.department}</strong></span>
+                    <span>•</span>
+                    <span>Designation: <strong className="text-white font-bold">{attitudeAppraisal.formData?.designation || attitudeAppraisal.designation || "Teacher"}</strong></span>
+                    <span>•</span>
+                    <span>Session: <strong className="text-white font-bold">{attitudeAppraisal.academicYear}</strong></span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setAttitudeModalOpen(false)}
+                  className="p-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-all cursor-pointer"
+                  title="Close modal"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Dynamic Live Score & Legend Banner */}
+              {(() => {
+                const activeQuestions = getAttitudeQuestions(attitudeAppraisal);
+                return (
+                  <>
+                    <div className="bg-slate-50 border-b border-slate-200 px-6 py-3.5 flex flex-wrap items-center justify-between gap-4 shrink-0">
+                      <div className="flex items-center gap-4">
+                        <div className="bg-white border border-slate-200 px-3.5 py-1.5 rounded-xl shadow-xs">
+                          <div className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Total Score</div>
+                          <div className="text-base font-black text-[#1c355e]">
+                            {Object.values(attitudeRatings).reduce((s, v) => s + (Number(v) || 0), 0)} / {activeQuestions.length * 5}
+                          </div>
+                        </div>
+                        <div className="bg-white border border-slate-200 px-3.5 py-1.5 rounded-xl shadow-xs">
+                          <div className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Average Rating</div>
+                          <div className="text-base font-black text-emerald-700">
+                            {Object.keys(attitudeRatings).length > 0
+                              ? (Object.values(attitudeRatings).reduce((s, v) => s + (Number(v) || 0), 0) / Object.keys(attitudeRatings).length).toFixed(2)
+                              : "0.00"} / 5.0
+                          </div>
+                        </div>
+                        <div className="text-xs text-slate-700 font-bold">
+                          <span className="text-[#1c355e] font-black">{Object.keys(attitudeRatings).filter(k => attitudeRatings[k] > 0).length}</span> of {activeQuestions.length} statements evaluated
+                        </div>
+                      </div>
+
+                      {/* Likert Scale Legend */}
+                      <div className="flex items-center gap-2.5 text-[11px] font-bold text-slate-800 bg-white border border-slate-200 px-3.5 py-1.5 rounded-xl shadow-xs">
+                        <span className="text-slate-500 font-black uppercase text-[10px]">Scale:</span>
+                        <span title="Strongly Disagree" className="text-slate-800 font-bold">1 SD</span>
+                        <span className="text-slate-300">•</span>
+                        <span title="Disagree" className="text-slate-800 font-bold">2 D</span>
+                        <span className="text-slate-300">•</span>
+                        <span title="Neutral" className="text-slate-800 font-bold">3 N</span>
+                        <span className="text-slate-300">•</span>
+                        <span title="Agree" className="text-slate-800 font-bold">4 A</span>
+                        <span className="text-slate-300">•</span>
+                        <span title="Strongly Agree" className="text-slate-800 font-bold">5 SA</span>
+                      </div>
+                    </div>
+
+                    {/* Table Content Area - Scrollable */}
+                    <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
+                      <div className="border border-slate-300 rounded-2xl overflow-hidden shadow-xs bg-white">
+                        <table className="w-full border-collapse text-left">
+                          <thead className="bg-[#1c355e]">
+                            <tr className="bg-[#1c355e] divide-x divide-[#2b4c80]">
+                              <th style={{ backgroundColor: "#1c355e", color: "#ffffff", borderColor: "#2b4c80" }} className="p-3 text-center w-12 text-xs font-bold !bg-[#1c355e] !text-white">#</th>
+                              <th style={{ backgroundColor: "#1c355e", color: "#ffffff", borderColor: "#2b4c80" }} className="p-3 text-xs font-bold text-left !bg-[#1c355e] !text-white">Attitude &amp; Statement</th>
+                              <th style={{ backgroundColor: "#1c355e", color: "#ffffff", borderColor: "#2b4c80" }} className="p-3 text-center w-20 text-xs font-bold !bg-[#1c355e] !text-white">1 SD</th>
+                              <th style={{ backgroundColor: "#1c355e", color: "#ffffff", borderColor: "#2b4c80" }} className="p-3 text-center w-20 text-xs font-bold !bg-[#1c355e] !text-white">2 D</th>
+                              <th style={{ backgroundColor: "#1c355e", color: "#ffffff", borderColor: "#2b4c80" }} className="p-3 text-center w-20 text-xs font-bold !bg-[#1c355e] !text-white">3 N</th>
+                              <th style={{ backgroundColor: "#1c355e", color: "#ffffff", borderColor: "#2b4c80" }} className="p-3 text-center w-20 text-xs font-bold !bg-[#1c355e] !text-white">4 A</th>
+                              <th style={{ backgroundColor: "#1c355e", color: "#ffffff", borderColor: "#2b4c80" }} className="p-3 text-center w-20 text-xs font-bold !bg-[#1c355e] !text-white">5 SA</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-200 text-xs">
+                            {activeQuestions.map((q) => {
+                              const currentVal = attitudeRatings[q.id];
+                              return (
+                                <tr key={q.id} className="hover:bg-slate-50/80 transition-colors divide-x divide-slate-200">
+                                  <td className="p-3.5 text-center font-extrabold text-slate-900 bg-slate-50/70">
+                                    {q.id}
+                                  </td>
+                                  <td className="p-3.5">
+                                    <div className="font-extrabold text-[#1c355e] text-sm tracking-tight">
+                                      {q.title}
+                                    </div>
+                              <div className="text-xs text-slate-700 mt-1 leading-relaxed font-medium">
+                                {q.statement}
+                              </div>
+                            </td>
+                            {[1, 2, 3, 4, 5].map((val) => {
+                              const isChecked = currentVal === val;
+                              return (
+                                <td
+                                  key={val}
+                                  onClick={() => handleSelectAttitudeRating(q.id, val)}
+                                  className={`p-3.5 text-center cursor-pointer transition-colors select-none ${isChecked ? "bg-indigo-50/80" : "hover:bg-slate-100/70"
+                                    }`}
+                                  title={`Rate "${q.title}" as ${val}`}
+                                >
+                                  <div className="flex items-center justify-center">
+                                    <div
+                                      className={`w-5 h-5 rounded-md flex items-center justify-center border-2 transition-all ${isChecked
+                                          ? "!bg-[#1c355e] !border-[#1c355e] !text-white shadow-xs"
+                                          : "border-slate-400 bg-white hover:border-[#1c355e]"
+                                        }`}
+                                    >
+                                      {isChecked && <Check size={14} className="stroke-[3] text-white" />}
+                                    </div>
+                                  </div>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Coordinator Remarks Section */}
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold text-slate-800 uppercase tracking-wider">
+                    Coordinator Overall Remarks &amp; Behavioral Observations
+                  </label>
+                  <textarea
+                    value={attitudeRemarks}
+                    onChange={(e) => setAttitudeRemarks(e.target.value)}
+                    rows={3}
+                    placeholder="Enter specific behavioral feedback, leadership observations, areas of improvement or commendations..."
+                    className="w-full rounded-2xl border border-slate-300 p-3.5 text-xs text-slate-900 font-medium focus:outline-none focus:ring-2 focus:ring-[#1c355e]/20 focus:border-[#1c355e] bg-white"
+                  />
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="bg-slate-50 border-t border-slate-200 px-6 py-4 flex flex-wrap items-center justify-between gap-3 shrink-0">
+                <div className="text-xs text-slate-600 font-medium">
+                  {attitudeAppraisal.attitudeForm?.evaluatedAt ? (
+                    <span>Last saved by <strong className="text-slate-800">{attitudeAppraisal.attitudeForm.evaluatedBy}</strong> on {new Date(attitudeAppraisal.attitudeForm.evaluatedAt).toLocaleDateString()}</span>
+                  ) : (
+                    <span>Evaluator: <strong className="text-slate-800">{currentUser?.displayName || currentUser?.email}</strong> ({userRole})</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setAttitudeModalOpen(false)}
+                    className="px-4 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveAttitudeForm}
+                    disabled={savingAttitude}
+                    className="px-6 py-2.5 bg-[#1c355e] hover:bg-[#142644] text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg shadow-indigo-900/20 transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    {savingAttitude ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                    Save Attitude Form
+                  </button>
+                </div>
+              </div>
+            </>
+          );
+        })()}
             </div>
           </div>
         )}

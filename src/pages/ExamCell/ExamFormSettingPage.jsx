@@ -10,7 +10,7 @@ import {
   Copy, RefreshCw, FileSearch, GraduationCap,
   Save, Loader2, CheckCircle2, AlertCircle,
   CalendarDays, IndianRupee, Power, FileText,
-  Eye, UserCheck, Clock, CheckCircle, XCircle, ShieldCheck, FileSpreadsheet, RotateCcw, X, FileWarning
+  Eye, UserCheck, Clock, CheckCircle, XCircle, ShieldCheck, FileSpreadsheet, RotateCcw, X, FileWarning, Download
 } from "lucide-react";
 import PhotocopyProblemModal from "../../components/PhotocopyProblemModal";
 
