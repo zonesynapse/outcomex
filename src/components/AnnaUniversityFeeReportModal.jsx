@@ -45,7 +45,9 @@ const loadImage = (url) => {
   });
 };
 
-export default function AnnaUniversityFeeReportModal({ isOpen, onClose, applications = [] }) {
+export default function AnnaUniversityFeeReportModal({ isOpen, onClose, applications = [], reportType = "Photocopy" }) {
+  const isReval = reportType === "Revaluation";
+  const defaultFee = isReval ? 400 : 350;
   const [statusFilter, setStatusFilter] = useState("PAID_ONLY");
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [dynamicDeptCodes, setDynamicDeptCodes] = useState({});
@@ -147,7 +149,7 @@ export default function AnnaUniversityFeeReportModal({ isOpen, onClose, applicat
       const regNo = (app.regNo || app.registerNo || "—").trim();
       const studentName = (app.studentName || app.name || "STUDENT").trim().toUpperCase();
       const subjectsCount = Array.isArray(app.subjects) && app.subjects.length > 0 ? app.subjects.length : (app.subjectCount || 1);
-      const fee = Number(app.feeAmount) || (subjectsCount * 350);
+      const fee = Number(app.feeAmount) || (subjectsCount * defaultFee);
 
       if (!groups[deptName].studentsMap[regNo]) {
         groups[deptName].studentsMap[regNo] = {
@@ -220,7 +222,7 @@ export default function AnnaUniversityFeeReportModal({ isOpen, onClose, applicat
       }
       const subjects = Array.isArray(app.subjects) && app.subjects.length > 0 ? app.subjects : [];
       const subjectsCount = subjects.length || (app.subjectCount || 1);
-      const fee = Number(app.feeAmount) || (subjectsCount * 350);
+      const fee = Number(app.feeAmount) || (subjectsCount * defaultFee);
 
       map[regNo].applications.push({
         id: app.id,
@@ -273,7 +275,7 @@ export default function AnnaUniversityFeeReportModal({ isOpen, onClose, applicat
       yPos += 5;
       doc.setFontSize(10);
       doc.setFont("helvetica", "normal");
-      doc.text("Abstract of Photocopies required & Fees Collected", 105, yPos, { align: "center" });
+      doc.text(isReval ? "Abstract of Revaluations required & Fees Collected" : "Abstract of Photocopies required & Fees Collected", 105, yPos, { align: "center" });
       yPos += 5;
       doc.text("APRIL / MAY END SEMESTER EXAMINATION 2025-26", 105, yPos, { align: "center" });
       yPos += 7;
@@ -357,7 +359,7 @@ export default function AnnaUniversityFeeReportModal({ isOpen, onClose, applicat
       doc.text(`Grand Total Subjects : ${totalSubjects}`, 105, yPos + 21, { align: "center" });
       doc.text(`Grand Total Fees : Rs. ${totalGrandFee.toFixed(2)}`, 196, yPos + 21, { align: "right" });
 
-      doc.save(`Photocopy_Fee_Report_${dateStr.replace(/\//g, "-")}.pdf`);
+      doc.save(`${isReval ? "Revaluation" : "Photocopy"}_Fee_Report_${dateStr.replace(/\//g, "-")}.pdf`);
     } catch (err) {
       console.error("PDF generation error:", err);
     } finally {
@@ -405,8 +407,8 @@ export default function AnnaUniversityFeeReportModal({ isOpen, onClose, applicat
               <FileText size={18} />
             </div>
             <div>
-              <h3 className="font-bold text-sm text-white">Photocopy Fee Collection Report</h3>
-              <p className="text-[11px] text-slate-400 font-medium">Department-wise Abstract of Photocopies & Fees Collected (Paid Applications)</p>
+              <h3 className="font-bold text-sm text-white">{isReval ? "Revaluation Fee Collection Report" : "Photocopy Fee Collection Report"}</h3>
+              <p className="text-[11px] text-slate-400 font-medium">Department-wise Abstract of {isReval ? "Revaluation" : "Photocopies"} & Fees Collected (Paid Applications)</p>
             </div>
           </div>
 
@@ -468,14 +470,14 @@ export default function AnnaUniversityFeeReportModal({ isOpen, onClose, applicat
                   OFFICE OF THE CONTROLLER OF EXAMINATIONS
                 </h3>
                 <p className="text-xs font-semibold text-slate-800 mt-0.5">
-                  Abstract of Photocopies required & Fees Collected
+                  Abstract of {isReval ? "Revaluations" : "Photocopies"} required & Fees Collected
                 </p>
                 <p className="text-xs font-bold text-slate-900 tracking-wider uppercase">
                   APRIL / MAY END SEMESTER EXAMINATION 2025-26
                 </p>
               </div>
               <div className="absolute right-0 top-0 border-2 border-black px-3 py-1 font-black text-xl text-black">
-                PC
+                {isReval ? "RV" : "PC"}
               </div>
             </div>
             <div className="text-left font-bold text-xs text-slate-900 mt-3 pt-1 border-t border-slate-300 flex justify-between items-center">
@@ -491,7 +493,7 @@ export default function AnnaUniversityFeeReportModal({ isOpen, onClose, applicat
             <div className="py-16 text-center text-slate-400">
               <FileText size={36} className="mx-auto mb-2 opacity-30 text-slate-400" />
               <p className="text-sm font-bold text-slate-600">No Payment Successful Applications Found</p>
-              <p className="text-xs text-slate-400">When students complete photocopy fee payments, they will appear here.</p>
+              <p className="text-xs text-slate-400">When students complete {isReval ? "revaluation" : "photocopy"} fee payments, they will appear here.</p>
             </div>
           ) : (
             <div className="space-y-6">

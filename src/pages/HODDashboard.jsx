@@ -8,7 +8,7 @@ import {
   Clock, BookOpen, TrendingUp, Search, Filter, School, ChevronRight,
   Sparkles, BarChart3, ArrowUpRight, Zap, Bell, AlertCircle, Calendar,
   Users, GraduationCap, CalendarCheck2, AlertTriangle, RefreshCw, Award, Check,
-  Download, FileSpreadsheet, Undo2, Send, Copy, RotateCcw
+  Download, FileSpreadsheet, Undo2, Send, Copy, RotateCcw, FileWarning, Save
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -27,6 +27,175 @@ function bsKey(key) {
   if (!key) return "";
   return String(key).replace(/[.#$[\]/]/g, '_');
 }
+
+export const FACULTY_ATTITUDE_EVALUATION_QUESTIONS = [
+  {
+    id: 1,
+    title: "Ownership & Accountability",
+    statement: "Takes full responsibility for their role, decisions, and outcomes."
+  },
+  {
+    id: 2,
+    title: "Emotional Intelligence & Collaboration",
+    statement: "Stays self-aware and empathetic, and works effectively with others."
+  },
+  {
+    id: 3,
+    title: "Customer Focus & Empathy",
+    statement: "Keeps the learner, parent, or stakeholder at the centre of their decisions."
+  },
+  {
+    id: 4,
+    title: "Resilience & Adaptability",
+    statement: "Remains steady and effective through setbacks, pressure, and change."
+  },
+  {
+    id: 5,
+    title: "Growth Mindset",
+    statement: "Continuously improves, quickly acquires new skills, and unlearns old habits where needed."
+  },
+  {
+    id: 6,
+    title: "Inquisitiveness & Creative Problem-Solving",
+    statement: "Asks probing questions, evaluates answers critically, and solves problems in novel ways."
+  },
+  {
+    id: 7,
+    title: "AI Literacy & Judgment",
+    statement: "Proactively learns and uses AI tools, and exercises judgment on when to trust AI output versus human intuition."
+  },
+  {
+    id: 8,
+    title: "Integrity & Ethical Judgement",
+    statement: "Acts with consistent honesty, fairness, and principled conduct."
+  },
+  {
+    id: 9,
+    title: "Clarity in Communication",
+    statement: "Articulates ideas clearly and persuasively, in speech and in writing."
+  },
+  {
+    id: 10,
+    title: "Diligence & Ownership",
+    statement: "Is consistently punctual and executes assigned duties thoroughly, flawlessly meeting KRAs."
+  },
+  {
+    id: 11,
+    title: "Learning & Applying (Technology)",
+    statement: "Shows visible progress through IIY and by embracing technology in their work."
+  },
+  {
+    id: 12,
+    title: "Classroom EQ & Leadership",
+    statement: "Leads and engages students, stays open, transparent, and approachable, and motivates them by example."
+  },
+  {
+    id: 13,
+    title: "Proactive",
+    statement: "Anticipates needs and acts ahead of requirements."
+  },
+  {
+    id: 14,
+    title: "Going the Extra Mile",
+    statement: "Consistently exceeds baseline expectations in their role."
+  },
+  {
+    id: 15,
+    title: "Change Agent & Innovation Torch-Bearer",
+    statement: "Actively drives improvement in pedagogy, curriculum, or department practice."
+  },
+  {
+    id: 16,
+    title: "High Consulting Capability",
+    statement: "Advises students, peers, or the department with sound, well-reasoned judgment."
+  }
+];
+
+export const NON_TEACHING_GENERAL_ATTITUDE_QUESTIONS = [
+  { id: 1, title: "Punctuality & Reliability", statement: "Is consistently present, on time, and dependable in carrying out assigned duties." },
+  { id: 2, title: "Ownership & Accountability", statement: "Takes full responsibility for the quality and completion of their work." },
+  { id: 3, title: "Integrity & Honesty", statement: "Handles institutional property, information, and resources in a trustworthy manner." },
+  { id: 4, title: "Teamwork & Cooperation", statement: "Works well with colleagues and other departments." },
+  { id: 5, title: "Service Orientation & Courtesy", statement: "Treats staff, students, parents, and visitors with courtesy and helpfulness." },
+  { id: 6, title: "Adaptability & Willingness to Learn", statement: "Stays open to new instructions, tools, and ways of working." },
+  { id: 7, title: "Safety & Compliance Consciousness", statement: "Follows safety norms and institutional protocols without being reminded." },
+  { id: 8, title: "Attention to Detail & Documentation Accuracy", statement: "Handles records, correspondence, and data carefully and accurately." },
+  { id: 9, title: "Confidentiality & Discretion", statement: "Safeguards sensitive institutional, staff, and student information." },
+  { id: 10, title: "Responsiveness", statement: "Responds to requests from staff, students, and parents in a timely and courteous manner." },
+  { id: 11, title: "Basic Digital & AI Literacy", statement: "Uses digital tools and AI-assisted systems comfortably for records and communication." },
+  { id: 12, title: "AI Literacy & Judgment", statement: "Proactively learns and uses AI tools, and exercises judgment on when to trust AI output versus human intuition." },
+  { id: 13, title: "Growth Mindset", statement: "Continuously improves, quickly acquires new skills, and unlearns old habits where needed." },
+  { id: 14, title: "Clarity in Communication", statement: "Articulates ideas clearly and persuasively, in speech and in writing." },
+  { id: 15, title: "Inquisitiveness & Creative Problem-Solving", statement: "Asks probing questions, evaluates answers critically, and solves problems in novel ways." },
+  { id: 16, title: "Proactive", statement: "Anticipates needs and acts ahead of requirements." },
+  { id: 17, title: "Stakeholder Focus & Empathy", statement: "Keeps students, staff, and other stakeholders at the centre of their decisions." },
+  { id: 18, title: "Process & Service Improvement", statement: "Actively looks for ways to improve processes and service delivery in their area." },
+  { id: 19, title: "Advisory Capability", statement: "Advises colleagues, departments, or stakeholders with sound, well-reasoned judgment." }
+];
+
+export const NON_TEACHING_DRIVER_ATTITUDE_QUESTIONS = [
+  { id: 1, title: "Punctuality & Reliability", statement: "Is consistently present, on time, and dependable in carrying out assigned duties." },
+  { id: 2, title: "Ownership & Accountability", statement: "Takes full responsibility for the quality and completion of their work." },
+  { id: 3, title: "Integrity & Honesty", statement: "Handles institutional property, information, and resources in a trustworthy manner." },
+  { id: 4, title: "Teamwork & Cooperation", statement: "Works well with colleagues and other departments." },
+  { id: 5, title: "Service Orientation & Courtesy", statement: "Treats staff, students, parents, and visitors with courtesy and helpfulness." },
+  { id: 6, title: "Adaptability & Willingness to Learn", statement: "Stays open to new instructions, tools, and ways of working." },
+  { id: 7, title: "Safety & Compliance Consciousness", statement: "Follows safety norms and institutional protocols without being reminded." },
+  { id: 8, title: "Road & Vehicle Safety Discipline", statement: "Practises defensive driving and strictly adheres to traffic and safety norms, especially with students as passengers." },
+  { id: 9, title: "Vehicle & Asset Care", statement: "Maintains the assigned vehicle diligently, including cleanliness and fuel discipline." },
+  { id: 10, title: "Composure Under Pressure", statement: "Stays calm and safe under traffic, time, or emergency pressure." },
+  { id: 11, title: "Predictable Availability", statement: "Is punctually and dependably present, aligned to institutional schedules." }
+];
+
+export const NON_TEACHING_HOUSEKEEPING_ATTITUDE_QUESTIONS = [
+  { id: 1, title: "Punctuality & Reliability", statement: "Is consistently present, on time, and dependable in carrying out assigned duties." },
+  { id: 2, title: "Ownership & Accountability", statement: "Takes full responsibility for the quality and completion of their work." },
+  { id: 3, title: "Integrity & Honesty", statement: "Handles institutional property, information, and resources in a trustworthy manner." },
+  { id: 4, title: "Teamwork & Cooperation", statement: "Works well with colleagues and other departments." },
+  { id: 5, title: "Service Orientation & Courtesy", statement: "Treats staff, students, parents, and visitors with courtesy and helpfulness." },
+  { id: 6, title: "Adaptability & Willingness to Learn", statement: "Stays open to new instructions, tools, and ways of working." },
+  { id: 7, title: "Safety & Compliance Consciousness", statement: "Follows safety norms and institutional protocols without being reminded." },
+  { id: 8, title: "Hygiene & Cleanliness Standards", statement: "Maintains consistent, high standards of cleanliness across assigned spaces." },
+  { id: 9, title: "Proactive Upkeep", statement: "Notices and addresses issues — spills, wear, shortages — without being prompted." },
+  { id: 10, title: "Respect for Privacy of Spaces", statement: "Handles others' spaces and belongings carefully and respectfully while on duty." },
+  { id: 11, title: "Physical Diligence & Consistency", statement: "Sustains reliable effort and diligence across every shift." }
+];
+
+export const getHodAttitudeQuestions = (app) => {
+  if (app?.formType === "non_teaching" || app?.collectionName === "non_teaching_appraisals") {
+    const rawDesig = (app?.designation || app?.formData?.designation || app?.staffDesignation || "");
+    const rawDept = (app?.department || app?.formData?.department || "");
+    const rawRole = (app?.role || app?.formData?.role || "");
+    const combinedStr = `${rawDesig} ${rawDept} ${rawRole}`.toLowerCase();
+    const normalizedStr = combinedStr.replace(/[^a-z0-9]/g, "");
+
+    if (
+      normalizedStr.includes("housekeeping") || 
+      normalizedStr.includes("housekeeper") || 
+      combinedStr.includes("house keeping")
+    ) {
+      return NON_TEACHING_HOUSEKEEPING_ATTITUDE_QUESTIONS;
+    }
+    if (
+      normalizedStr.includes("driver") || 
+      normalizedStr.includes("transport") || 
+      combinedStr.includes("driver") ||
+      combinedStr.includes("transport")
+    ) {
+      return NON_TEACHING_DRIVER_ATTITUDE_QUESTIONS;
+    }
+    return NON_TEACHING_GENERAL_ATTITUDE_QUESTIONS;
+  }
+  return FACULTY_ATTITUDE_EVALUATION_QUESTIONS;
+};
+
+export const ATTITUDE_RATING_OPTIONS = [
+  { value: 1, code: "1 SD", label: "Strongly Disagree" },
+  { value: 2, code: "2 D", label: "Disagree" },
+  { value: 3, code: "3 N", label: "Neutral" },
+  { value: 4, code: "4 A", label: "Agree" },
+  { value: 5, code: "5 SA", label: "Strongly Agree" }
+];
 
 const getBase64ImageFromUrl = async (imageUrl) => {
   return new Promise((resolve) => {
@@ -582,10 +751,33 @@ export default function HODDashboard() {
   const [revokeRevalMessage, setRevokeRevalMessage] = useState("");
   const [revokingReval, setRevokingReval] = useState(false);
 
+  const isDeptMatch = (docDept, targetDept) => {
+    if (!targetDept) return true;
+    if (!docDept) return true;
+
+    const norm1 = String(docDept).toLowerCase().replace(/^(department of\s+|dept of\s+|be\s+|btech\s+|me\s+|mtech\s+|ug\s+|pg\s+)/gi, '').replace(/[^a-z0-9]/g, '');
+    const norm2 = String(targetDept).toLowerCase().replace(/^(department of\s+|dept of\s+|be\s+|btech\s+|me\s+|mtech\s+|ug\s+|pg\s+)/gi, '').replace(/[^a-z0-9]/g, '');
+    
+    if (norm1 === norm2) return true;
+    if (norm1.includes(norm2) || norm2.includes(norm1)) return true;
+
+    // Acronym vs full name checks
+    if ((norm1 === 'cse' || norm1.includes('computerscience')) && (norm2 === 'cse' || norm2.includes('computerscience'))) return true;
+    if ((norm1 === 'it' || norm1.includes('informationtechnology')) && (norm2 === 'it' || norm2.includes('informationtechnology'))) return true;
+    if ((norm1 === 'aids' || norm1.includes('artificialintelligence') || norm1.includes('aiandds') || norm1.includes('aids')) && (norm2 === 'aids' || norm2.includes('artificialintelligence') || norm2.includes('aiandds') || norm2.includes('aids'))) return true;
+    if ((norm1 === 'ece' || norm1.includes('electronicsandcommunication')) && (norm2 === 'ece' || norm2.includes('electronicsandcommunication'))) return true;
+    if ((norm1 === 'eee' || norm1.includes('electricalandelectronics')) && (norm2 === 'eee' || norm2.includes('electricalandelectronics'))) return true;
+    if ((norm1 === 'mech' || norm1.includes('mechanicalengineering')) && (norm2 === 'mech' || norm2.includes('mechanicalengineering'))) return true;
+    if ((norm1 === 'civil' || norm1.includes('civilengineering')) && (norm2 === 'civil' || norm2.includes('civilengineering'))) return true;
+    if ((norm1 === 'bme' || norm1.includes('biomedical')) && (norm2 === 'bme' || norm2.includes('biomedical'))) return true;
+    if ((norm1 === 'robotics' || norm1.includes('roboticsandautomation')) && (norm2 === 'robotics' || norm2.includes('roboticsandautomation'))) return true;
+    if ((norm1 === 'mba' || norm1.includes('businessadministration')) && (norm2 === 'mba' || norm2.includes('businessadministration'))) return true;
+
+    return false;
+  };
+
   useEffect(() => {
     if (!hodDepartment) return;
-    const norm = (s) => (s || '').toString().toLowerCase().replace(/[^a-z0-9]/g, '');
-    const targetDeptNorm = norm(hodDepartment);
 
     const unsub = onSnapshot(collection(db, 'photocopy_applications'), (snap) => {
       const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -602,8 +794,8 @@ export default function HODDashboard() {
           return false;
         }
 
-        if (!app.department) return true;
-        return norm(app.department) === targetDeptNorm || norm(app.programme) === targetDeptNorm;
+        if (!app.department && !app.programme) return true;
+        return isDeptMatch(app.department, hodDepartment) || isDeptMatch(app.programme, hodDepartment);
       });
       filtered.sort((a, b) => {
         const at = a.appliedAt?.toMillis ? a.appliedAt.toMillis() : new Date(a.appliedAt || 0).getTime();
@@ -617,8 +809,6 @@ export default function HODDashboard() {
 
   useEffect(() => {
     if (!hodDepartment) return;
-    const norm = (s) => (s || '').toString().toLowerCase().replace(/[^a-z0-9]/g, '');
-    const targetDeptNorm = norm(hodDepartment);
 
     const unsub = onSnapshot(collection(db, 'revaluation_applications'), (snap) => {
       const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -631,8 +821,8 @@ export default function HODDashboard() {
         if (app.status === 'Recommended by HOD' || app.status === 'Revoked by HOD' || app.status === 'Revoked by Exam Cell' || app.status === 'Closed') {
           return false;
         }
-        if (!app.department) return true;
-        return norm(app.department) === targetDeptNorm || norm(app.programme) === targetDeptNorm;
+        if (!app.department && !app.programme) return true;
+        return isDeptMatch(app.department, hodDepartment) || isDeptMatch(app.programme, hodDepartment);
       });
       filtered.sort((a, b) => {
         const at = a.appliedAt?.toMillis ? a.appliedAt.toMillis() : new Date(a.appliedAt || 0).getTime();
@@ -752,8 +942,6 @@ export default function HODDashboard() {
 
   useEffect(() => {
     if (!hodDepartment) return;
-    const norm = (s) => (s || '').toString().toLowerCase().replace(/[^a-z0-9]/g, '');
-    const targetDeptNorm = norm(hodDepartment);
 
     const unsub = onSnapshot(collection(db, 'photocopy_problem_applications'), (snap) => {
       const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -761,8 +949,8 @@ export default function HODDashboard() {
         // HOD only sees pending problem reports (Submitted to HOD). Hide once moved to Exam Cell or revoked.
         if (app.status !== 'Submitted to HOD') return false;
 
-        if (!app.department) return true;
-        return norm(app.department) === targetDeptNorm || norm(app.programme) === targetDeptNorm;
+        if (!app.department && !app.programme) return true;
+        return isDeptMatch(app.department, hodDepartment) || isDeptMatch(app.programme, hodDepartment);
       });
       filtered.sort((a, b) => {
         const at = a.createdAt?.toMillis ? a.createdAt.toMillis() : new Date(a.createdAt || 0).getTime();
@@ -839,6 +1027,85 @@ export default function HODDashboard() {
   const [nonTeachingSpecificComment, setNonTeachingSpecificComment] = useState("");
   const [nonTeachingRecommendation, setNonTeachingRecommendation] = useState("His / Her contribution to be appreciated and recommended");
   const [nonTeachingIncrementGrade, setNonTeachingIncrementGrade] = useState("A");
+
+  // Attitude Evaluation Modal States (Faculty & Non-Teaching)
+  const [attitudeModalOpen, setAttitudeModalOpen] = useState(false);
+  const [attitudeAppraisal, setAttitudeAppraisal] = useState(null);
+  const [attitudeRatings, setAttitudeRatings] = useState({});
+  const [attitudeRemarks, setAttitudeRemarks] = useState("");
+  const [attitudeSaving, setAttitudeSaving] = useState(false);
+
+  const handleOpenAttitudeModal = (app) => {
+    setAttitudeAppraisal(app);
+    const existing = app.attitudeEvaluation || app.attitudeForm || {};
+    setAttitudeRatings(existing.ratings ? { ...existing.ratings } : {});
+    setAttitudeRemarks(existing.remarks || "");
+    setAttitudeModalOpen(true);
+  };
+
+  const handleSetRating = (qId, value) => {
+    setAttitudeRatings(prev => ({
+      ...prev,
+      [qId]: Number(value)
+    }));
+  };
+
+  const handleSetAllRatings = (val) => {
+    const activeQuestions = getHodAttitudeQuestions(attitudeAppraisal);
+    const updated = {};
+    activeQuestions.forEach(q => {
+      updated[q.id] = val;
+    });
+    setAttitudeRatings(updated);
+  };
+
+  const handleSaveAttitudeEvaluation = async () => {
+    if (!attitudeAppraisal) return;
+    setAttitudeSaving(true);
+    try {
+      const activeQuestions = getHodAttitudeQuestions(attitudeAppraisal);
+      const totalScore = Object.values(attitudeRatings).reduce((sum, v) => sum + (Number(v) || 0), 0);
+      const maxScore = activeQuestions.length * 5;
+      const evaluatedCount = Object.keys(attitudeRatings).filter(k => (Number(attitudeRatings[k]) || 0) > 0).length;
+      const percentage = maxScore > 0 ? ((totalScore / maxScore) * 100).toFixed(1) : "0.0";
+      const average = evaluatedCount > 0 ? (totalScore / evaluatedCount).toFixed(2) : "0.0";
+
+      const isNonTeaching = attitudeAppraisal.formType === "non_teaching" || attitudeAppraisal.collectionName === "non_teaching_appraisals";
+
+      const evalPayload = {
+        formTitle: isNonTeaching ? "Non-Teaching Attitude Form" : "Teacher Attitude Evaluation",
+        subtitle: isNonTeaching ? "CKGEI — Non-Teaching Staff Evaluation Questionnaire" : "CKGEI — Teacher Evaluation Questionnaire",
+        ratings: attitudeRatings,
+        remarks: attitudeRemarks.trim(),
+        totalScore,
+        maxScore,
+        percentage,
+        average,
+        evaluatedCount,
+        totalQuestions: activeQuestions.length,
+        evaluatedAt: new Date().toISOString(),
+        evaluatedBy: hodName || currentUid || "HOD",
+        evaluatedByRole: "HOD"
+      };
+
+      const targetColl = attitudeAppraisal.collectionName || (isNonTeaching ? 'non_teaching_appraisals' : 'faculty_appraisals');
+
+      await updateDoc(doc(db, targetColl, attitudeAppraisal.id), {
+        attitudeEvaluation: evalPayload,
+        attitudeForm: evalPayload
+      });
+
+      // Update state locally
+      setAppraisalList(prev => prev.map(a => a.id === attitudeAppraisal.id ? { ...a, attitudeEvaluation: evalPayload, attitudeForm: evalPayload } : a));
+
+      setAttitudeModalOpen(false);
+    } catch (err) {
+      console.error("Failed to save attitude evaluation:", err);
+      alert("Failed to save evaluation. Please try again.");
+    } finally {
+      setAttitudeSaving(false);
+    }
+  };
 
   // HOD Batch Attendance Report state
   const [reportBatch, setReportBatch] = useState("");
@@ -1475,30 +1742,6 @@ export default function HODDashboard() {
     setShowReportPdfPreview(true);
   };
 
-const isDeptMatch = (docDept, targetDept) => {
-  if (!targetDept) return true;
-  if (!docDept) return true;
-
-  const norm1 = String(docDept).toLowerCase().replace(/^(department of\s+|dept of\s+|be\s+|btech\s+|me\s+|mtech\s+|ug\s+|pg\s+)/gi, '').replace(/[^a-z0-9]/g, '');
-  const norm2 = String(targetDept).toLowerCase().replace(/^(department of\s+|dept of\s+|be\s+|btech\s+|me\s+|mtech\s+|ug\s+|pg\s+)/gi, '').replace(/[^a-z0-9]/g, '');
-  
-  if (norm1 === norm2) return true;
-  if (norm1.includes(norm2) || norm2.includes(norm1)) return true;
-
-  // Acronym vs full name checks
-  if ((norm1 === 'cse' || norm1.includes('computerscience')) && (norm2 === 'cse' || norm2.includes('computerscience'))) return true;
-  if ((norm1 === 'it' || norm1.includes('informationtechnology')) && (norm2 === 'it' || norm2.includes('informationtechnology'))) return true;
-  if ((norm1 === 'aids' || norm1.includes('artificialintelligence')) && (norm2 === 'aids' || norm2.includes('artificialintelligence'))) return true;
-  if ((norm1 === 'ece' || norm1.includes('electronicsandcommunication')) && (norm2 === 'ece' || norm2.includes('electronicsandcommunication'))) return true;
-  if ((norm1 === 'eee' || norm1.includes('electricalandelectronics')) && (norm2 === 'eee' || norm2.includes('electricalandelectronics'))) return true;
-  if ((norm1 === 'mech' || norm1.includes('mechanicalengineering')) && (norm2 === 'mech' || norm2.includes('mechanicalengineering'))) return true;
-  if ((norm1 === 'civil' || norm1.includes('civilengineering')) && (norm2 === 'civil' || norm2.includes('civilengineering'))) return true;
-  if ((norm1 === 'bme' || norm1.includes('biomedical')) && (norm2 === 'bme' || norm2.includes('biomedical'))) return true;
-  if ((norm1 === 'robotics' || norm1.includes('roboticsandautomation')) && (norm2 === 'robotics' || norm2.includes('roboticsandautomation'))) return true;
-  if ((norm1 === 'mba' || norm1.includes('businessadministration')) && (norm2 === 'mba' || norm2.includes('businessadministration'))) return true;
-
-  return false;
-};
 
   useEffect(() => {
     setActivitiesLoading(true);
@@ -1551,20 +1794,57 @@ const isDeptMatch = (docDept, targetDept) => {
     if (!hodDepartment) { setAppraisalList([]); setAppraisalLoading(false); return; }
     setAppraisalLoading(true);
 
+    const isTeachingFaculty = (desig) => {
+      if (!desig) return false;
+      const d = String(desig).toLowerCase();
+      return (
+        d.includes("assistant professor") ||
+        d.includes("associate professor") ||
+        d.includes("professor") ||
+        d.includes("asst. prof") ||
+        d.includes("assoc. prof") ||
+        d.includes("asst prof") ||
+        d.includes("assoc prof")
+      );
+    };
+
+    const checkIncludeInList = (data) => {
+      if (!data.status || data.status === "Draft") return false;
+      const isReviewed = data.status !== "Submitted";
+      const attitudeDone = Boolean(
+        (data.attitudeEvaluation?.ratings && Object.keys(data.attitudeEvaluation.ratings).length > 0) ||
+        (data.attitudeForm?.ratings && Object.keys(data.attitudeForm.ratings).length > 0)
+      );
+
+      // Once BOTH Review (Forwarded) and Attitude Form are completed, HIDE from HOD Dashboard!
+      if (isReviewed && attitudeDone) {
+        return false;
+      }
+
+      // If Review is still pending (Submitted), ALWAYS show so HOD can perform Review and Attitude Form.
+      if (!isReviewed) {
+        return true;
+      }
+
+      // If already reviewed (HOD_Approved / Approved) but Attitude Form is NOT done yet, ONLY show Assistant/Associate/Full Professors.
+      const desig = data.designation || data.formData?.designation || data.staffDesignation || "";
+      return isTeachingFaculty(desig);
+    };
+
     const unsubFaculty = onSnapshot(collection(db, 'faculty_appraisals'), (snap1) => {
       const facList = [];
       snap1.forEach((d) => {
         const data = d.data() || {};
-        if (isDeptMatch(data.department, hodDepartment) && data.status === "Submitted") {
+        if (isDeptMatch(data.department, hodDepartment) && checkIncludeInList(data)) {
           facList.push({ id: d.id, collectionName: 'faculty_appraisals', ...data });
         }
       });
 
-      getDocs(collection(db, 'non_teaching_appraisals')).then((snap2) => {
+      onSnapshot(collection(db, 'non_teaching_appraisals'), (snap2) => {
         const nonTeachList = [];
         snap2.forEach((d) => {
           const data = d.data() || {};
-          if (isDeptMatch(data.department, hodDepartment) && data.status === "Submitted") {
+          if (isDeptMatch(data.department, hodDepartment) && checkIncludeInList(data)) {
             nonTeachList.push({ id: d.id, collectionName: 'non_teaching_appraisals', ...data });
           }
         });
@@ -1572,7 +1852,7 @@ const isDeptMatch = (docDept, targetDept) => {
         combined.sort((a, b) => new Date(b.submittedAt || b.updatedAt || 0).getTime() - new Date(a.submittedAt || a.updatedAt || 0).getTime());
         setAppraisalList(combined);
         setAppraisalLoading(false);
-      }).catch(() => {
+      }, () => {
         facList.sort((a, b) => new Date(b.submittedAt || b.updatedAt || 0).getTime() - new Date(a.submittedAt || a.updatedAt || 0).getTime());
         setAppraisalList(facList);
         setAppraisalLoading(false);
@@ -4099,8 +4379,32 @@ const isDeptMatch = (docDept, targetDept) => {
                     </div>
                     <span className={`shrink-0 text-[10px] px-2 py-0.5 rounded-full font-bold border ${app.status === "Submitted" ? "bg-amber-50 text-amber-700 border-amber-200" : app.status === "HOD_Approved" ? "bg-blue-50 text-blue-700 border-blue-200" : app.status === "Approved" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : app.status === "Returned" ? "bg-rose-50 text-rose-700 border-rose-200" : "bg-zinc-100 text-zinc-600 border-zinc-200"}`}>{String(app.status || "Draft").replace("_", " ")}</span>
                   </div>
-                  <div className="mt-3 flex items-center justify-end">
-                    <button onClick={() => openAppraisalReview(app)} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#120c7a] text-white rounded-xl text-xs font-bold hover:bg-[#0f0a66]"><Eye size={13} /> Review</button>
+                  <div className="mt-3 flex items-center justify-end gap-2">
+                    {app.status !== "Submitted" ? (
+                      <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold shadow-xs">
+                        <CheckCircle2 size={13} className="text-emerald-600" /> Forwarded
+                      </span>
+                    ) : (
+                      <button onClick={() => openAppraisalReview(app)} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#120c7a] text-white rounded-xl text-xs font-bold hover:bg-[#0f0a66] transition-all cursor-pointer shadow-xs">
+                        <Eye size={13} /> Review
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleOpenAttitudeModal(app)}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs ${
+                        (app.attitudeEvaluation?.ratings && Object.keys(app.attitudeEvaluation.ratings).length > 0) || (app.attitudeForm?.ratings && Object.keys(app.attitudeForm.ratings).length > 0)
+                          ? "bg-teal-700 hover:bg-teal-800 text-white"
+                          : "bg-indigo-600 hover:bg-indigo-700 text-white"
+                      }`}
+                      title="Attitude Form"
+                    >
+                      <Award size={13} /> Attitude Form
+                      {((app.attitudeEvaluation?.totalScore !== undefined) || (app.attitudeForm?.totalScore !== undefined)) && (
+                        <span className="ml-0.5 bg-black/25 text-white px-1.5 py-0.2 rounded text-[9px] font-black">
+                          {app.attitudeEvaluation?.totalScore ?? app.attitudeForm?.totalScore}/{app.attitudeEvaluation?.maxScore || app.attitudeForm?.maxScore || (getHodAttitudeQuestions(app).length * 5)}
+                        </span>
+                      )}
+                    </button>
                   </div>
                 </div>
               ))
@@ -6776,6 +7080,211 @@ const isDeptMatch = (docDept, targetDept) => {
           </div>
         </div>
       )}
+
+      {/* ═══ Attitude & Competency Evaluation Form Modal ═══ */}
+      {attitudeModalOpen && attitudeAppraisal && (() => {
+        const activeQuestions = getHodAttitudeQuestions(attitudeAppraisal);
+        const maxScore = activeQuestions.length * 5;
+        const currentTotal = Object.values(attitudeRatings).reduce((sum, v) => sum + (Number(v) || 0), 0);
+        const evaluatedCount = Object.keys(attitudeRatings).filter(k => (Number(attitudeRatings[k]) || 0) > 0).length;
+        const isNonTeaching = attitudeAppraisal.formType === "non_teaching" || attitudeAppraisal.collectionName === "non_teaching_appraisals";
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-3 md:p-6 overflow-y-auto">
+            <div className="bg-white rounded-3xl w-full max-w-5xl border border-zinc-200 shadow-2xl overflow-hidden animate-scaleUp flex flex-col max-h-[92vh]">
+              
+              {/* Header */}
+              <div className="bg-[#1c355e] text-white p-5 md:px-8 md:py-6 flex flex-wrap items-center justify-between gap-4 border-b border-white/10">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-amber-400 font-black text-lg md:text-xl">
+                      {isNonTeaching 
+                        ? "Non-Teaching Staff Attitude Form" 
+                        : "Teacher Attitude Evaluation"}
+                    </span>
+                    <span className="bg-white/15 text-white text-[10px] font-black uppercase px-2 py-0.5 rounded-full border border-white/20">
+                      Evaluation Form
+                    </span>
+                  </div>
+                  <p className="text-xs text-blue-100 font-medium italic">
+                    {isNonTeaching 
+                      ? "CKGEI — Non-Teaching Staff Evaluation Questionnaire" 
+                      : "CKGEI — Teacher Evaluation Questionnaire"}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-3 pt-1 text-xs text-blue-200">
+                    <span><strong>Faculty / Staff:</strong> {attitudeAppraisal.facultyName || attitudeAppraisal.staffName || attitudeAppraisal.name}</span>
+                    <span>•</span>
+                    <span><strong>Designation:</strong> {attitudeAppraisal.designation || attitudeAppraisal.formData?.designation || attitudeAppraisal.staffDesignation || "Faculty"}</span>
+                    <span>•</span>
+                    <span><strong>Dept:</strong> {attitudeAppraisal.department || hodDepartment || "N/A"}</span>
+                    <span>•</span>
+                    <span><strong>Year:</strong> {attitudeAppraisal.academicYear || "2024-2025"}</span>
+                  </div>
+                </div>
+
+                {/* Score KPI Pill */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="bg-white/10 border border-white/20 rounded-2xl px-4 py-2 text-center">
+                    <div className="text-[10px] uppercase font-bold tracking-wider text-blue-200">Total Score</div>
+                    <div className="text-lg font-black text-amber-300">
+                      {currentTotal} / {maxScore}
+                    </div>
+                  </div>
+                  <div className="bg-white/10 border border-white/20 rounded-2xl px-4 py-2 text-center">
+                    <div className="text-[10px] uppercase font-bold tracking-wider text-blue-200">Average</div>
+                    <div className="text-lg font-black text-white">
+                      {evaluatedCount > 0 ? (currentTotal / evaluatedCount).toFixed(2) : "0.00"} <span className="text-xs font-normal text-blue-200">/ 5.0</span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setAttitudeModalOpen(false)}
+                    className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-all cursor-pointer"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Quick Actions & Legend Bar */}
+              <div className="bg-blue-50/60 border-b border-blue-100 px-6 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+                <div className="flex items-center gap-3 text-zinc-600 font-medium">
+                  <span className="text-zinc-500 font-bold">Progress:</span>
+                  <span className="text-[#1c355e] font-black">
+                    {evaluatedCount}
+                  </span> of {activeQuestions.length} statements evaluated
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleSetAllRatings(5)}
+                    className="px-2.5 py-1 rounded-lg bg-teal-100 hover:bg-teal-200 text-teal-800 text-[11px] font-bold transition-all cursor-pointer"
+                  >
+                    Set all 5 (SA)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSetAllRatings(4)}
+                    className="px-2.5 py-1 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-[11px] font-bold transition-all cursor-pointer"
+                  >
+                    Set all 4 (A)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAttitudeRatings({})}
+                    className="px-2.5 py-1 rounded-lg bg-zinc-200 hover:bg-zinc-300 text-zinc-700 text-[11px] font-bold transition-all cursor-pointer"
+                  >
+                    Clear All
+                  </button>
+                </div>
+              </div>
+
+              {/* Questionnaire Table (Scrollable) */}
+              <div className="overflow-y-auto p-4 md:p-6 space-y-6 flex-1">
+                <div className="border border-zinc-300 rounded-2xl overflow-hidden shadow-xs">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-[#1c355e] text-white text-xs uppercase tracking-wider font-bold">
+                        <th className="p-3.5 w-12 text-center border-r border-blue-900/60">#</th>
+                        <th className="p-3.5 border-r border-blue-900/60">Attitude & Statement</th>
+                        {ATTITUDE_RATING_OPTIONS.map((opt) => (
+                          <th key={opt.value} className="p-3 w-16 text-center border-r border-blue-900/60 last:border-r-0" title={opt.label}>
+                            <div className="font-black text-xs">{opt.code}</div>
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-200 text-xs">
+                      {activeQuestions.map((q) => {
+                        const currentVal = attitudeRatings[q.id];
+                        return (
+                          <tr key={q.id} className="hover:bg-blue-50/30 transition-colors">
+                            <td className="p-3.5 font-bold text-center text-zinc-700 bg-zinc-50/50 border-r border-zinc-200">
+                              {q.id}
+                            </td>
+                            <td className="p-3.5 border-r border-zinc-200">
+                              <div className="font-bold text-[#1c355e] text-xs mb-0.5">
+                                {q.title}
+                              </div>
+                              <div className="text-zinc-600 text-[11px] leading-relaxed">
+                                {q.statement}
+                              </div>
+                            </td>
+                            {ATTITUDE_RATING_OPTIONS.map((opt) => {
+                              const isSelected = currentVal === opt.value;
+                              return (
+                                <td
+                                  key={opt.value}
+                                  onClick={() => handleSetRating(q.id, opt.value)}
+                                  className={`p-2 text-center border-r border-zinc-200 last:border-r-0 cursor-pointer transition-all ${
+                                    isSelected ? "bg-teal-500/15" : "hover:bg-zinc-100"
+                                  }`}
+                                >
+                                  <div className="flex items-center justify-center">
+                                    <div
+                                      className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
+                                        isSelected
+                                          ? "bg-[#1c355e] border-[#1c355e] text-white shadow-xs"
+                                          : "border-zinc-400 bg-white hover:border-[#1c355e]"
+                                      }`}
+                                    >
+                                      {isSelected && <Check size={13} className="stroke-[3]" />}
+                                    </div>
+                                  </div>
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Remarks / Evidence Section */}
+                <div className="bg-zinc-50 border border-zinc-200 rounded-2xl p-4 md:p-5 space-y-2">
+                  <label className="block text-xs font-bold text-[#1c355e] uppercase tracking-wider">
+                    Remarks / Evidence:
+                  </label>
+                  <textarea
+                    value={attitudeRemarks}
+                    onChange={(e) => setAttitudeRemarks(e.target.value)}
+                    rows={3}
+                    className="w-full rounded-xl border border-zinc-300 p-3 text-xs text-zinc-700 bg-white focus:outline-none focus:ring-2 focus:ring-[#1c355e]/20 focus:border-[#1c355e]"
+                    placeholder="Enter qualitative comments, achievements observed, evidence, or feedback..."
+                  />
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="bg-zinc-50 border-t border-zinc-200 px-6 py-4 flex flex-wrap items-center justify-between gap-4">
+                <div className="text-xs text-zinc-600">
+                  Total Evaluated Score: <strong className="text-[#1c355e] text-sm font-black">{currentTotal} / {maxScore}</strong>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setAttitudeModalOpen(false)}
+                    className="px-4 py-2.5 rounded-xl border border-zinc-300 hover:bg-zinc-100 text-zinc-700 text-xs font-bold transition-all cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveAttitudeEvaluation}
+                    disabled={attitudeSaving}
+                    className="px-6 py-2.5 rounded-xl bg-[#1c355e] hover:bg-[#152847] text-white text-xs font-bold transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50 shadow-md shadow-blue-900/20"
+                  >
+                    {attitudeSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                    Save Attitude Evaluation
+                  </button>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        );
+      })()}
     </Layout>
   );
 }

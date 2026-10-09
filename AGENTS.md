@@ -1,5 +1,20 @@
 ## Summary of Changes
 
+### 517. Fix Uncaught ReferenceError: FileWarning is not defined (`src/pages/HODDashboard.jsx`)
+- **Goal**: Fix runtime ReferenceError `FileWarning is not defined` thrown on line 4270 when rendering the "Answer Script Photocopy Problem Discrepancies" card header in `HODDashboard.jsx`.
+- **Root Cause**: The `<FileWarning size={18} />` icon component was rendered in the card header title, but `FileWarning` was missing from the `lucide-react` import statement.
+- **Changes**:
+  - `src/pages/HODDashboard.jsx`: Added `FileWarning` to named imports from `lucide-react`.
+- **Result**: Production build succeeds cleanly in 7.31s with 0 errors.
+
+### 516. Fix Photocopy Problem Applications HOD Display & Department Matching (`src/pages/HODDashboard.jsx`)
+- **Goal**: Resolve issue where student-submitted Photocopy Problem Discrepancy applications from `PhotocopyProblem.jsx` did not show up under the HOD Dashboard card.
+- **Root Cause**:
+  - `HODDashboard.jsx` `photocopy_problem_applications` listener used a naive strict string check `norm(app.department) === targetDeptNorm`, which failed when matching acronyms or department variations (e.g. `B.Tech. Artificial Intelligence and Data Science` vs `AI & DS` / `AIDS`).
+- **Changes**:
+  - `src/pages/HODDashboard.jsx`: Moved `isDeptMatch` helper function to top-level scope and updated `photocopy_problem_applications`, `photocopy_applications`, and `revaluation_applications` listeners to use `isDeptMatch(app.department, hodDepartment) || isDeptMatch(app.programme, hodDepartment)`.
+- **Result**: Production build succeeds cleanly in 7.02s with 0 errors. All submitted photocopy problem reports now immediately appear in real-time under the HOD's "Answer Script Photocopy Problem Discrepancies" card.
+
 ### 515. Fix Uncaught ReferenceError: Download is not defined (`src/pages/ExamCell/ExamFormSettingPage.jsx`)
 - **Goal**: Fix runtime ReferenceError `Download is not defined` thrown on line 932 when rendering revaluation application subject attachments in `ExamFormSettingPage.jsx`.
 - **Root Cause**: The `<Download size={11} />` icon component was rendered in the Revaluation applications table to allow Exam Cell officers to download student-submitted scripts, but `Download` was omitted from the `lucide-react` import statement.

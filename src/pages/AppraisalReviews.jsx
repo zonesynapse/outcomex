@@ -119,6 +119,106 @@ export const HOD_ATTITUDE_EVALUATION_QUESTIONS = [
   }
 ];
 
+export const TEACHER_ATTITUDE_EVALUATION_QUESTIONS = [
+  { id: 1, title: "Ownership & Accountability", statement: "Takes full responsibility for their role, decisions, and outcomes." },
+  { id: 2, title: "Emotional Intelligence & Collaboration", statement: "Stays self-aware and empathetic, and works effectively with others." },
+  { id: 3, title: "Customer Focus & Empathy", statement: "Keeps the learner, parent, or stakeholder at the centre of their decisions." },
+  { id: 4, title: "Resilience & Adaptability", statement: "Remains steady and effective through setbacks, pressure, and change." },
+  { id: 5, title: "Growth Mindset", statement: "Continuously improves, quickly acquires new skills, and unlearns old habits where needed." },
+  { id: 6, title: "Inquisitiveness & Creative Problem-Solving", statement: "Asks probing questions, evaluates answers critically, and solves problems in novel ways." },
+  { id: 7, title: "AI Literacy & Judgment", statement: "Proactively learns and uses AI tools, and exercises judgment on when to trust AI output versus human intuition." },
+  { id: 8, title: "Integrity & Ethical Judgement", statement: "Acts with consistent honesty, fairness, and principled conduct." },
+  { id: 9, title: "Clarity in Communication", statement: "Articulates ideas clearly and persuasively, in speech and in writing." },
+  { id: 10, title: "Diligence & Ownership", statement: "Is consistently punctual and executes assigned duties thoroughly, flawlessly meeting KRAs." },
+  { id: 11, title: "Learning & Applying (EdTech)", statement: "Shows visible progress through IIY and by embracing EdTech in their work." },
+  { id: 12, title: "Classroom EQ & Leadership", statement: "Leads an attentive, engaged classroom, stays open and approachable, motivates students, and builds rapport with parents." },
+  { id: 13, title: "Proactive", statement: "Anticipates needs and acts ahead of requirements." },
+  { id: 14, title: "Going the Extra Mile", statement: "Consistently exceeds baseline expectations in their role." },
+  { id: 15, title: "Change Agent & Innovation Torch-Bearer", statement: "Actively drives improvement in pedagogy, curriculum, or department practice." },
+  { id: 16, title: "High Consulting Capability", statement: "Advises students, peers, or the department with sound, well-reasoned judgment." }
+];
+
+export const NON_TEACHING_GENERAL_ATTITUDE_QUESTIONS = [
+  { id: 1, title: "Punctuality & Reliability", statement: "Is consistently present, on time, and dependable in carrying out assigned duties." },
+  { id: 2, title: "Ownership & Accountability", statement: "Takes full responsibility for the quality and completion of their work." },
+  { id: 3, title: "Integrity & Honesty", statement: "Handles institutional property, information, and resources in a trustworthy manner." },
+  { id: 4, title: "Teamwork & Cooperation", statement: "Works well with colleagues and other departments." },
+  { id: 5, title: "Service Orientation & Courtesy", statement: "Treats staff, students, parents, and visitors with courtesy and helpfulness." },
+  { id: 6, title: "Adaptability & Willingness to Learn", statement: "Stays open to new instructions, tools, and ways of working." },
+  { id: 7, title: "Safety & Compliance Consciousness", statement: "Follows safety norms and institutional protocols without being reminded." },
+  { id: 8, title: "Attention to Detail & Documentation Accuracy", statement: "Handles records, correspondence, and data carefully and accurately." },
+  { id: 9, title: "Confidentiality & Discretion", statement: "Safeguards sensitive institutional, staff, and student information." },
+  { id: 10, title: "Responsiveness", statement: "Responds to requests from staff, students, and parents in a timely and courteous manner." },
+  { id: 11, title: "Basic Digital & AI Literacy", statement: "Uses digital tools and AI-assisted systems comfortably for records and communication." },
+  { id: 12, title: "AI Literacy & Judgment", statement: "Proactively learns and uses AI tools, and exercises judgment on when to trust AI output versus human intuition." },
+  { id: 13, title: "Growth Mindset", statement: "Continuously improves, quickly acquires new skills, and unlearns old habits where needed." },
+  { id: 14, title: "Clarity in Communication", statement: "Articulates ideas clearly and persuasively, in speech and in writing." },
+  { id: 15, title: "Inquisitiveness & Creative Problem-Solving", statement: "Asks probing questions, evaluates answers critically, and solves problems in novel ways." },
+  { id: 16, title: "Proactive", statement: "Anticipates needs and acts ahead of requirements." },
+  { id: 17, title: "Stakeholder Focus & Empathy", statement: "Keeps students, staff, and other stakeholders at the centre of their decisions." },
+  { id: 18, title: "Process & Service Improvement", statement: "Actively looks for ways to improve processes and service delivery in their area." },
+  { id: 19, title: "Advisory Capability", statement: "Advises colleagues, departments, or stakeholders with sound, well-reasoned judgment." }
+];
+
+export const NON_TEACHING_DRIVER_ATTITUDE_QUESTIONS = [
+  { id: 1, title: "Punctuality & Reliability", statement: "Is consistently present, on time, and dependable in carrying out assigned duties." },
+  { id: 2, title: "Ownership & Accountability", statement: "Takes full responsibility for the quality and completion of their work." },
+  { id: 3, title: "Integrity & Honesty", statement: "Handles institutional property, information, and resources in a trustworthy manner." },
+  { id: 4, title: "Teamwork & Cooperation", statement: "Works well with colleagues and other departments." },
+  { id: 5, title: "Service Orientation & Courtesy", statement: "Treats staff, students, parents, and visitors with courtesy and helpfulness." },
+  { id: 6, title: "Adaptability & Willingness to Learn", statement: "Stays open to new instructions, tools, and ways of working." },
+  { id: 7, title: "Safety & Compliance Consciousness", statement: "Follows safety norms and institutional protocols without being reminded." },
+  { id: 8, title: "Road & Vehicle Safety Discipline", statement: "Practises defensive driving and strictly adheres to traffic and safety norms, especially with students as passengers." },
+  { id: 9, title: "Vehicle & Asset Care", statement: "Maintains the assigned vehicle diligently, including cleanliness and fuel discipline." },
+  { id: 10, title: "Composure Under Pressure", statement: "Stays calm and safe under traffic, time, or emergency pressure." },
+  { id: 11, title: "Predictable Availability", statement: "Is punctually and dependably present, aligned to institutional schedules." }
+];
+
+export const NON_TEACHING_HOUSEKEEPING_ATTITUDE_QUESTIONS = [
+  { id: 1, title: "Punctuality & Reliability", statement: "Is consistently present, on time, and dependable in carrying out assigned duties." },
+  { id: 2, title: "Ownership & Accountability", statement: "Takes full responsibility for the quality and completion of their work." },
+  { id: 3, title: "Integrity & Honesty", statement: "Handles institutional property, information, and resources in a trustworthy manner." },
+  { id: 4, title: "Teamwork & Cooperation", statement: "Works well with colleagues and other departments." },
+  { id: 5, title: "Service Orientation & Courtesy", statement: "Treats staff, students, parents, and visitors with courtesy and helpfulness." },
+  { id: 6, title: "Adaptability & Willingness to Learn", statement: "Stays open to new instructions, tools, and ways of working." },
+  { id: 7, title: "Safety & Compliance Consciousness", statement: "Follows safety norms and institutional protocols without being reminded." },
+  { id: 8, title: "Hygiene & Cleanliness Standards", statement: "Maintains consistent, high standards of cleanliness across assigned spaces." },
+  { id: 9, title: "Proactive Upkeep", statement: "Notices and addresses issues — spills, wear, shortages — without being prompted." },
+  { id: 10, title: "Respect for Privacy of Spaces", statement: "Handles others' spaces and belongings carefully and respectfully while on duty." },
+  { id: 11, title: "Physical Diligence & Consistency", statement: "Sustains reliable effort and diligence across every shift." }
+];
+
+export const getAttitudeQuestions = (app) => {
+  if (app?.formType === "hod") {
+    return HOD_ATTITUDE_EVALUATION_QUESTIONS;
+  }
+  if (app?.formType === "non_teaching" || app?.collectionName === "non_teaching_appraisals") {
+    const rawDesig = (app?.designation || app?.formData?.designation || app?.staffDesignation || "");
+    const rawDept = (app?.department || app?.formData?.department || "");
+    const rawRole = (app?.role || app?.formData?.role || "");
+    const combinedStr = `${rawDesig} ${rawDept} ${rawRole}`.toLowerCase();
+    const normalizedStr = combinedStr.replace(/[^a-z0-9]/g, "");
+
+    if (
+      normalizedStr.includes("housekeeping") || 
+      normalizedStr.includes("housekeeper") || 
+      combinedStr.includes("house keeping")
+    ) {
+      return NON_TEACHING_HOUSEKEEPING_ATTITUDE_QUESTIONS;
+    }
+    if (
+      normalizedStr.includes("driver") || 
+      normalizedStr.includes("transport") || 
+      combinedStr.includes("driver") ||
+      combinedStr.includes("transport")
+    ) {
+      return NON_TEACHING_DRIVER_ATTITUDE_QUESTIONS;
+    }
+    return NON_TEACHING_GENERAL_ATTITUDE_QUESTIONS;
+  }
+  return TEACHER_ATTITUDE_EVALUATION_QUESTIONS;
+};
+
 export const ATTITUDE_RATING_OPTIONS = [
   { value: 1, code: "1 SD", label: "Strongly Disagree", color: "hover:bg-rose-50 text-rose-700 border-rose-200" },
   { value: 2, code: "2 D", label: "Disagree", color: "hover:bg-orange-50 text-orange-700 border-orange-200" },
@@ -331,8 +431,9 @@ export default function AppraisalReviews() {
   };
 
   const handleSetAllRatings = (val) => {
+    const activeQuestions = getAttitudeQuestions(attitudeAppraisal);
     const updated = {};
-    HOD_ATTITUDE_EVALUATION_QUESTIONS.forEach(q => {
+    activeQuestions.forEach(q => {
       updated[q.id] = val;
     });
     setAttitudeRatings(updated);
@@ -342,15 +443,26 @@ export default function AppraisalReviews() {
     if (!attitudeAppraisal) return;
     setAttitudeSaving(true);
     try {
+      const activeQuestions = getAttitudeQuestions(attitudeAppraisal);
       const totalScore = Object.values(attitudeRatings).reduce((sum, v) => sum + (Number(v) || 0), 0);
-      const maxScore = HOD_ATTITUDE_EVALUATION_QUESTIONS.length * 5; // 18 * 5 = 90
+      const maxScore = activeQuestions.length * 5;
       const evaluatedCount = Object.keys(attitudeRatings).filter(k => (Number(attitudeRatings[k]) || 0) > 0).length;
       const percentage = maxScore > 0 ? ((totalScore / maxScore) * 100).toFixed(1) : "0.0";
       const average = evaluatedCount > 0 ? (totalScore / evaluatedCount).toFixed(2) : "0.0";
 
+      const isNonTeaching = attitudeAppraisal.formType === "non_teaching" || attitudeAppraisal.collectionName === "non_teaching_appraisals";
+
       const evalPayload = {
-        formTitle: "A.2 College — Head of Department (HoD)",
-        subtitle: "CKGEI — Coordinator / HoD Evaluation Questionnaire",
+        formTitle: isNonTeaching 
+          ? "Non-Teaching Attitude Form" 
+          : attitudeAppraisal.formType === "hod" 
+          ? "A.2 College — Head of Department (HoD)" 
+          : "Teacher Attitude Evaluation",
+        subtitle: isNonTeaching 
+          ? "CKGEI — Non-Teaching Staff Evaluation Questionnaire" 
+          : attitudeAppraisal.formType === "hod" 
+          ? "CKGEI — Coordinator / HoD Evaluation Questionnaire" 
+          : "CKGEI — Teacher Evaluation Questionnaire",
         ratings: attitudeRatings,
         remarks: attitudeRemarks.trim(),
         totalScore,
@@ -358,7 +470,7 @@ export default function AppraisalReviews() {
         percentage,
         average,
         evaluatedCount,
-        totalQuestions: HOD_ATTITUDE_EVALUATION_QUESTIONS.length,
+        totalQuestions: activeQuestions.length,
         evaluatedAt: new Date().toISOString(),
         evaluatedBy: currentUser?.displayName || currentUser?.email || "Reviewer",
         evaluatedByRole: userRole || "Reviewer"
@@ -366,7 +478,7 @@ export default function AppraisalReviews() {
 
       const targetColl = attitudeAppraisal.formType === "hod"
         ? "hod_appraisals"
-        : attitudeAppraisal.formType === "non_teaching"
+        : (attitudeAppraisal.formType === "non_teaching" || attitudeAppraisal.collectionName === "non_teaching_appraisals")
         ? "non_teaching_appraisals"
         : "faculty_appraisals";
 
@@ -385,7 +497,7 @@ export default function AppraisalReviews() {
         }));
       }
 
-      showToast("Attitude & Competency Evaluation saved successfully!", "success");
+      showToast("Attitude Evaluation saved successfully!", "success");
       setAttitudeModalOpen(false);
     } catch (err) {
       console.error("Failed to save attitude evaluation:", err);
@@ -890,12 +1002,12 @@ export default function AppraisalReviews() {
                       ? "bg-teal-50 hover:bg-teal-100 border-teal-200 text-teal-700"
                       : "bg-indigo-50 hover:bg-indigo-100 border-indigo-200 text-indigo-700"
                   }`}
-                  title="Attitude & Competency Evaluation Form"
+                  title="Attitude Form"
                 >
-                  <Award size={14} /> Attitude Evaluation
+                  <Award size={14} /> Attitude Form
                   {((selectedAppraisal.attitudeEvaluation?.totalScore !== undefined) || (selectedAppraisal.attitudeForm?.totalScore !== undefined)) && (
                     <span className="ml-1 bg-teal-200 text-teal-900 px-1.5 py-0.2 rounded-full text-[10px] font-black">
-                      {selectedAppraisal.attitudeEvaluation?.totalScore ?? selectedAppraisal.attitudeForm?.totalScore}/{selectedAppraisal.attitudeEvaluation?.maxScore || selectedAppraisal.attitudeForm?.maxScore || (HOD_ATTITUDE_EVALUATION_QUESTIONS.length * 5)}
+                      {selectedAppraisal.attitudeEvaluation?.totalScore ?? selectedAppraisal.attitudeForm?.totalScore}/{selectedAppraisal.attitudeEvaluation?.maxScore || selectedAppraisal.attitudeForm?.maxScore || (getAttitudeQuestions(selectedAppraisal).length * 5)}
                     </span>
                   )}
                 </button>
@@ -3279,12 +3391,12 @@ export default function AppraisalReviews() {
                                     ? "bg-teal-700 hover:bg-teal-800 text-white"
                                     : "bg-indigo-600 hover:bg-indigo-700 text-white"
                                 }`}
-                                title="Attitude & Competency Evaluation Form"
+                                title="Attitude Form"
                               >
-                                <Award size={12} /> Attitude Evaluation
+                                <Award size={12} /> Attitude Form
                                 {((app.attitudeEvaluation?.totalScore !== undefined) || (app.attitudeForm?.totalScore !== undefined)) && (
                                   <span className="ml-0.5 bg-black/25 text-white px-1.5 py-0.2 rounded text-[9px] font-black">
-                                    {app.attitudeEvaluation?.totalScore ?? app.attitudeForm?.totalScore}/{app.attitudeEvaluation?.maxScore || app.attitudeForm?.maxScore || (HOD_ATTITUDE_EVALUATION_QUESTIONS.length * 5)}
+                                    {app.attitudeEvaluation?.totalScore ?? app.attitudeForm?.totalScore}/{app.attitudeEvaluation?.maxScore || app.attitudeForm?.maxScore || (getAttitudeQuestions(app).length * 5)}
                                   </span>
                                 )}
                               </button>
@@ -3344,199 +3456,213 @@ export default function AppraisalReviews() {
         )}
 
         {/* Attitude & Competency Evaluation Form Modal */}
-        {attitudeModalOpen && attitudeAppraisal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-3 md:p-6 overflow-y-auto">
-            <div className="bg-white rounded-3xl w-full max-w-5xl border border-zinc-200 shadow-2xl overflow-hidden animate-scaleUp flex flex-col max-h-[92vh]">
-              
-              {/* Header */}
-              <div className="bg-[#1c355e] text-white p-5 md:px-8 md:py-6 flex flex-wrap items-center justify-between gap-4 border-b border-white/10">
-                <div className="space-y-1">
+        {attitudeModalOpen && attitudeAppraisal && (() => {
+          const activeQuestions = getAttitudeQuestions(attitudeAppraisal);
+          const maxScore = activeQuestions.length * 5;
+          const currentTotal = Object.values(attitudeRatings).reduce((sum, v) => sum + (Number(v) || 0), 0);
+          const evaluatedCount = Object.keys(attitudeRatings).filter(k => (Number(attitudeRatings[k]) || 0) > 0).length;
+          const isNonTeaching = attitudeAppraisal.formType === "non_teaching" || attitudeAppraisal.collectionName === "non_teaching_appraisals";
+
+          return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-3 md:p-6 overflow-y-auto">
+              <div className="bg-white rounded-3xl w-full max-w-5xl border border-zinc-200 shadow-2xl overflow-hidden animate-scaleUp flex flex-col max-h-[92vh]">
+                
+                {/* Header */}
+                <div className="bg-[#1c355e] text-white p-5 md:px-8 md:py-6 flex flex-wrap items-center justify-between gap-4 border-b border-white/10">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-amber-400 font-black text-lg md:text-xl">
+                        {isNonTeaching 
+                          ? "Non-Teaching Staff Attitude Form" 
+                          : attitudeAppraisal.formType === "hod" 
+                          ? "A.2 College — Head of Department (HoD)" 
+                          : "Teacher Attitude Evaluation"}
+                      </span>
+                      <span className="bg-white/15 text-white text-[10px] font-black uppercase px-2 py-0.5 rounded-full border border-white/20">
+                        Evaluation Form
+                      </span>
+                    </div>
+                    <p className="text-xs text-blue-100 font-medium italic">
+                      {isNonTeaching 
+                        ? "CKGEI — Non-Teaching Staff Evaluation Questionnaire" 
+                        : attitudeAppraisal.formType === "hod" 
+                        ? "CKGEI — Coordinator / HoD Evaluation Questionnaire" 
+                        : "CKGEI — Teacher Evaluation Questionnaire"}
+                    </p>
+                    <div className="flex flex-wrap items-center gap-3 pt-1 text-xs text-blue-200">
+                      <span><strong>Staff / Faculty:</strong> {attitudeAppraisal.facultyName || attitudeAppraisal.staffName || attitudeAppraisal.hodName || attitudeAppraisal.name}</span>
+                      <span>•</span>
+                      <span><strong>Designation:</strong> {attitudeAppraisal.designation || attitudeAppraisal.formData?.designation || attitudeAppraisal.staffDesignation || "N/A"}</span>
+                      <span>•</span>
+                      <span><strong>Dept:</strong> {attitudeAppraisal.department || "N/A"}</span>
+                      <span>•</span>
+                      <span><strong>Year:</strong> {attitudeAppraisal.academicYear || "2024-2025"}</span>
+                    </div>
+                  </div>
+
+                  {/* Score KPI Pill */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="bg-white/10 border border-white/20 rounded-2xl px-4 py-2 text-center">
+                      <div className="text-[10px] uppercase font-bold tracking-wider text-blue-200">Total Score</div>
+                      <div className="text-lg font-black text-amber-300">
+                        {currentTotal} / {maxScore}
+                      </div>
+                    </div>
+                    <div className="bg-white/10 border border-white/20 rounded-2xl px-4 py-2 text-center">
+                      <div className="text-[10px] uppercase font-bold tracking-wider text-blue-200">Average</div>
+                      <div className="text-lg font-black text-white">
+                        {evaluatedCount > 0 ? (currentTotal / evaluatedCount).toFixed(2) : "0.00"} <span className="text-xs font-normal text-blue-200">/ 5.0</span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setAttitudeModalOpen(false)}
+                      className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-all cursor-pointer"
+                    >
+                      <X size={18} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Quick Actions & Legend Bar */}
+                <div className="bg-blue-50/60 border-b border-blue-100 px-6 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center gap-3 text-zinc-600 font-medium">
+                    <span className="text-zinc-500 font-bold">Progress:</span>
+                    <span className="text-[#1c355e] font-black">
+                      {evaluatedCount}
+                    </span> of {activeQuestions.length} statements evaluated
+                  </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-amber-400 font-black text-lg md:text-xl">
-                      A.2 College — Head of Department (HoD)
-                    </span>
-                    <span className="bg-white/15 text-white text-[10px] font-black uppercase px-2 py-0.5 rounded-full border border-white/20">
-                      Evaluation Form
-                    </span>
-                  </div>
-                  <p className="text-xs text-blue-100 font-medium italic">
-                    CKGEI — Coordinator / HoD Evaluation Questionnaire
-                  </p>
-                  <div className="flex flex-wrap items-center gap-3 pt-1 text-xs text-blue-200">
-                    <span><strong>HoD:</strong> {attitudeAppraisal.facultyName || attitudeAppraisal.hodName || attitudeAppraisal.name}</span>
-                    <span>•</span>
-                    <span><strong>Dept:</strong> {attitudeAppraisal.department}</span>
-                    <span>•</span>
-                    <span><strong>Year:</strong> {attitudeAppraisal.academicYear || "2024-2025"}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleSetAllRatings(5)}
+                      className="px-2.5 py-1 rounded-lg bg-teal-100 hover:bg-teal-200 text-teal-800 text-[11px] font-bold transition-all cursor-pointer"
+                    >
+                      Set all 5 (SA)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSetAllRatings(4)}
+                      className="px-2.5 py-1 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-[11px] font-bold transition-all cursor-pointer"
+                    >
+                      Set all 4 (A)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAttitudeRatings({})}
+                      className="px-2.5 py-1 rounded-lg bg-zinc-200 hover:bg-zinc-300 text-zinc-700 text-[11px] font-bold transition-all cursor-pointer"
+                    >
+                      Clear All
+                    </button>
                   </div>
                 </div>
 
-                {/* Score KPI Pill */}
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="bg-white/10 border border-white/20 rounded-2xl px-4 py-2 text-center">
-                    <div className="text-[10px] uppercase font-bold tracking-wider text-blue-200">Total Score</div>
-                    <div className="text-lg font-black text-amber-300">
-                      {Object.values(attitudeRatings).reduce((sum, v) => sum + (Number(v) || 0), 0)} / {HOD_ATTITUDE_EVALUATION_QUESTIONS.length * 5}
-                    </div>
-                  </div>
-                  <div className="bg-white/10 border border-white/20 rounded-2xl px-4 py-2 text-center">
-                    <div className="text-[10px] uppercase font-bold tracking-wider text-blue-200">Average</div>
-                    <div className="text-lg font-black text-white">
-                      {(() => {
-                        const count = Object.keys(attitudeRatings).filter(k => (Number(attitudeRatings[k]) || 0) > 0).length;
-                        const sum = Object.values(attitudeRatings).reduce((s, v) => s + (Number(v) || 0), 0);
-                        return count > 0 ? (sum / count).toFixed(2) : "0.00";
-                      })()} <span className="text-xs font-normal text-blue-200">/ 5.0</span>
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => setAttitudeModalOpen(false)}
-                    className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-all cursor-pointer"
-                  >
-                    <X size={18} />
-                  </button>
-                </div>
-              </div>
-
-              {/* Quick Actions & Legend Bar */}
-              <div className="bg-blue-50/60 border-b border-blue-100 px-6 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs">
-                <div className="flex items-center gap-3 text-zinc-600 font-medium">
-                  <span className="text-zinc-500 font-bold">Progress:</span>
-                  <span className="text-[#1c355e] font-black">
-                    {Object.keys(attitudeRatings).filter(k => (Number(attitudeRatings[k]) || 0) > 0).length}
-                  </span> of {HOD_ATTITUDE_EVALUATION_QUESTIONS.length} statements evaluated
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleSetAllRatings(5)}
-                    className="px-2.5 py-1 rounded-lg bg-teal-100 hover:bg-teal-200 text-teal-800 text-[11px] font-bold transition-all cursor-pointer"
-                  >
-                    Set all 5 (SA)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSetAllRatings(4)}
-                    className="px-2.5 py-1 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-[11px] font-bold transition-all cursor-pointer"
-                  >
-                    Set all 4 (A)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAttitudeRatings({})}
-                    className="px-2.5 py-1 rounded-lg bg-zinc-200 hover:bg-zinc-300 text-zinc-700 text-[11px] font-bold transition-all cursor-pointer"
-                  >
-                    Clear All
-                  </button>
-                </div>
-              </div>
-
-              {/* Questionnaire Table (Scrollable) */}
-              <div className="overflow-y-auto p-4 md:p-6 space-y-6 flex-1">
-                <div className="border border-zinc-300 rounded-2xl overflow-hidden shadow-xs">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="bg-[#1c355e] text-white text-xs uppercase tracking-wider font-bold">
-                        <th className="p-3.5 w-12 text-center border-r border-blue-900/60">#</th>
-                        <th className="p-3.5 border-r border-blue-900/60">Attitude & Statement</th>
-                        {ATTITUDE_RATING_OPTIONS.map((opt) => (
-                          <th key={opt.value} className="p-3 w-16 text-center border-r border-blue-900/60 last:border-r-0" title={opt.label}>
-                            <div className="font-black text-xs">{opt.code}</div>
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-200 text-xs">
-                      {HOD_ATTITUDE_EVALUATION_QUESTIONS.map((q) => {
-                        const currentVal = attitudeRatings[q.id];
-                        return (
-                          <tr key={q.id} className="hover:bg-blue-50/30 transition-colors">
-                            <td className="p-3.5 font-bold text-center text-zinc-700 bg-zinc-50/50 border-r border-zinc-200">
-                              {q.id}
-                            </td>
-                            <td className="p-3.5 border-r border-zinc-200">
-                              <div className="font-bold text-[#1c355e] text-xs mb-0.5">
-                                {q.title}
-                              </div>
-                              <div className="text-zinc-600 text-[11px] leading-relaxed">
-                                {q.statement}
-                              </div>
-                            </td>
-                            {ATTITUDE_RATING_OPTIONS.map((opt) => {
-                              const isSelected = currentVal === opt.value;
-                              return (
-                                <td
-                                  key={opt.value}
-                                  onClick={() => handleSetRating(q.id, opt.value)}
-                                  className={`p-2 text-center border-r border-zinc-200 last:border-r-0 cursor-pointer transition-all ${
-                                    isSelected ? "bg-teal-500/15" : "hover:bg-zinc-100"
-                                  }`}
-                                >
-                                  <div className="flex items-center justify-center">
-                                    <div
-                                      className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
-                                        isSelected
-                                          ? "bg-[#1c355e] border-[#1c355e] text-white shadow-xs"
-                                          : "border-zinc-400 bg-white hover:border-[#1c355e]"
-                                      }`}
-                                    >
-                                      {isSelected && <Check size={13} className="stroke-[3]" />}
+                {/* Questionnaire Table (Scrollable) */}
+                <div className="overflow-y-auto p-4 md:p-6 space-y-6 flex-1">
+                  <div className="border border-zinc-300 rounded-2xl overflow-hidden shadow-xs">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-[#1c355e] text-white text-xs uppercase tracking-wider font-bold">
+                          <th className="p-3.5 w-12 text-center border-r border-blue-900/60">#</th>
+                          <th className="p-3.5 border-r border-blue-900/60">Attitude & Statement</th>
+                          {ATTITUDE_RATING_OPTIONS.map((opt) => (
+                            <th key={opt.value} className="p-3 w-16 text-center border-r border-blue-900/60 last:border-r-0" title={opt.label}>
+                              <div className="font-black text-xs">{opt.code}</div>
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-200 text-xs">
+                        {activeQuestions.map((q) => {
+                          const currentVal = attitudeRatings[q.id];
+                          return (
+                            <tr key={q.id} className="hover:bg-blue-50/30 transition-colors">
+                              <td className="p-3.5 font-bold text-center text-zinc-700 bg-zinc-50/50 border-r border-zinc-200">
+                                {q.id}
+                              </td>
+                              <td className="p-3.5 border-r border-zinc-200">
+                                <div className="font-bold text-[#1c355e] text-xs mb-0.5">
+                                  {q.title}
+                                </div>
+                                <div className="text-zinc-600 text-[11px] leading-relaxed">
+                                  {q.statement}
+                                </div>
+                              </td>
+                              {ATTITUDE_RATING_OPTIONS.map((opt) => {
+                                const isSelected = currentVal === opt.value;
+                                return (
+                                  <td
+                                    key={opt.value}
+                                    onClick={() => handleSetRating(q.id, opt.value)}
+                                    className={`p-2 text-center border-r border-zinc-200 last:border-r-0 cursor-pointer transition-all ${
+                                      isSelected ? "bg-teal-500/15" : "hover:bg-zinc-100"
+                                    }`}
+                                  >
+                                    <div className="flex items-center justify-center">
+                                      <div
+                                        className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
+                                          isSelected
+                                            ? "bg-[#1c355e] border-[#1c355e] text-white shadow-xs"
+                                            : "border-zinc-400 bg-white hover:border-[#1c355e]"
+                                        }`}
+                                      >
+                                        {isSelected && <Check size={13} className="stroke-[3]" />}
+                                      </div>
                                     </div>
-                                  </div>
-                                </td>
-                              );
-                            })}
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Remarks / Evidence Section */}
+                  <div className="bg-zinc-50 border border-zinc-200 rounded-2xl p-4 md:p-5 space-y-2">
+                    <label className="block text-xs font-bold text-[#1c355e] uppercase tracking-wider">
+                      Remarks / Evidence:
+                    </label>
+                    <textarea
+                      value={attitudeRemarks}
+                      onChange={(e) => setAttitudeRemarks(e.target.value)}
+                      rows={3}
+                      className="w-full rounded-xl border border-zinc-300 p-3 text-xs text-zinc-700 bg-white focus:outline-none focus:ring-2 focus:ring-[#1c355e]/20 focus:border-[#1c355e]"
+                      placeholder="Enter qualitative comments, achievements observed, evidence, or feedback..."
+                    />
+                  </div>
                 </div>
 
-                {/* Remarks / Evidence Section (Matches image bottom field) */}
-                <div className="bg-zinc-50 border border-zinc-200 rounded-2xl p-4 md:p-5 space-y-2">
-                  <label className="block text-xs font-bold text-[#1c355e] uppercase tracking-wider">
-                    Remarks / Evidence:
-                  </label>
-                  <textarea
-                    value={attitudeRemarks}
-                    onChange={(e) => setAttitudeRemarks(e.target.value)}
-                    rows={3}
-                    className="w-full rounded-xl border border-zinc-300 p-3 text-xs text-zinc-700 bg-white focus:outline-none focus:ring-2 focus:ring-[#1c355e]/20 focus:border-[#1c355e]"
-                    placeholder="Enter qualitative comments, achievements observed, evidence, or feedback for the Head of Department..."
-                  />
+                {/* Modal Footer */}
+                <div className="bg-zinc-50 border-t border-zinc-200 px-6 py-4 flex flex-wrap items-center justify-between gap-4">
+                  <div className="text-xs text-zinc-600">
+                    Total Evaluated Score: <strong className="text-[#1c355e] text-sm font-black">{currentTotal} / {maxScore}</strong>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setAttitudeModalOpen(false)}
+                      className="px-4 py-2.5 rounded-xl border border-zinc-300 hover:bg-zinc-100 text-zinc-700 text-xs font-bold transition-all cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveAttitudeEvaluation}
+                      disabled={attitudeSaving}
+                      className="px-6 py-2.5 rounded-xl bg-[#1c355e] hover:bg-[#152847] text-white text-xs font-bold transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50 shadow-md shadow-blue-900/20"
+                    >
+                      {attitudeSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                      Save Attitude Evaluation
+                    </button>
+                  </div>
                 </div>
+
               </div>
-
-              {/* Modal Footer */}
-              <div className="bg-zinc-50 border-t border-zinc-200 px-6 py-4 flex flex-wrap items-center justify-between gap-4">
-                <div className="text-xs text-zinc-600">
-                  Total Evaluated Score: <strong className="text-[#1c355e] text-sm font-black">{Object.values(attitudeRatings).reduce((sum, v) => sum + (Number(v) || 0), 0)} / {HOD_ATTITUDE_EVALUATION_QUESTIONS.length * 5}</strong>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setAttitudeModalOpen(false)}
-                    className="px-4 py-2.5 rounded-xl border border-zinc-300 hover:bg-zinc-100 text-zinc-700 text-xs font-bold transition-all cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleSaveAttitudeEvaluation}
-                    disabled={attitudeSaving}
-                    className="px-6 py-2.5 rounded-xl bg-[#1c355e] hover:bg-[#152847] text-white text-xs font-bold transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50 shadow-md shadow-blue-900/20"
-                  >
-                    {attitudeSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                    Save Attitude Evaluation
-                  </button>
-                </div>
-              </div>
-
             </div>
-          </div>
-        )}
+          );
+        })()}
 
       </div>
     </Layout>

@@ -81,12 +81,15 @@ export default function ExamFormSettingPage() {
   const [revokeMessage, setRevokeMessage] = useState("");
   const [revoking, setRevoking] = useState(false);
   const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [exportTargetType, setExportTargetType] = useState("photocopy"); // "photocopy" | "revaluation"
   const [selectedExportStatuses, setSelectedExportStatuses] = useState(["ALL"]);
   const [feeReportModalOpen, setFeeReportModalOpen] = useState(false);
+  const [feeReportTargetType, setFeeReportTargetType] = useState("photocopy"); // "photocopy" | "revaluation"
 
-  const getStatusCount = (statusId) => {
-    if (statusId === "ALL") return photocopyApps.length;
-    return photocopyApps.filter((app) => (app.status || "Payment Pending") === statusId).length;
+  const getStatusCount = (statusId, targetType = exportTargetType) => {
+    const targetApps = targetType === "revaluation" ? revaluationApps : photocopyApps;
+    if (statusId === "ALL") return targetApps.length;
+    return targetApps.filter((app) => (app.status || "Payment Pending") === statusId).length;
   };
 
   const toggleExportStatus = (statusKey) => {
@@ -317,15 +320,18 @@ export default function ExamFormSettingPage() {
   };
 
   const handleExportMaster = () => {
-    if (!photocopyApps || photocopyApps.length === 0) {
-      showToast("No submitted applications available to export.", "error");
+    const targetApps = exportTargetType === "revaluation" ? revaluationApps : photocopyApps;
+    const targetName = exportTargetType === "revaluation" ? "Revaluation" : "Photocopy";
+
+    if (!targetApps || targetApps.length === 0) {
+      showToast(`No submitted ${targetName.toLowerCase()} applications available to export.`, "error");
       return;
     }
 
     const isAll = selectedExportStatuses.includes("ALL") || selectedExportStatuses.length === 0;
     const filteredApps = isAll
-      ? photocopyApps
-      : photocopyApps.filter((app) => selectedExportStatuses.includes(app.status || "Payment Pending"));
+      ? targetApps
+      : targetApps.filter((app) => selectedExportStatuses.includes(app.status || "Payment Pending"));
 
     if (filteredApps.length === 0) {
       showToast("No applications match the selected status filter.", "error");
@@ -413,10 +419,10 @@ export default function ExamFormSettingPage() {
       ];
 
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "Master Photocopy Applications");
+      XLSX.utils.book_append_sheet(wb, ws, `Master ${targetName} Applications`);
 
       const dateStamp = new Date().toISOString().slice(0, 10);
-      XLSX.writeFile(wb, `Photocopy_Master_Applications_${dateStamp}.xlsx`);
+      XLSX.writeFile(wb, `${targetName}_Master_Applications_${dateStamp}.xlsx`);
 
       showToast(`Master Excel exported for ${rows.length} rows (${filteredApps.length} applications)!`, "success");
       setExportModalOpen(false);
@@ -596,7 +602,10 @@ export default function ExamFormSettingPage() {
               </div>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setFeeReportModalOpen(true)}
+                  onClick={() => {
+                    setFeeReportTargetType("photocopy");
+                    setFeeReportModalOpen(true);
+                  }}
                   disabled={photocopyApps.length === 0}
                   className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-3.5 py-1.5 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 shadow-sm cursor-pointer border border-indigo-500"
                   title="Generate and print official Department-wise Photocopy Fee Collection Report"
@@ -604,7 +613,11 @@ export default function ExamFormSettingPage() {
                   <FileText size={15} /> Fee Report
                 </button>
                 <button
-                  onClick={() => setExportModalOpen(true)}
+                  onClick={() => {
+                    setExportTargetType("photocopy");
+                    setSelectedExportStatuses(["ALL"]);
+                    setExportModalOpen(true);
+                  }}
                   disabled={photocopyApps.length === 0}
                   className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-3.5 py-1.5 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 shadow-sm cursor-pointer border border-emerald-500"
                   title="Export Master Excel report with status selection filter"
@@ -879,9 +892,34 @@ export default function ExamFormSettingPage() {
                   Review student revaluation forms with attached candidate files, payment status, and HOD recommendations.
                 </p>
               </div>
-              <span className="bg-white/15 px-3 py-1 rounded-full text-xs font-bold backdrop-blur-sm">
-                Total Applications: {revaluationApps.length}
-              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setFeeReportTargetType("revaluation");
+                    setFeeReportModalOpen(true);
+                  }}
+                  disabled={revaluationApps.length === 0}
+                  className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-3.5 py-1.5 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 shadow-sm cursor-pointer border border-indigo-500"
+                  title="Generate and print official Department-wise Revaluation Fee Collection Report"
+                >
+                  <FileText size={15} /> Fee Report
+                </button>
+                <button
+                  onClick={() => {
+                    setExportTargetType("revaluation");
+                    setSelectedExportStatuses(["ALL"]);
+                    setExportModalOpen(true);
+                  }}
+                  disabled={revaluationApps.length === 0}
+                  className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-3.5 py-1.5 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 shadow-sm cursor-pointer border border-emerald-500"
+                  title="Export Master Excel report with status selection filter"
+                >
+                  <FileSpreadsheet size={15} /> Export Master
+                </button>
+                <span className="bg-white/15 px-3 py-1 rounded-full text-xs font-bold backdrop-blur-sm">
+                  Total Applications: {revaluationApps.length}
+                </span>
+              </div>
             </div>
 
             <div className="p-6">
@@ -1101,17 +1139,28 @@ export default function ExamFormSettingPage() {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-72 overflow-y-auto pr-1">
-              {[
-                { id: "ALL", label: "All Statuses", badge: "bg-slate-200 text-slate-900" },
-                { id: "Payment Confirmed", label: "Payment Confirmed", badge: "bg-sky-100 text-sky-800" },
-                { id: "Submitted to HOD", label: "Submitted to HOD", badge: "bg-blue-100 text-blue-800" },
-                { id: "Recommended by HOD", label: "Recommended by HOD", badge: "bg-emerald-100 text-emerald-800" },
-                { id: "Copy Issued", label: "Copy Issued", badge: "bg-purple-100 text-purple-800" },
-                { id: "Payment Pending", label: "Payment Pending", badge: "bg-amber-100 text-amber-800" },
-                { id: "Revoked by HOD", label: "Revoked by HOD", badge: "bg-orange-100 text-orange-800" },
-                { id: "Revoked by Exam Cell", label: "Revoked by Exam Cell", badge: "bg-red-100 text-red-800" },
-                { id: "Closed", label: "Closed", badge: "bg-zinc-200 text-zinc-700" },
-              ].map((opt) => {
+              {(exportTargetType === "revaluation"
+                ? [
+                    { id: "ALL", label: "All Statuses", badge: "bg-slate-200 text-slate-900" },
+                    { id: "Submitted to HOD", label: "Submitted to HOD", badge: "bg-blue-100 text-blue-800" },
+                    { id: "Recommended by HOD", label: "Recommended by HOD", badge: "bg-emerald-100 text-emerald-800" },
+                    { id: "Approved", label: "Approved", badge: "bg-teal-100 text-teal-800" },
+                    { id: "Result Published", label: "Result Published", badge: "bg-purple-100 text-purple-800" },
+                    { id: "Payment Pending", label: "Payment Pending", badge: "bg-amber-100 text-amber-800" },
+                    { id: "Revoked by Exam Cell", label: "Revoked by Exam Cell", badge: "bg-red-100 text-red-800" },
+                  ]
+                : [
+                    { id: "ALL", label: "All Statuses", badge: "bg-slate-200 text-slate-900" },
+                    { id: "Payment Confirmed", label: "Payment Confirmed", badge: "bg-sky-100 text-sky-800" },
+                    { id: "Submitted to HOD", label: "Submitted to HOD", badge: "bg-blue-100 text-blue-800" },
+                    { id: "Recommended by HOD", label: "Recommended by HOD", badge: "bg-emerald-100 text-emerald-800" },
+                    { id: "Copy Issued", label: "Copy Issued", badge: "bg-purple-100 text-purple-800" },
+                    { id: "Payment Pending", label: "Payment Pending", badge: "bg-amber-100 text-amber-800" },
+                    { id: "Revoked by HOD", label: "Revoked by HOD", badge: "bg-orange-100 text-orange-800" },
+                    { id: "Revoked by Exam Cell", label: "Revoked by Exam Cell", badge: "bg-red-100 text-red-800" },
+                    { id: "Closed", label: "Closed", badge: "bg-zinc-200 text-zinc-700" },
+                  ]
+              ).map((opt) => {
                 const count = getStatusCount(opt.id);
                 const isChecked = selectedExportStatuses.includes(opt.id) || (selectedExportStatuses.includes("ALL") && opt.id === "ALL");
                 return (
@@ -1145,8 +1194,8 @@ export default function ExamFormSettingPage() {
               <span className="text-slate-600 font-semibold">Matching Applications to Export:</span>
               <span className="font-extrabold text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full">
                 {selectedExportStatuses.includes("ALL")
-                  ? photocopyApps.length
-                  : photocopyApps.filter((a) => selectedExportStatuses.includes(a.status || "Payment Pending")).length}{" "}
+                  ? (exportTargetType === "revaluation" ? revaluationApps.length : photocopyApps.length)
+                  : (exportTargetType === "revaluation" ? revaluationApps : photocopyApps).filter((a) => selectedExportStatuses.includes(a.status || "Payment Pending")).length}{" "}
                 Applications
               </span>
             </div>
@@ -1172,11 +1221,12 @@ export default function ExamFormSettingPage() {
         </div>
       )}
 
-      {/* Anna University Photocopy Fee Collection Report Modal */}
+      {/* Anna University Fee Collection Report Modal */}
       <AnnaUniversityFeeReportModal
         isOpen={feeReportModalOpen}
         onClose={() => setFeeReportModalOpen(false)}
-        applications={photocopyApps}
+        applications={feeReportTargetType === "revaluation" ? revaluationApps : photocopyApps}
+        reportType={feeReportTargetType === "revaluation" ? "Revaluation" : "Photocopy"}
       />
 
       {/* Official Photocopy Problem View Modal for Exam Cell */}

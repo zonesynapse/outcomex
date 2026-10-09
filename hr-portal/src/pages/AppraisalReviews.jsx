@@ -190,11 +190,305 @@ export const TEACHER_ATTITUDE_EVALUATION_QUESTIONS = [
   }
 ];
 
+export const NON_TEACHING_GENERAL_ATTITUDE_QUESTIONS = [
+  {
+    id: 1,
+    title: "Punctuality & Reliability",
+    statement: "Is consistently present, on time, and dependable in carrying out assigned duties."
+  },
+  {
+    id: 2,
+    title: "Ownership & Accountability",
+    statement: "Takes full responsibility for the quality and completion of their work."
+  },
+  {
+    id: 3,
+    title: "Integrity & Honesty",
+    statement: "Handles institutional property, information, and resources in a trustworthy manner."
+  },
+  {
+    id: 4,
+    title: "Teamwork & Cooperation",
+    statement: "Works well with colleagues and other departments."
+  },
+  {
+    id: 5,
+    title: "Service Orientation & Courtesy",
+    statement: "Treats staff, students, parents, and visitors with courtesy and helpfulness."
+  },
+  {
+    id: 6,
+    title: "Adaptability & Willingness to Learn",
+    statement: "Stays open to new instructions, tools, and ways of working."
+  },
+  {
+    id: 7,
+    title: "Safety & Compliance Consciousness",
+    statement: "Follows safety norms and institutional protocols without being reminded."
+  },
+  {
+    id: 8,
+    title: "Attention to Detail & Documentation Accuracy",
+    statement: "Handles records, correspondence, and data carefully and accurately."
+  },
+  {
+    id: 9,
+    title: "Confidentiality & Discretion",
+    statement: "Safeguards sensitive institutional, staff, and student information."
+  },
+  {
+    id: 10,
+    title: "Responsiveness",
+    statement: "Responds to requests from staff, students, and parents in a timely and courteous manner."
+  },
+  {
+    id: 11,
+    title: "Basic Digital & AI Literacy",
+    statement: "Uses digital tools and AI-assisted systems comfortably for records and communication."
+  },
+  {
+    id: 12,
+    title: "AI Literacy & Judgment",
+    statement: "Proactively learns and uses AI tools, and exercises judgment on when to trust AI output versus human intuition."
+  },
+  {
+    id: 13,
+    title: "Growth Mindset",
+    statement: "Continuously improves, quickly acquires new skills, and unlearns old habits where needed."
+  },
+  {
+    id: 14,
+    title: "Clarity in Communication",
+    statement: "Articulates ideas clearly and persuasively, in speech and in writing."
+  },
+  {
+    id: 15,
+    title: "Inquisitiveness & Creative Problem-Solving",
+    statement: "Asks probing questions, evaluates answers critically, and solves problems in novel ways."
+  },
+  {
+    id: 16,
+    title: "Proactive",
+    statement: "Anticipates needs and acts ahead of requirements."
+  },
+  {
+    id: 17,
+    title: "Stakeholder Focus & Empathy",
+    statement: "Keeps students, staff, and other stakeholders at the centre of their decisions."
+  },
+  {
+    id: 18,
+    title: "Process & Service Improvement",
+    statement: "Actively looks for ways to improve processes and service delivery in their area."
+  },
+  {
+    id: 19,
+    title: "Advisory Capability",
+    statement: "Advises colleagues, departments, or stakeholders with sound, well-reasoned judgment."
+  }
+];
+
+export const NON_TEACHING_DRIVER_ATTITUDE_QUESTIONS = [
+  {
+    id: 1,
+    title: "Punctuality & Reliability",
+    statement: "Is consistently present, on time, and dependable in carrying out assigned duties."
+  },
+  {
+    id: 2,
+    title: "Ownership & Accountability",
+    statement: "Takes full responsibility for the quality and completion of their work."
+  },
+  {
+    id: 3,
+    title: "Integrity & Honesty",
+    statement: "Handles institutional property, information, and resources in a trustworthy manner."
+  },
+  {
+    id: 4,
+    title: "Teamwork & Cooperation",
+    statement: "Works well with colleagues and other departments."
+  },
+  {
+    id: 5,
+    title: "Service Orientation & Courtesy",
+    statement: "Treats staff, students, parents, and visitors with courtesy and helpfulness."
+  },
+  {
+    id: 6,
+    title: "Adaptability & Willingness to Learn",
+    statement: "Stays open to new instructions, tools, and ways of working."
+  },
+  {
+    id: 7,
+    title: "Safety & Compliance Consciousness",
+    statement: "Follows safety norms and institutional protocols without being reminded."
+  },
+  {
+    id: 8,
+    title: "Road & Vehicle Safety Discipline",
+    statement: "Practises defensive driving and strictly adheres to traffic and safety norms, especially with students as passengers."
+  },
+  {
+    id: 9,
+    title: "Vehicle & Asset Care",
+    statement: "Maintains the assigned vehicle diligently, including cleanliness and fuel discipline."
+  },
+  {
+    id: 10,
+    title: "Composure Under Pressure",
+    statement: "Stays calm and safe under traffic, time, or emergency pressure."
+  },
+  {
+    id: 11,
+    title: "Predictable Availability",
+    statement: "Is punctually and dependably present, aligned to institutional schedules."
+  }
+];
+
+export const NON_TEACHING_HOUSEKEEPING_ATTITUDE_QUESTIONS = [
+  {
+    id: 1,
+    title: "Punctuality & Reliability",
+    statement: "Is consistently present, on time, and dependable in carrying out assigned duties."
+  },
+  {
+    id: 2,
+    title: "Ownership & Accountability",
+    statement: "Takes full responsibility for the quality and completion of their work."
+  },
+  {
+    id: 3,
+    title: "Integrity & Honesty",
+    statement: "Handles institutional property, information, and resources in a trustworthy manner."
+  },
+  {
+    id: 4,
+    title: "Teamwork & Cooperation",
+    statement: "Works well with colleagues and other departments."
+  },
+  {
+    id: 5,
+    title: "Service Orientation & Courtesy",
+    statement: "Treats staff, students, parents, and visitors with courtesy and helpfulness."
+  },
+  {
+    id: 6,
+    title: "Adaptability & Willingness to Learn",
+    statement: "Stays open to new instructions, tools, and ways of working."
+  },
+  {
+    id: 7,
+    title: "Safety & Compliance Consciousness",
+    statement: "Follows safety norms and institutional protocols without being reminded."
+  },
+  {
+    id: 8,
+    title: "Hygiene & Cleanliness Standards",
+    statement: "Maintains consistent, high standards of cleanliness across assigned spaces."
+  },
+  {
+    id: 9,
+    title: "Proactive Upkeep",
+    statement: "Notices and addresses issues — spills, wear, shortages — without being prompted."
+  },
+  {
+    id: 10,
+    title: "Respect for Privacy of Spaces",
+    statement: "Handles others' spaces and belongings carefully and respectfully while on duty."
+  },
+  {
+    id: 11,
+    title: "Physical Diligence & Consistency",
+    statement: "Sustains reliable effort and diligence across every shift."
+  }
+];
+
+export const FACULTY_ATTITUDE_EVALUATION_QUESTIONS = [
+  {
+    id: 1,
+    title: "Ownership & Accountability",
+    statement: "Takes full responsibility for their role, decisions, and outcomes."
+  },
+  {
+    id: 2,
+    title: "Emotional Intelligence & Collaboration",
+    statement: "Stays self-aware and empathetic, and works effectively with others."
+  },
+  {
+    id: 3,
+    title: "Customer Focus & Empathy",
+    statement: "Keeps the learner, parent, or stakeholder at the centre of their decisions."
+  },
+  {
+    id: 4,
+    title: "Resilience & Adaptability",
+    statement: "Remains steady and effective through setbacks, pressure, and change."
+  },
+  {
+    id: 5,
+    title: "Growth Mindset",
+    statement: "Continuously improves, quickly acquires new skills, and unlearns old habits where needed."
+  },
+  {
+    id: 6,
+    title: "Inquisitiveness & Creative Problem-Solving",
+    statement: "Asks probing questions, evaluates answers critically, and solves problems in novel ways."
+  },
+  {
+    id: 7,
+    title: "AI Literacy & Judgment",
+    statement: "Proactively learns and uses AI tools, and exercises judgment on when to trust AI output versus human intuition."
+  },
+  {
+    id: 8,
+    title: "Integrity & Ethical Judgement",
+    statement: "Acts with consistent honesty, fairness, and principled conduct."
+  },
+  {
+    id: 9,
+    title: "Clarity in Communication",
+    statement: "Articulates ideas clearly and persuasively, in speech and in writing."
+  },
+  {
+    id: 10,
+    title: "Diligence & Ownership",
+    statement: "Is consistently punctual and executes assigned duties thoroughly, flawlessly meeting KRAs."
+  },
+  {
+    id: 11,
+    title: "Learning & Applying (Technology)",
+    statement: "Shows visible progress through IIY and by embracing technology in their work."
+  },
+  {
+    id: 12,
+    title: "Classroom EQ & Leadership",
+    statement: "Leads and engages students, stays open, transparent, and approachable, and motivates them by example."
+  }
+];
+
 export const ATTITUDE_EVALUATION_QUESTIONS = TEACHER_ATTITUDE_EVALUATION_QUESTIONS;
 
 export const getAttitudeQuestions = (app) => {
   if (app?.formType === "hod") {
     return HOD_ATTITUDE_EVALUATION_QUESTIONS;
+  }
+  if (app?.formType === "faculty") {
+    return FACULTY_ATTITUDE_EVALUATION_QUESTIONS;
+  }
+  if (app?.formType === "non_teaching" || app?.collectionName === "non_teaching_appraisals") {
+    const rawDesig = (app?.formData?.designation || app?.designation || "");
+    const rawDept = (app?.formData?.department || app?.department || "");
+    const rawRole = (app?.formData?.role || app?.role || "");
+    const combinedStr = `${rawDesig} ${rawDept} ${rawRole}`.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+    if (combinedStr.includes("housekeeping") || combinedStr.includes("housekeeper")) {
+      return NON_TEACHING_HOUSEKEEPING_ATTITUDE_QUESTIONS;
+    }
+    if (combinedStr.includes("driver") || combinedStr.includes("transport")) {
+      return NON_TEACHING_DRIVER_ATTITUDE_QUESTIONS;
+    }
+    return NON_TEACHING_GENERAL_ATTITUDE_QUESTIONS;
   }
   return TEACHER_ATTITUDE_EVALUATION_QUESTIONS;
 };
@@ -1799,10 +2093,10 @@ export default function AppraisalReviews() {
                               <div className="text-xs text-slate-600 mt-0.5 font-medium">
                                 {selectedAppraisal.attitudeForm?.totalScore !== undefined ? (
                                   <span>
-                                    Evaluated: <strong className="text-teal-700 font-bold">{selectedAppraisal.attitudeForm.totalScore}/{selectedAppraisal.attitudeForm.maxScore || (ATTITUDE_EVALUATION_QUESTIONS.length * 5)} Marks</strong> ({selectedAppraisal.attitudeForm.percentage}%) • Avg: <strong className="text-slate-800">{selectedAppraisal.attitudeForm.average}/5.0</strong>
+                                    Evaluated: <strong className="text-teal-700 font-bold">{selectedAppraisal.attitudeForm.totalScore}/{selectedAppraisal.attitudeForm.maxScore || (getAttitudeQuestions(selectedAppraisal).length * 5)} Marks</strong> ({selectedAppraisal.attitudeForm.percentage}%) • Avg: <strong className="text-slate-800">{selectedAppraisal.attitudeForm.average}/5.0</strong>
                                   </span>
                                 ) : (
-                                  <span className="text-amber-700 font-semibold">Not yet evaluated by Coordinator</span>
+                                  <span className="text-amber-700 font-semibold">Not yet evaluated</span>
                                 )}
                               </div>
                             </div>
@@ -3921,7 +4215,7 @@ export default function AppraisalReviews() {
 
                 {/* Interactive Action Buttons */}
                 <div className="space-y-2.5 pt-4">
-                  {selectedAppraisal.formType === "teacher" && (
+                  {(selectedAppraisal.formType === "teacher" || selectedAppraisal.formType === "non_teaching" || selectedAppraisal.formType === "hod" || selectedAppraisal.formType === "faculty") && (
                     <button
                       type="button"
                       onClick={() => handleOpenAttitudeModal(selectedAppraisal)}
@@ -3932,8 +4226,8 @@ export default function AppraisalReviews() {
                     >
                       <Award size={14} />
                       {selectedAppraisal.attitudeForm?.ratings && Object.keys(selectedAppraisal.attitudeForm.ratings).length > 0
-                        ? `Edit Attitude Form (${selectedAppraisal.attitudeForm.totalScore}/${selectedAppraisal.attitudeForm.maxScore || (ATTITUDE_EVALUATION_QUESTIONS.length * 5)})`
-                        : `Fill Attitude Form (${ATTITUDE_EVALUATION_QUESTIONS.length} Items)`}
+                        ? `Edit Attitude Form (${selectedAppraisal.attitudeForm.totalScore}/${selectedAppraisal.attitudeForm.maxScore || (getAttitudeQuestions(selectedAppraisal).length * 5)})`
+                        : `Fill Attitude Form (${getAttitudeQuestions(selectedAppraisal).length} Items)`}
                     </button>
                   )}
 
@@ -4106,7 +4400,7 @@ export default function AppraisalReviews() {
                             )}
                             {app.attitudeForm?.totalScore !== undefined && (
                               <div className="text-[10px] font-bold text-teal-700 mt-1 flex items-center justify-center gap-1">
-                                <Award size={10} /> Attitude: {app.attitudeForm.totalScore}/{app.attitudeForm.maxScore || (ATTITUDE_EVALUATION_QUESTIONS.length * 5)}
+                                <Award size={10} /> Attitude: {app.attitudeForm.totalScore}/{app.attitudeForm.maxScore || (getAttitudeQuestions(app).length * 5)}
                               </div>
                             )}
                           </td>
@@ -4131,7 +4425,7 @@ export default function AppraisalReviews() {
                               >
                                 <Eye size={12} /> Review
                               </button>
-                              {app.formType === "teacher" && (
+                              {(app.formType === "teacher" || app.formType === "non_teaching" || app.formType === "hod" || app.formType === "faculty") && (
                                 <button
                                   onClick={() => handleOpenAttitudeModal(app)}
                                   className={`px-3 py-1.5 rounded-lg text-[10px] font-bold tracking-wide uppercase transition-all inline-flex items-center gap-1 cursor-pointer shadow-xs ${app.attitudeForm?.ratings && Object.keys(app.attitudeForm.ratings).length > 0
@@ -4143,7 +4437,7 @@ export default function AppraisalReviews() {
                                   <Award size={12} /> Attitude Form
                                   {app.attitudeForm?.totalScore !== undefined && (
                                     <span className="ml-0.5 bg-black/25 text-white px-1.5 py-0.2 rounded text-[9px]">
-                                      {app.attitudeForm.totalScore}/{app.attitudeForm.maxScore || (ATTITUDE_EVALUATION_QUESTIONS.length * 5)}
+                                      {app.attitudeForm.totalScore}/{app.attitudeForm.maxScore || (getAttitudeQuestions(app).length * 5)}
                                     </span>
                                   )}
                                 </button>
@@ -4215,13 +4509,15 @@ export default function AppraisalReviews() {
                       {attitudeAppraisal.institution || "CK Group"}
                     </span>
                     <span className="text-white/60">•</span>
-                    <span className="text-xs text-white/80 font-medium">Teacher Appraisal Evaluation</span>
+                    <span className="text-xs text-white/80 font-medium">
+                      {attitudeAppraisal.formType === "non_teaching" ? "Non-Teaching Staff Evaluation" : attitudeAppraisal.formType === "hod" ? "HOD Evaluation" : "Teacher Appraisal Evaluation"}
+                    </span>
                   </div>
                   <h2 className="text-xl sm:text-2xl font-black font-heading tracking-tight mt-1">
                     Staff Attitude & Competency Evaluation Form
                   </h2>
                   <div className="flex flex-wrap items-center gap-3 text-xs text-white/85 mt-1 font-medium">
-                    <span>Teacher: <strong className="text-white font-bold">{attitudeAppraisal.formData?.name || attitudeAppraisal.facultyName}</strong></span>
+                    <span>Staff: <strong className="text-white font-bold">{attitudeAppraisal.formData?.name || attitudeAppraisal.facultyName}</strong></span>
                     <span>•</span>
                     <span>Dept: <strong className="text-white font-bold">{attitudeAppraisal.formData?.department || attitudeAppraisal.department}</strong></span>
                     <span>•</span>
