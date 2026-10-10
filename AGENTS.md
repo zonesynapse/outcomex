@@ -1,5 +1,378 @@
 ## Summary of Changes
 
+### 540. Administration Non-Teaching Staff Direct Route to Coordinator Approved & HOD Exclusion (`src/pages/NonTeachingAppraisal.jsx`, `src/pages/HODDashboard.jsx`, `src/pages/PrincipalDashboard.jsx`, `src/pages/AppraisalReviews.jsx`)
+- **Goal**:
+  1. Fix issue where central college "Administration" department staff (UG programme, Administration department) who submit non-teaching appraisals were mistakenly matching and showing on the MBA HOD dashboard (`HODDashboard.jsx`) due to substring matching (`"administration"` in `"businessadministration"`).
+  2. Prevent central Administration staff from ever appearing on ANY academic HOD dashboard.
+  3. When an Administration non-teaching staff submits their appraisal in `NonTeachingAppraisal.jsx`, automatically mark the appraisal as "Coordinator Approved" (`status: "HOD_Approved"`), bypass HOD review, and route directly to `PrincipalDashboard.jsx` and `AppraisalReviews.jsx`.
+  4. Auto-heal any existing Administration submissions stuck in `"Submitted"` status so they immediately appear under Principal pending appraisals and "Coordinator Approved" in `AppraisalReviews.jsx`.
+  5. Strictly preserve policy NOT to touch `hr-portal/` folder.
+- **Key Enhancements**:
+  1. **`HODDashboard.jsx`**:
+     - `isDeptMatch`: Added strict guard preventing `"administration"` or `"admin"` from matching any academic department (including MBA / Business Administration).
+     - `checkIncludeInList`: Explicitly filters out records where `department` or `formData.department` is `"Administration"` / `"admin"`, ensuring Administration staff never appear on any HOD dashboard.
+     - `non_teaching_appraisals` snapshot: Checks both `data.department` and `data.formData?.department` against `isDeptMatch` and `checkIncludeInList`.
+  2. **`NonTeachingAppraisal.jsx`**:
+     - On submission (`isSubmit === true`), checks if user's department is `"Administration"` / `"admin"`. If so, automatically sets `status: "HOD_Approved"`, adds default coordinator review metadata (`"Forwarded directly to Principal for review (Administration Department - Coordinator Approved)"`), and sets `coordinatorApproved: true` and `forwardedToPrincipal: true`.
+     - Displays custom toast notifying user that the appraisal was forwarded directly to Principal as Coordinator Approved.
+  3. **`PrincipalDashboard.jsx` & `AppraisalReviews.jsx`**:
+     - Listens to `non_teaching_appraisals` and auto-promotes any existing Administration submissions currently in `"Submitted"` status to `"HOD_Approved"` with `coordinatorApproved: true` and coordinator review metadata.
+     - They appear in `PrincipalDashboard.jsx` under `pendingAppraisals` and display under "COORDINATOR APPROVED" in `AppraisalReviews.jsx`.
+- **Result**: Production build succeeds cleanly in 8.42s with 0 errors.
+
+### 539. Full-Width Layout Expansion Across Appraisal Pages (`src/pages/AppraisalReviews.jsx`, `src/pages/HODAppraisal.jsx`, `src/pages/FacultyAppraisal.jsx`, `src/pages/NonTeachingAppraisal.jsx`, `src/pages/AppraisalSettings.jsx`, `src/components/Layout.jsx`)
+- **Goal**: Per user request and uploaded screenshot showing boxed layout margins, expand `AppraisalReviews.jsx` and all related appraisal pages to utilize the full available widescreen width (`w-full`), eliminating artificial max-width constraints (`max-w-7xl`, `max-w-6xl`).
+- **Key Enhancements**:
+  1. **`AppraisalReviews.jsx`**:
+     - Removed restrictive `max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6` wrapper in favor of full-width `w-full pb-8`.
+     - Modernized the 2-column details split to a 12-column responsive grid (`grid-cols-1 xl:grid-cols-12 gap-8`):
+       - Form details, tabs, tables, and evidence documents now utilize `xl:col-span-8 2xl:col-span-9`, granting generous horizontal space on wide monitors.
+       - The Evaluation & Recommendation sidebar spans `xl:col-span-4 2xl:col-span-3` with `sticky top-6` so review actions remain comfortably accessible.
+     - The requests list table now also expands to full width (`w-full`), preventing squeezed table columns on widescreen displays.
+  2. **`HODAppraisal.jsx`**: Replaced `max-w-7xl mx-auto` with `w-full pb-10 space-y-6`.
+  3. **`FacultyAppraisal.jsx`**: Replaced `max-w-7xl mx-auto` with `w-full pb-10`.
+  4. **`NonTeachingAppraisal.jsx`**: Replaced `max-w-7xl mx-auto` with `w-full pb-10`.
+  5. **`AppraisalSettings.jsx`**: Replaced `max-w-6xl` with `w-full pb-10`.
+  6. **`Layout.jsx`**: Added explicit `w-full` to `<main>` container with responsive horizontal padding.
+  7. Strictly preserved policy NOT to touch `hr-portal/` folder.
+- **Result**: Production build succeeds cleanly in 8.25s with 0 errors.
+
+### 538. Remove Extraneous Profile Cards & KPI Metric Blocks from HOD Review View (`src/pages/AppraisalReviews.jsx`)
+- **Goal**: Per user request and uploaded screenshot, remove extraneous cards from the HOD Appraisal review view in `AppraisalReviews.jsx`:
+  1. Profile fields: `Academic Session`, `Faculty / Staff ID`, `Submission Date & Time`.
+  2. Quick Summary KPI cards: `Total Self Score`, `Performance Tier`, `KRA Areas Evaluated`, `Evidence Attachments`.
+  3. Strictly preserve policy NOT to touch `hr-portal/` folder.
+- **Key Enhancements**:
+  1. Cleaned up General Information of HoD to display only the official 6 HOD profile fields (Name of the HoD, Department, Designation, Date of Joining, Qualification, Official Email), eliminating redundant session, raw user ID, and submission time cards.
+  2. Removed the 4 summary KPI blocks from Tab 1, leaving the clean profile grid and official digital declaration notice. Full score breakdowns remain properly organized in Tab 3 ("Score Summary & Declaration") and in the Principal 5-KRAs scorecard.
+- **Result**: Production build succeeds cleanly in 9.03s with 0 errors.
+
+### 537. Attitude Form Draft Storage and Principal Submission Decoupling (`src/pages/HODDashboard.jsx`, `src/pages/AppraisalReviews.jsx`, `src/pages/HRGrossAnalytics.jsx`)
+- **Goal**:
+  1. Clarify and isolate Firestore node storage for Attitude Form draft saves (`attitudeDraft`) vs finalized submissions to Principal (`attitudeEvaluation` & `attitudeForm`).
+  2. Prevent draft attitude evaluations from disappearing from `HODDashboard.jsx` or advancing to the Principal review screen (`AppraisalReviews.jsx`) before HOD explicitly clicks "Submit to Principal".
+  3. Strictly preserve policy NOT to touch `hr-portal/` folder.
+- **Key Enhancements**:
+  1. **Dedicated Firestore Draft Node (`src/pages/HODDashboard.jsx`)**:
+     - `handleSaveAttitudeEvaluation(false)`: Saves draft payload under `attitudeDraft` with `isDraft: true`, `submittedToPrincipal: false`, and `attitudeSubmittedToPrincipal: false`.
+     - `handleSaveAttitudeEvaluation(true)`: Finalizes payload under `attitudeEvaluation` and `attitudeForm` with `submittedToPrincipal: true`, `attitudeSubmittedToPrincipal: true`, sets `attitudeDraft: null`, and promotes status to `HOD_Approved` if still in `Submitted`.
+     - Modal re-opens with fallback: `app.attitudeDraft || app.attitudeEvaluation || app.attitudeForm || {}`.
+  2. **HOD Dashboard Retention & Visibility (`checkIncludeInList`)**:
+     - Corrected condition so appraisals remain on the HOD Dashboard until BOTH the appraisal review is forwarded AND `isAttitudeSubmitted` (`data.attitudeSubmittedToPrincipal === true`) is true.
+     - Saving an attitude draft no longer prematurely marks `attitudeDone` as true or causes the faculty/staff row to disappear from the HOD's dashboard.
+     - Added amber `Draft` indicator badge on the table's "Attitude Form" button when draft is saved.
+  3. **Principal & HR Visibility Protection (`src/pages/AppraisalReviews.jsx`, `src/pages/HRGrossAnalytics.jsx`)**:
+     - `AppraisalReviews.jsx`: Table row and modal header now display an amber `Draft (HOD)` badge and status banner if HOD has only saved a draft, preventing unsubmitted draft scores from being treated as finalized.
+     - `HRGrossAnalytics.jsx`: Only computes attitude form marks towards the 40% gross weighting when `isAttitudeSubmitted` is confirmed true.
+- **Result**: Production build succeeds cleanly in 11.01s with 0 errors.
+
+### 536. Create Gross Analytics Page in HR Portal with Strict Role Protection (`hr-portal/src/pages/HRGrossAnalytics.jsx`, `hr-portal/src/components/HRLayout.jsx`, `hr-portal/src/App.jsx`)
+- **Goal**:
+  1. Port the complete, fully-featured Gross Analytics & Increment Outlay Engine from `outcomex` to the `hr-portal` project per explicit user request.
+  2. Restrict visibility and page access strictly to users with the "Principal" or "HR" role.
+- **Key Enhancements**:
+  1. **New Page (`hr-portal/src/pages/HRGrossAnalytics.jsx`)**:
+     - Includes all 19 standardized columns, criteria matrices, KPI cards, candidate scorecard modal, Excel template downloads, Gross PM uploads, inline salary adjustments, and full matrix exports.
+     - Features built-in role verification (`onAuthStateChanged` + Firestore user document check). Users without `principal`, `hr`, or `admin` permissions are presented with an "Access Restricted" screen and blocked from accessing analytics or salaries.
+  2. **Sidebar Navigation (`hr-portal/src/components/HRLayout.jsx`)**:
+     - Added `{ id: "gross-analytics", label: "Gross Analytics", path: "/gross-analytics", icon: BarChart3 }` under `if (isPrincipalHR)`. Non-principal/non-HR users (teachers, staff, HODs, coordinators) never see this navigation option.
+  3. **Routing (`hr-portal/src/App.jsx`)**:
+     - Registered `/gross-analytics` route wrapped in `<ProtectedRoute>`.
+  4. **Dependencies**:
+     - Installed `xlsx` in `hr-portal` for Excel template and data export.
+- **Result**: Production builds for both `hr-portal` and `outcomex` succeed cleanly with 0 errors.
+
+### 535. Single-Line Formatting & Wrapping Prevention on Increment Amounts (`src/pages/HRGrossAnalytics.jsx`)
+- **Goal**: Prevent the `+` sign and amount (e.g., `+₹5,201.67`) in `Increment Amount (PM)` and all monetary amount cells from breaking across multiple lines into a stacked wrap.
+- **Key Enhancements**:
+  1. Added `whitespace-nowrap inline-block` to `Increment Amount (PM)` badge span and `whitespace-nowrap` to the table cell `<td>`.
+  2. Applied `whitespace-nowrap` across all currency columns (`Gross PM`, `Promotion Amount`, `Salary Adjustment (PA)`, `Revised Gross (PM)`, `Revised Gross (PA)`, `Increment Amount (PM)`, `Increment Amount (PA)`) guaranteeing that numbers and symbols remain strictly on a single line regardless of column width.
+  3. Strictly preserved policy NOT to touch `hr-portal/` folder.
+- **Result**: Production build succeeds cleanly in 7.80s with 0 errors.
+
+### 534. Table Column Reordering for Revised Gross & Increment Amount (`src/pages/HRGrossAnalytics.jsx`)
+- **Goal**:
+  1. Move `Revised Gross (PA)` column to the right of `Revised Gross (PM)`.
+  2. Move `Increment Amount (PA)` column to the right of `Increment Amount (PM)`.
+  3. Keep Excel export (`handleExportFullMatrix`) and UI table synchronized in the exact same column sequence.
+  4. Strictly preserve policy NOT to touch `hr-portal/` folder.
+- **Key Enhancements**:
+  1. Reordered table headers `<thead>` and body rows `<tbody>`:
+     - Old: `Increment Amount (PA)` $\rightarrow$ `Promotion %` $\rightarrow$ `Promotion Amount` $\rightarrow$ `Revised Gross (PA)` $\rightarrow$ `% Increase` $\rightarrow$ `Salary Adjustment (PM)` $\rightarrow$ `Salary Adjustment (PA)` $\rightarrow$ `Revised Gross (PM)` $\rightarrow$ `Increment Amount (PM)`.
+     - New: `Promotion %` $\rightarrow$ `Promotion Amount` $\rightarrow$ `% Increase` $\rightarrow$ `Salary Adjustment (PM)` $\rightarrow$ `Salary Adjustment (PA)` $\rightarrow$ `Revised Gross (PM)` $\rightarrow$ `Revised Gross (PA)` $\rightarrow$ `Increment Amount (PM)` $\rightarrow$ `Increment Amount (PA)`.
+  2. Updated `handleExportFullMatrix` to export columns in matching sequence.
+- **Result**: Production build succeeds cleanly in 8.28s with 0 errors.
+
+### 533. Salary Adjustment Dynamic Synchronization for Revised Gross (PA) & Clean Table Numbers (`src/pages/HRGrossAnalytics.jsx`)
+- **Goal**:
+  1. Fix issue where modifying `Salary Adjustment (PM)` dynamically updated `Increment Amount (PM)` and `Revised Gross (PM)`, but `Revised Gross (PA)` remained static.
+  2. Remove all subordinate `PA` and `PM` labels/sub-text underneath the numbers across every row in the analytics table for clean, professional data presentation.
+  3. Strictly preserve policy NOT to touch `hr-portal/` folder.
+- **Key Enhancements**:
+  1. **Dynamic Revised Gross (PA) Calculation**:
+     - Updated calculation pipeline so `salaryAdjustmentPM` and `salaryAdjustmentPA` are computed before `revisedGrossPA`.
+     - Integrated `salaryAdjustmentPA` directly into `revisedGrossPA = grossPA + incrementAmountPA + promotionAmount + salaryAdjustmentPA`.
+     - `revisedGrossPM` is computed as `revisedGrossPA / 12`, ensuring 100% two-way mathematical synchronization when inputting any discretionary adjustment amount.
+  2. **Row Data Formatting Cleanup**:
+     - Removed all subordinate `PA` / `PM` text tags under numbers in `Gross PM`, `Increment Amount (PA)`, `Promotion Amount`, `Revised Gross (PA)`, `Salary Adjustment (PA)`, `Revised Gross (PM)`, and `INCREMENT AMOUNT`.
+     - Each cell now displays a clean, concise, single-line numeric value adhering strictly to header designations.
+- **Result**: Production build succeeds cleanly in 8.01s with 0 errors.
+
+### 532. Full-Width Layout Expansion & Standardized Unified Table Headers (`src/pages/HRGrossAnalytics.jsx`)
+- **Goal**:
+  1. Image 1: Expand the entire Gross Analytics page to utilize the full available screen width (`w-full`), eliminating boxed margins on widescreen viewports.
+  2. Image 2: Remove the top variable row / letter bar (`M`, `N`, `O`, `P`, `Q`, `R`, `S`, `T`, `U`) and group header bar above the revision columns.
+  3. Format all 19 columns identically in a single uniform header row (`bg-zinc-50/90`, `text-zinc-600 font-bold uppercase tracking-wider text-[10px]` with `<ArrowUpDown size={11} />` sorting) and clean matching `tbody` cell styling.
+  4. Strictly preserved policy NOT to touch `hr-portal/` folder.
+- **Result**: Production build succeeds cleanly in 7.89s with 0 errors.
+
+### 531. Institutional Salary Revision Matrix UI Integration (Columns M to U) (`src/pages/HRGrossAnalytics.jsx`)
+- **Goal**:
+  1. Integrate the complete institutional salary revision and increment spreadsheet matrix (columns M through U) directly into the UI table of `HRGrossAnalytics.jsx` as requested ("in ui not excel"):
+     - **Column M**: `Increment Amount (PA)`
+     - **Column N**: `Promotion %`
+     - **Column O**: `Promotion Amount`
+     - **Column P**: `Revised Gross (PA)`
+     - **Column Q**: `% Increase`
+     - **Column R**: `Salary Adjustment (PM)`
+     - **Column S**: `Salary Adjustment (PA)`
+     - **Column T**: `Revised Gross (PM)`
+     - **Column U**: `INCREMENT AMOUNT`
+  2. Maintain authentic spreadsheet aesthetics:
+     - Upper letter bar identifying letters `M`, `N`, `O`, `P`, `Q`, `R`, `S`, `T`, `U` on dark headers.
+     - Lower column labels with `#9bb2c9` slate-blue background, centered dark navy text, and interactive sort/filter indicators.
+  3. Interactive features:
+     - Real-time Firestore synchronization for Column R `Salary Adjustment (PM)` with interactive inline input cells and debounced commit to `appraisal_config/salary_adjustments`.
+     - Real-time promotion percentage and toggle (`+ Promo` / `Active`).
+     - "Export Matrix (.xlsx)" action exporting the complete 19-column dataset.
+     - Full mathematical breakdown displayed in the Candidate Scorecard Breakdown modal.
+  4. Strictly preserved policy NOT to touch `hr-portal/` folder.
+- **Result**: Production build succeeds cleanly in 7.71s with 0 errors.
+
+### 530. Fix ReferenceError: Can't find variable: unpromotions (`src/pages/HRGrossAnalytics.jsx`)
+- **Goal**: Fix runtime ReferenceError `Can't find variable: unpromotions` thrown in `HRGrossAnalytics.jsx` during Firestore listener setup.
+- **Root Cause**:
+  - In `useEffect` listener setup for `appraisal_config/promotions`, the unsubscribe variable was declared as `const unsubPromotions = onSnapshot(...)` but pushed to the cleanup array as `unsubs.push(unpromotions)`.
+- **Key Enhancements**:
+  - Corrected variable reference to `unsubs.push(unsubPromotions)`.
+  - Ensures clean teardown of promotion listeners when unmounting without runtime errors.
+  - Strictly preserved policy NOT to touch `hr-portal/` folder.
+- **Result**: Production build succeeds cleanly in 9.20s with 0 errors.
+
+### 529. Performance Criteria Matrix Configuration & Salary Increment Engine (`src/pages/HRGrossAnalytics.jsx`)
+- **Goal**:
+  1. Integrate the institutional performance criteria matrix from the provided spreadsheet into `HRGrossAnalytics.jsx`.
+  2. Criteria Slabs:
+     - **Far Exceeds Expectations (FEE)**: `> 93% & Above` $\rightarrow$ `10%` Increment
+     - **Exceeds Expectations (EE)**: `85 to 92%` $\rightarrow$ `8%` Increment
+     - **Meets Expectations (ME)**: `75 to 84%` $\rightarrow$ `6%` Increment
+     - **Partially Meets (PME)**: `65 to 74%` $\rightarrow$ `4%` Increment
+     - **Does Not Meet (NME)**: `64% & Below` $\rightarrow$ `0%` Increment
+     - **Promotion**: Additional `+5%` Increment
+  3. Make the criteria threshold scores and increment percentages configurable by HR with real-time Firestore persistence (`appraisal_config/increment_criteria`).
+  4. Automatically map each candidate's Gross Mark to their respective tier and compute the **Increment Amount (₹ PM)** and **Revised Gross Salary (₹ PM)** based on their uploaded Gross PM.
+  5. Strictly preserve policy NOT to touch `hr-portal/` folder.
+- **Key Enhancements**:
+  1. **Criteria Matrix Portlet & Configuration Modal**:
+     - Embedded visual rubric cards on the dashboard representing all 5 tiers.
+     - Interactive "Configure Criteria" modal allowing HR to adjust min scores, increment %, promotion bonus, or reset to institutional defaults.
+  2. **Automated Increment Calculation**:
+     - Dynamically computes:
+       $$\text{Increment Amount} = \text{Gross PM} \times \left(\frac{\text{Total Increment \%}}{100}\right)$$
+       $$\text{Revised Gross PM} = \text{Gross PM} + \text{Increment Amount}$$
+     - Supports candidate promotion recommendation toggle (+5% bonus).
+  3. **Table & Breakdown Enhancements**:
+     - Added "Criteria & %" and "Increment (₹ PM)" columns displaying increment amounts and revised salaries.
+     - Full salary increment calculations displayed in the Candidate Scorecard breakdown modal.
+     - Added Monthly Increment Outlay and Annual Outlay metrics to KPI cards.
+- **Result**: Production build succeeds cleanly in 8.09s with 0 errors.
+
+### 528. Fix Duplicate Single Quote in Template Export & Enforce Pure Single Quote Format (`src/pages/HRGrossAnalytics.jsx`)
+- **Goal**: Resolve issue where downloading the Excel template outputted `''1783` (two single quotes) instead of `'1783` (exactly one single quote).
+- **Root Cause**:
+  - `facultyId` in database/user records had previously stored or inherited single quotes (`'1783`).
+  - Prepending `\'${id}\'` without prior quote stripping caused double single quotes (`''1783`).
+- **Key Enhancements**:
+  1. **Canonical ID Sanitization in Records (`allRecords`)**:
+     - Added `String(rawFacultyId || "").replace(/^['"`]+|['"`]+$/g, "").trim()` to ensure `facultyId` in the analytics table is always clean without leading/trailing quotes (e.g. `1783`).
+  2. **Strict Single Quote Formatter in Export (`handleDownloadTemplate`)**:
+     - Strips any existing quotes with `cleanId = String(r.facultyId || "").replace(/^['"`]+|['"`]+$/g, "").trim()`.
+     - Appends exactly ONE single quote: `'${cleanId}`, guaranteeing `'1783` or `'1234` is exported without duplicate quotes.
+  3. **Universal Upload Normalization (`handleFileUpload` & `normalizeId`)**:
+     - Strips all leading/trailing quotes so any uploaded variant (`''1783`, `'1783`, `1783`) cleanly maps to `1783`.
+- **Result**: Production build succeeds cleanly in 7.71s with 0 errors.
+
+### 527. Excel (.xlsx) Template Download with Single Quote ID Prefix & Intelligent Upload Mapping (`src/pages/HRGrossAnalytics.jsx`)
+- **Goal**:
+  1. Switch the template download from CSV to standard Excel format (`.xlsx`) using SheetJS (`xlsx`).
+  2. Prepend a single quote (`'`) to the faculty ID in the template (e.g. `'1234` instead of raw `1234`), forcing Excel to treat numeric IDs strictly as text.
+  3. During upload (supporting `.xlsx`, `.xls`, `.csv`), strip the single quote prefix so that `'1234` cleanly matches the faculty ID `1234` in the database.
+  4. Strictly preserve policy NOT to touch `hr-portal/` folder.
+- **Key Enhancements**:
+  1. **Excel Template Export (`handleDownloadTemplate`)**:
+     - Utilizes `XLSX.utils.aoa_to_sheet` and `XLSX.writeFile` to output `CKCET_Faculty_Gross_PM_Template.xlsx`.
+     - Formats every faculty ID with a leading single quote (`'${id}` e.g. `'1234`, `'CKC-CSE-01'`) and sets column widths.
+  2. **Multi-Format Excel & CSV Parser (`handleFileUpload`)**:
+     - Reads binary data using `XLSX.read(arrayBuffer, { type: "array" })` to handle modern Excel (`.xlsx`), legacy Excel (`.xls`), and CSV.
+     - Strips leading quotes with `rawId.replace(/^['"`]+/, "").trim()` so `'1234` maps directly to `1234`.
+     - `normalizeId` also strips leading quotes, ensuring bulletproof matching across all casing and formatting variations.
+  3. **Preview & Confirmation Modal**:
+     - Displays the cleaned ID (`1234`) with raw indicator if prefixed, matched staff name, department, and gross PM amount.
+     - Saves mapped gross salaries to Firestore (`appraisal_config/gross_salaries`).
+- **Result**: Production build succeeds cleanly in 7.88s with 0 errors.
+
+### 526. Gross PM Salary CSV Template & Upload Integration (`src/pages/HRGrossAnalytics.jsx`)
+- **Goal**:
+  1. Replace "Export CSV" with "Download Template" in `HRGrossAnalytics.jsx` to download a CSV containing exactly `faculty id` and `gross PM` columns pre-filled with existing faculty IDs.
+  2. Implement an "Upload Gross PM" feature allowing HR to upload the filled CSV file.
+  3. Render a dedicated "Gross PM" column in the analytics table positioned right before the "APPRAISAL FORM (60%)" column displaying the monthly gross salary.
+  4. Persist uploaded salaries in Firestore (`appraisal_config/gross_salaries`) for real-time synchronization across sessions.
+  5. Strictly preserve policy NOT to touch `hr-portal/` folder.
+- **Key Enhancements**:
+  1. **Download Template (`handleDownloadTemplate`)**:
+     - Exports a clean CSV with headers `faculty id,gross PM`.
+     - Automatically pre-populates distinct faculty IDs from the table and any already assigned salaries.
+  2. **Upload Gross PM (`handleCSVFileChange` & `handleConfirmSaveSalaries`)**:
+     - Added an "Upload Gross PM" action button triggering CSV file selection.
+     - Parses `faculty id` and `gross PM` with alphanumeric ID normalization and currency number sanitization.
+     - Features an interactive confirmation modal showing parsed entries, matched faculty names, departments, and amounts.
+     - Commits salaries map to Firestore document `appraisal_config/gross_salaries` with real-time listener.
+  3. **Table Column Ordering**:
+     - Positioned the "Gross PM" column right before "APPRAISAL FORM (60%)".
+     - Formats salary values with Indian Rupee currency notation (e.g. `₹55,000 PM`) and subtle badges.
+     - Added column sorting support by `grossPM`.
+  4. **Overview & Modal Integration**:
+     - Displayed "Gross PM" in Candidate Breakdown modal and summary KPI metrics.
+- **Result**: Production build succeeds cleanly in 8.00s with 0 errors.
+
+### 525. Create HR Gross Analytics Page & Role Mapping Configuration (`src/pages/HRGrossAnalytics.jsx`, `src/pages/AdminRoleConfig.jsx`, `src/components/Layout.jsx`, `src/App.tsx`, `src/pages/AppraisalReviews.jsx`)
+- **Goal**:
+  1. Create a dedicated **"Gross Analytics"** page under the HR module displaying all faculty/staff approved with Principal marks in `AppraisalReviews.jsx`.
+  2. Show user details: **ID**, **Faculty Name**, **Designation**, **Date of Joining (DOJ)**, and their marks.
+  3. Compute mark using the institutional formula:
+     $$\text{Gross Mark} = (0.6 \times \text{Appraisal Review Form Mark}) + (0.4 \times \text{Attitude Form Mark})$$
+  4. Make the page accessible and configurable in `AdminRoleConfig.jsx` under `ALL_PAGES` (Module: `HR`), so administrators can map and assign access permissions to specific users/roles.
+  5. Strictly preserve policy NOT to touch `hr-portal/` folder.
+- **Key Enhancements**:
+  1. **New HR Gross Analytics Page (`src/pages/HRGrossAnalytics.jsx`)**:
+     - Fetches approved appraisals from `faculty_appraisals`, `non_teaching_appraisals`, and `hod_appraisals`.
+     - Cross-references `users` collection to enrich staff ID, date of joining, and department.
+     - Calculates Appraisal Review mark (60% weightage) and Attitude Form mark (40% weightage) and displays the composite gross score out of 100 with performance bands.
+     - Includes KPI summary cards (Total Approved Staff, Institutional Gross Average, Component Means, Top Performer), multi-parameter filters (Department, Staff Type, Academic Year, Search, Approval Status), interactive score breakdown drawer/modal, and CSV export.
+  2. **Admin Role Permission Integration (`src/pages/AdminRoleConfig.jsx`)**:
+     - Added `{ id: "hr-gross-analytics", label: "HR — Gross Analytics", path: "/hr/gross-analytics", module: "HR" }` to `ALL_PAGES`.
+     - Administrators can now map and grant access to this page for any role (Principal, HR, HOD, etc.).
+  3. **Sidebar & Layout Navigation (`src/components/Layout.jsx`)**:
+     - Added `hr-gross-analytics` to `allPossibleItems` and the `hr` module's `itemIds`.
+  4. **Routing (`src/App.tsx`)**:
+     - Added `/hr/gross-analytics` protected route.
+  5. **Persistence Fix in `AppraisalReviews.jsx`**:
+     - Restored missing `await updateDoc` in `handleReviewAction` so Principal review marks and "Approved" status properly commit to Firestore.
+- **Result**: Production build succeeds cleanly in 8.31s with 0 errors.
+
+### 524. Fix Department Matching for Common Subjects between Faculty Dashboard and Question Paper Generator (`src/pages/FacultyDashboard.jsx`, `src/pages/QuestionPaperGenerator.jsx`)
+- **Goal**: Resolve issue where clicking "Create Question Paper" on a common subject task card (e.g. `CS3591 - Computer Networks`, shared across `UG B.E. Computer Science and Engineering` and `UG B.Tech. Information Technology`) opened the Question Paper Generator with the wrong department (CSE instead of the faculty's department IT).
+- **Root Cause**:
+  1. For common subjects with multiple departments in `task.departments`, `FacultyDashboard.jsx` naively fell back to `task.departments[0]` (CSE) when `matchingGroup` batch check failed or didn't match.
+  2. The fallback completely ignored the logged-in faculty's home department (`facultyDept`) and other assigned subject groups.
+  3. In `QuestionPaperGenerator.jsx`, department auto-selection used strict `sanitizeKey` comparison which failed on underscores and formatting differences, defaulting to the first department in the dropdown.
+- **Key Enhancements**:
+  1. **Intelligent Department Resolution in FacultyDashboard**:
+     - Added robust `isDeptMatch` and `isBatchMatch` helpers capable of matching full titles, acronyms, and regulation batch formats (e.g. `2024-2028` vs `24 Batch`).
+     - Priority-matched `task.departments` against: existing generated QPs by the faculty, matching assigned group, any group where faculty teaches this subject, the faculty's home department (`facultyDept`), and assigned groups.
+     - Re-ordered `task.departments` so the faculty's matched department is positioned **first** and visually highlighted on the card.
+     - Updated "Create Question Paper" navigation to pass the faculty's resolved canonical department.
+  2. **Enhanced Department Auto-Select in QuestionPaperGenerator**:
+     - Updated `useEffect` department matcher to use alphanumeric normalization and acronym matching.
+     - Added fallback to `userDepartment` to ensure the faculty's home department is selected if URL parameter is missing or ambiguous.
+- **Result**: Production build succeeds cleanly in 8.21s with 0 errors.
+
+### 523. Continuous Edit & Re-Save Permissions for Principal on Approved Appraisals (`src/pages/AppraisalReviews.jsx`)
+- **Goal**: Allow Principal/Admin users to edit scores, criteria marks, remarks, and recommendations continuously even after clicking "Finalize & Approve", ensuring marks are never permanently locked for the Principal.
+- **Key Enhancements**:
+  1. **Continuous Score Editing**:
+     - Updated `isEditable = isPrincipalUser || selectedAppraisal.status !== "Approved"` in the faculty criteria score table so input boxes remain interactive for Principal/Admin even after approval.
+     - Updated non-teaching score buttons (`[10, 9, 8, 6, 5, 4, 2]`), remarks textarea, and recommendation selects to only disable if the user is not Principal/Admin.
+  2. **Dedicated "Save Updated Marks" Action**:
+     - When an appraisal is currently in `Approved` status, the Principal review sidebar displays an active "Appraisal Approved (Unlocked for Principal)" status banner along with a primary `"Save Updated Marks"` button and `"Re-route for Correction"` action.
+  3. **"Edit Marks" Action Button in List**:
+     - In the request table, rows in `Approved` status render a vibrant purple `"Edit Marks"` button with `<Edit2 />` icon for Principal/Admin instead of standard view.
+  4. **Strict Scope**:
+     - Preserved strict policy not to touch `hr-portal/` folder.
+- **Result**: Production build succeeds cleanly in 8.26s with 0 errors.
+
+### 522. Add Attitude Form 5-Point Evaluation Rubrics Guide & Enhanced Headers (`src/pages/AppraisalReviews.jsx`, `src/pages/HODDashboard.jsx`)
+- **Goal**: Add the official 5-point performance rubrics to all Attitude Evaluation forms for complete clarity on every rating mark:
+  - `1`: Needs Significant Improvement
+  - `2`: Needs Improvement
+  - `3`: Meets Expectations
+  - `4`: Exceeds Expectations
+  - `5`: Outstanding
+- **Key Enhancements**:
+  1. **Rubrics Reference Guide Card**:
+     - Embedded a dedicated institutional "Evaluation Rubrics & Scoring Criteria" reference card directly above the evaluation questionnaire table.
+     - Color-coded badges for each level (1: Rose, 2: Orange, 3: Amber, 4: Blue, 5: Emerald) displaying the exact score number and description.
+  2. **Table Column Headers**:
+     - Updated evaluation matrix table `thead` to display both the score number and full rubric label for each column (e.g. `1 - Needs Significant Improvement` ... `5 - Outstanding`).
+  3. **Updated Quick Action Buttons**:
+     - Updated buttons to `Set all 5 (Outstanding)` and `Set all 4 (Exceeds Expectations)`.
+  4. **Strict Scope**:
+     - Preserved strict policy not to touch `hr-portal/` folder.
+- **Result**: Production build succeeds cleanly in 8.09s with 0 errors.
+
+### 521. Update Attitude Form Question Titles across Appraisals (`src/pages/AppraisalReviews.jsx`, `src/pages/HODDashboard.jsx`)
+- **Goal**: Rename specific attitude questionnaire titles across all appraisal attitude forms:
+  1. Change `"Customer Focus & Empathy"` to `"Student Focus & Empathy"`.
+  2. Change `"Inquisitiveness & Creative Problem-Solving"` to `"Inquisitiveness & Critical Thinking & Problem-Solving"`.
+- **Changes**:
+  - `src/pages/AppraisalReviews.jsx`:
+    - Updated `HOD_ATTITUDE_EVALUATION_QUESTIONS` item 3 to `"Student Focus & Empathy"` and item 6 to `"Inquisitiveness & Critical Thinking & Problem-Solving"`.
+    - Updated `TEACHER_ATTITUDE_EVALUATION_QUESTIONS` item 3 to `"Student Focus & Empathy"` and item 6 to `"Inquisitiveness & Critical Thinking & Problem-Solving"`.
+    - Updated `NON_TEACHING_GENERAL_ATTITUDE_QUESTIONS` item 15 to `"Inquisitiveness & Critical Thinking & Problem-Solving"`.
+  - `src/pages/HODDashboard.jsx`:
+    - Updated `FACULTY_ATTITUDE_EVALUATION_QUESTIONS` item 3 to `"Student Focus & Empathy"` and item 6 to `"Inquisitiveness & Critical Thinking & Problem-Solving"`.
+    - Updated `NON_TEACHING_GENERAL_ATTITUDE_QUESTIONS` item 15 to `"Inquisitiveness & Critical Thinking & Problem-Solving"`.
+  - Preserved strict restriction not to touch `hr-portal/` folder.
+- **Result**: Production build succeeds cleanly in 7.68s with 0 errors.
+
+### 520. Enhance Hero Text Readability & Contrast in External Setter Workbench Login (`src/pages/COE/ExternalSetterWorkbench.jsx`)
+- **Goal**: Improve the text readability and contrast of the hero content in the CKCET Autonomous Examination & Question Portal login page, eliminating blending into the campus photograph background, especially for "& Question Portal".
+- **Changes**:
+  - `src/pages/COE/ExternalSetterWorkbench.jsx`:
+    - Replaced the transparent clip gradient with a solid, high-contrast royal blue (`#234FE8`) for `& Question Portal` and solid dark navy (`#101943`) for `Next-Gen Autonomous Examination`.
+    - Removed all pale/outline/low-opacity effects and added a crisp subtle text shadow (`0 1px 2px rgba(255,255,255,0.95)`).
+    - Updated description to dark navy/slate (`#172554`), semi-bold (600–700 weight), 18–19px font size, and comfortable 1.5 line height, limited to a balanced max-width.
+    - Added a spacious, subtle localized translucent backdrop (`rgba(255, 255, 255, 0.35)` with 6px blur and rounded 20px corners) exclusively behind the hero text wrapper without covering or obscuring the campus photograph.
+- **Result**: Production build succeeds cleanly in 7.77s with 0 errors.
+
+### 519. Attitude Form Workflow: HOD Submission to Principal & Principal/HR Score Number Input Box (`src/pages/HODDashboard.jsx`, `src/pages/AppraisalReviews.jsx`)
+- **Goal**:
+  1. In `HODDashboard.jsx`, allow HOD to fill the Attitude & Competency Form and submit directly to the Principal via a "Submit to Principal" button, setting appraisal status to `HOD_Approved` so it automatically routes to the Principal's pending queue in `PrincipalDashboard.jsx`.
+  2. In `PrincipalDashboard.jsx`, forwarded appraisals link directly to `AppraisalReviews.jsx` (`/hr/reviews`).
+  3. In `AppraisalReviews.jsx`, when Principal or HR views the Attitude Evaluation form, display a dedicated score input number box (1 to 5) in the last column of the evaluation matrix for each question.
+  4. Ensure this score number box column is strictly visible **only to Principal and HR** (`userRole === "Principal" || userRole === "HR" || userRole === "Admin"`), remaining completely hidden for HOD and faculty.
+- **Changes**:
+  - `src/pages/HODDashboard.jsx`:
+    - Updated `handleSaveAttitudeEvaluation(isSubmitToPrincipal)` to save evaluation with `submittedToPrincipal: true` and update Firestore appraisal status to `HOD_Approved`, `attitudeSubmittedToPrincipal: true`.
+    - Added both `Save Draft` and `Submit to Principal` buttons in the attitude modal footer.
+  - `src/pages/AppraisalReviews.jsx`:
+    - In `handleOpenAttitudeModal`, prefilled existing `principalRatings || hodRatings || ratings` so the Principal/HR can seamlessly view and adjust HOD's scores.
+    - Added `Score (1-5)` column header in table `thead` conditionally rendered when `isPrincipalOrHR` is true.
+    - Added an interactive number input box (`<input type="number" min={1} max={5} />`) in each question row conditionally rendered only when `isPrincipalOrHR` is true.
+    - Number box values are two-way synchronized with the rating matrix options and live total/average score counters.
+    - Saved `principalRatings` and preserved `hodRatings` in Firestore upon saving.
+- **Result**: Production build succeeds cleanly in 7.74s with 0 errors.
+
+### 518. Redesign External Setter Workbench Institutional Login Page (`src/pages/COE/ExternalSetterWorkbench.jsx`)
+- **Goal**: Redesign the CKCET Autonomous Examination & Question Portal login page with a clean white institutional header, clearly visible campus background without excessive fading, upper-middle centered hero section, and a right-side login card matching institutional branding.
+- **Key Enhancements**:
+  1. **Layout & Background**: Rendered full-screen responsive container with `/ckcet_campus.png` cover background and a subtle (15-25%) translucent overlay without blurring or heavy white opaque masking, preserving clarity of campus buildings and greenery.
+  2. **Institutional Header**: Maintained CKCET banner logo on the left, "OFFICE OF THE CONTROLLER OF EXAMINATIONS" and session details on the right with the "ESE - QP Setter Portal" badge.
+  3. **Centered Hero Section**: Displayed the elegant pill `CONFIDENTIAL QUESTION SETTER WORKBENCH`, the exact main heading `Next-Gen Autonomous Examination & Question Portal` wrapped in two balanced lines with navy and indigo accents and crisp text-shadow, followed directly by the exact initiative description.
+  4. **Refined Login Card**: Compact 390px card with 95% opacity white glassmorphism, rounded-22px border radius, lock icon with gold accent, "QP Setter Sign In" header, "REGISTERED EMAIL ADDRESS" input, "SECURE ACCESS PASSWORD" input with "COE ISSUED" badge, password visibility toggle (`Eye`/`EyeOff`), and primary "Log In to Setter Workbench" action.
+  5. **Slim Footer**: Placed slim translucent institutional footer at the bottom with copyright and ESE examination session branding.
+- **Result**: Production build succeeds cleanly in 7.93s with 0 errors.
+
 ### 517. Fix Uncaught ReferenceError: FileWarning is not defined (`src/pages/HODDashboard.jsx`)
 - **Goal**: Fix runtime ReferenceError `FileWarning is not defined` thrown on line 4270 when rendering the "Answer Script Photocopy Problem Discrepancies" card header in `HODDashboard.jsx`.
 - **Root Cause**: The `<FileWarning size={18} />` icon component was rendered in the card header title, but `FileWarning` was missing from the `lucide-react` import statement.

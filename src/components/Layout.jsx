@@ -152,6 +152,7 @@ const allPossibleItems = [
   { id: "non-teaching-appraisal-request", icon: FileText, label: "Non-Teaching Appraisal Request", path: "/hr/non-teaching-appraisal" },
   { id: "hod-appraisal-request", icon: FileText, label: "HOD Appraisal Request", path: "/hr/hod-appraisal" },
   { id: "faculty-appraisal-reviews", icon: CheckCircle2, label: "Appraisal Reviews", path: "/hr/reviews" },
+  { id: "hr-gross-analytics", icon: BarChart3, label: "Gross Analytics", path: "/hr/gross-analytics" },
   { id: "appraisal-settings", icon: Settings2, label: "Appraisal Settings", path: "/hr/settings" },
 
   // Resource Hub Module
@@ -261,7 +262,7 @@ const modules = [
     id: "hr",
     label: "HR",
     icon: UserCheck,
-    itemIds: ["faculty-appraisal-request", "non-teaching-appraisal-request", "hod-appraisal-request", "faculty-appraisal-reviews", "appraisal-settings"]
+    itemIds: ["faculty-appraisal-request", "non-teaching-appraisal-request", "hod-appraisal-request", "faculty-appraisal-reviews", "hr-gross-analytics", "appraisal-settings"]
   },
   {
     id: "resource_hub",
@@ -1017,7 +1018,7 @@ export default function Layout({ children, title }) {
       </aside>
 
       {/* Main Content */}
-      <main className="transition-all duration-300 pt-4 px-4 md:px-6">
+      <main className="w-full transition-all duration-300 pt-4 px-3 sm:px-4 md:px-6">
         {children}
       </main>
     </div>

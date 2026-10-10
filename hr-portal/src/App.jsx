@@ -13,6 +13,7 @@ import HODAppraisal from "./pages/HODAppraisal";
 import AppraisalReviews from "./pages/AppraisalReviews";
 import AppraisalSettings from "./pages/AppraisalSettings";
 import UserManagement from "./pages/UserManagement";
+import HRGrossAnalytics from "./pages/HRGrossAnalytics";
 
 function ProtectedRoute({ children }) {
   const [user, setUser] = useState(null);
@@ -181,6 +182,15 @@ export default function App() {
           element={
             <ProtectedRoute>
               <AppraisalReviews />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/gross-analytics" 
+          element={
+            <ProtectedRoute>
+              <HRGrossAnalytics />
             </ProtectedRoute>
           } 
         />

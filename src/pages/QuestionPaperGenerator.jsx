@@ -4300,15 +4300,40 @@ export default function QuestionPaperGenerator() {
 
     // 2. Department
     if (urlDept && filteredDepartments.length > 0) {
+      const cleanAlpha = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const urlClean = cleanAlpha(urlDept);
       const normDept = sanitizeKey(urlDept).toLowerCase().trim();
-      const matchD = filteredDepartments.find(d =>
-        sanitizeKey(d).toLowerCase().trim() === normDept ||
-        d.toLowerCase().trim() === urlDept.toLowerCase().trim() ||
-        d.toLowerCase().includes(urlDept.toLowerCase()) ||
-        urlDept.toLowerCase().includes(d.toLowerCase())
-      );
+      const getAcronym = (s) => String(s || '').split(/[^a-zA-Z0-9]+/).filter(Boolean).map(w => w[0]).join('').toLowerCase();
+      const urlAcronym = getAcronym(urlDept);
+
+      const matchD = filteredDepartments.find(d => {
+        const dClean = cleanAlpha(d);
+        if (urlClean && dClean && (dClean === urlClean || dClean.includes(urlClean) || urlClean.includes(dClean))) {
+          return true;
+        }
+        const dAcronym = getAcronym(d);
+        if ((urlAcronym && urlAcronym === dClean) || (dAcronym && dAcronym === urlClean)) {
+          return true;
+        }
+        return (
+          sanitizeKey(d).toLowerCase().trim() === normDept ||
+          d.toLowerCase().trim() === urlDept.toLowerCase().trim() ||
+          d.toLowerCase().includes(urlDept.toLowerCase()) ||
+          urlDept.toLowerCase().includes(d.toLowerCase())
+        );
+      });
       if (matchD && department !== matchD) {
         setDepartment(matchD);
+      }
+    } else if (!department && userDepartment && filteredDepartments.length > 0) {
+      const cleanAlpha = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const uClean = cleanAlpha(userDepartment);
+      const matchU = filteredDepartments.find(d => {
+        const dClean = cleanAlpha(d);
+        return uClean && dClean && (dClean === uClean || dClean.includes(uClean) || uClean.includes(dClean));
+      });
+      if (matchU && department !== matchU) {
+        setDepartment(matchU);
       }
     } else if (!department && filteredDepartments.length === 1) {
       setDepartment(filteredDepartments[0]);
@@ -4357,7 +4382,7 @@ export default function QuestionPaperGenerator() {
         setSection(matchSec);
       }
     }
-  }, [searchParams, filteredProgrammes, filteredDepartments, displayedBatches, academicYears, semesters, availableSections, editId, compositeKey, program, department, batch, academicYear, selectedSemester, section]);
+  }, [searchParams, filteredProgrammes, filteredDepartments, displayedBatches, academicYears, semesters, availableSections, editId, compositeKey, program, department, batch, academicYear, selectedSemester, section, userDepartment]);
 
   // Auto-select Section based on faculty subject assignments if not provided via URL
   useEffect(() => {

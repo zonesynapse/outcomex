@@ -14,7 +14,7 @@ import PrincipalIAScheduleView from "./PrincipalIAScheduleView";
 import { getEnquiriesRealtime, updateEnquiry, getEnquiryById } from "../services/enquiryService";
 import { useDepartments } from "../hooks/useDepartments";
 import { db } from "../firebase";
-import { collection, getDocs, query, where, getCountFromServer, doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
+import { collection, getDocs, query, where, getCountFromServer, doc, getDoc, setDoc, updateDoc, onSnapshot } from "firebase/firestore";
 import { formatProgrammeKey, sanitizeKey as sanitizeKeyUtils, getAttendanceRecords } from "../lib/utils";
 
 const sanitizeKey = (key) => {
@@ -105,8 +105,30 @@ export default function PrincipalDashboard() {
       setPendingAppraisals([...facultyList, ...nonTeachingList, ...hodList]);
     });
 
-    const unsubN = onSnapshot(query(collection(db, "non_teaching_appraisals"), where("status", "==", "HOD_Approved")), (snap) => {
-      nonTeachingList = snap.docs.map(d => ({ id: d.id, collectionName: "non_teaching_appraisals", ...d.data() }));
+    const unsubN = onSnapshot(collection(db, "non_teaching_appraisals"), (snap) => {
+      nonTeachingList = [];
+      snap.docs.forEach((d) => {
+        const data = d.data() || {};
+        const dept = String(data.department || data.formData?.department || "").toLowerCase().trim();
+        const normDept = dept.replace(/[^a-z0-9]/g, '');
+        const isAdministration = normDept === "administration" || normDept === "admin" || (normDept.includes("administration") && !normDept.includes("business"));
+
+        if (isAdministration && data.status === "Submitted") {
+          try {
+            updateDoc(doc(db, "non_teaching_appraisals", d.id), {
+              status: "HOD_Approved",
+              coordinatorApproved: true,
+              "hodReview.comments": "Forwarded directly to Principal for review (Administration Department - Coordinator Approved).",
+              "hodReview.grade": "Good",
+              "hodReview.reviewedBy": "Administration Coordinator",
+              "hodReview.reviewedAt": new Date().toISOString()
+            }).catch(() => {});
+          } catch (e) {}
+          nonTeachingList.push({ id: d.id, collectionName: "non_teaching_appraisals", ...data, status: "HOD_Approved" });
+        } else if (data.status === "HOD_Approved") {
+          nonTeachingList.push({ id: d.id, collectionName: "non_teaching_appraisals", ...data });
+        }
+      });
       setPendingAppraisals([...facultyList, ...nonTeachingList, ...hodList]);
     });
 

@@ -529,7 +529,7 @@ export default function TeacherAppraisal() {
 
   return (
     <HRLayout>
-      <div className="space-y-6 max-w-6xl mx-auto pb-16">
+      <div className="w-full space-y-6 pb-16">
         {/* Header Title Banner */}
         <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 rounded-3xl p-6 md:p-8 text-white shadow-xl relative overflow-hidden border border-slate-800">
           <div className="absolute top-0 right-0 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none"></div>
@@ -621,26 +621,73 @@ export default function TeacherAppraisal() {
           </div>
         )}
 
-        {/* Attitude Form Feedback Banner (When Evaluated by Coordinator) */}
+        {/* Attitude Form Feedback Banner (When Evaluated by Coordinator / Principal) */}
         {existingAppraisal?.attitudeForm?.ratings && (
-          <div className="bg-gradient-to-r from-teal-50 via-emerald-50 to-teal-50 border border-teal-200 p-4 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-teal-900 shadow-xs">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-teal-600 text-white rounded-xl shadow-xs">
-                <Award className="w-5 h-5" />
+          <div className="bg-gradient-to-r from-teal-50 via-emerald-50 to-teal-50 border border-teal-200 p-4 rounded-2xl space-y-3 text-teal-900 shadow-xs">
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-teal-600 text-white rounded-xl shadow-xs">
+                  <Award className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-black uppercase tracking-wider text-teal-900">
+                    Attitude &amp; Competency Evaluation Score
+                  </h4>
+                  <p className="text-xs text-teal-700 mt-0.5 font-medium">
+                    Coordinator Score: <strong className="font-bold text-teal-950">{existingAppraisal.attitudeForm.totalScore}/{existingAppraisal.attitudeForm.maxScore || 80} Marks</strong> ({existingAppraisal.attitudeForm.percentage}%) • Average: <strong className="font-bold text-teal-950">{existingAppraisal.attitudeForm.average}/5.0</strong>
+                    {existingAppraisal.attitudeForm.principalTotalScore !== undefined && (
+                      <span className="ml-2 font-bold text-indigo-900">
+                        • Principal Final Score: {existingAppraisal.attitudeForm.principalTotalScore}/{existingAppraisal.attitudeForm.principalMaxScore || 80} ({existingAppraisal.attitudeForm.principalAverage}/5.0)
+                      </span>
+                    )}
+                    {existingAppraisal.attitudeForm.remarks && ` • Coordinator Remarks: "${existingAppraisal.attitudeForm.remarks}"`}
+                    {existingAppraisal.attitudeForm.principalRemarks && ` • Principal Remarks: "${existingAppraisal.attitudeForm.principalRemarks}"`}
+                  </p>
+                </div>
               </div>
-              <div>
-                <h4 className="text-xs font-black uppercase tracking-wider text-teal-900">
-                  Attitude & Competency Evaluation Score
-                </h4>
-                <p className="text-xs text-teal-700 mt-0.5 font-medium">
-                  Coordinator Score: <strong className="font-bold text-teal-950">{existingAppraisal.attitudeForm.totalScore}/{existingAppraisal.attitudeForm.maxScore || 80} Marks</strong> ({existingAppraisal.attitudeForm.percentage}%) • Average: <strong className="font-bold text-teal-950">{existingAppraisal.attitudeForm.average}/5.0</strong>
-                  {existingAppraisal.attitudeForm.remarks && ` • Remarks: "${existingAppraisal.attitudeForm.remarks}"`}
-                </p>
+              <div className="flex items-center gap-2 shrink-0">
+                {(() => {
+                  const avg = Number(existingAppraisal.attitudeForm.principalAverage || existingAppraisal.attitudeForm.average) || 0;
+                  const rubricTier = avg >= 4.5 ? { label: "5 - Outstanding", color: "bg-emerald-600 text-white" }
+                    : avg >= 3.5 ? { label: "4 - Exceeds Expectations", color: "bg-indigo-600 text-white" }
+                    : avg >= 2.5 ? { label: "3 - Meets Expectations", color: "bg-sky-600 text-white" }
+                    : avg >= 1.5 ? { label: "2 - Needs Improvement", color: "bg-amber-600 text-white" }
+                    : { label: "1 - Needs Significant Improvement", color: "bg-rose-600 text-white" };
+                  return (
+                    <span className={`text-[10px] font-black px-3 py-1 rounded-full shadow-xs ${rubricTier.color}`}>
+                      Rubric: {rubricTier.label}
+                    </span>
+                  );
+                })()}
+                <span className="text-[10px] font-bold px-3 py-1 bg-teal-100 border border-teal-300 text-teal-800 rounded-full">
+                  Evaluated
+                </span>
               </div>
             </div>
-            <span className="text-[10px] font-bold px-3 py-1 bg-teal-100 border border-teal-300 text-teal-800 rounded-full shrink-0">
-              Evaluated by Coordinator
-            </span>
+
+            {/* Rubrics Scale Reference */}
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 pt-2 border-t border-teal-200/60 text-[10px]">
+              <div className="bg-white/80 border border-rose-200 px-2 py-1 rounded-lg text-rose-800 font-bold flex items-center gap-1.5">
+                <span className="w-4 h-4 rounded bg-rose-600 text-white flex items-center justify-center text-[9px] font-black">1</span>
+                <span>Needs Significant Improvement</span>
+              </div>
+              <div className="bg-white/80 border border-amber-200 px-2 py-1 rounded-lg text-amber-800 font-bold flex items-center gap-1.5">
+                <span className="w-4 h-4 rounded bg-amber-500 text-white flex items-center justify-center text-[9px] font-black">2</span>
+                <span>Needs Improvement</span>
+              </div>
+              <div className="bg-white/80 border border-sky-200 px-2 py-1 rounded-lg text-sky-800 font-bold flex items-center gap-1.5">
+                <span className="w-4 h-4 rounded bg-sky-600 text-white flex items-center justify-center text-[9px] font-black">3</span>
+                <span>Meets Expectations</span>
+              </div>
+              <div className="bg-white/80 border border-indigo-200 px-2 py-1 rounded-lg text-indigo-800 font-bold flex items-center gap-1.5">
+                <span className="w-4 h-4 rounded bg-indigo-600 text-white flex items-center justify-center text-[9px] font-black">4</span>
+                <span>Exceeds Expectations</span>
+              </div>
+              <div className="bg-white/80 border border-emerald-200 px-2 py-1 rounded-lg text-emerald-800 font-bold flex items-center gap-1.5">
+                <span className="w-4 h-4 rounded bg-emerald-600 text-white flex items-center justify-center text-[9px] font-black">5</span>
+                <span>Outstanding</span>
+              </div>
+            </div>
           </div>
         )}
 

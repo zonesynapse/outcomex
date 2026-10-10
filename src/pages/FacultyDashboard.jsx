@@ -176,6 +176,37 @@ const getQPWorkflowStatus = (qp) => {
   return { label: "Draft", bg: "bg-slate-100", text: "text-slate-700", icon: Clock };
 };
 
+const normAlpha = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+const isDeptMatch = (d1, d2) => {
+  if (!d1 || !d2) return false;
+  const n1 = normAlpha(d1);
+  const n2 = normAlpha(d2);
+  if (!n1 || !n2) return false;
+  if (n1 === n2 || n1.includes(n2) || n2.includes(n1)) return true;
+  const getAcronym = (s) => String(s || '').split(/[^a-zA-Z0-9]+/).filter(Boolean).map(w => w[0]).join('').toLowerCase();
+  const a1 = getAcronym(d1);
+  const a2 = getAcronym(d2);
+  if (n1 === a2 || n2 === a1) return true;
+  return false;
+};
+
+const isBatchMatch = (b1, b2) => {
+  if (!b1 || !b2) return false;
+  const n1 = normAlpha(b1);
+  const n2 = normAlpha(b2);
+  if (!n1 || !n2) return false;
+  if (n1 === n2 || n1.includes(n2) || n2.includes(n1)) return true;
+  const y1 = String(b1).match(/20\d{2}/)?.[0] || String(b1).match(/\b\d{2}\b/)?.[0] || '';
+  const y2 = String(b2).match(/20\d{2}/)?.[0] || String(b2).match(/\b\d{2}\b/)?.[0] || '';
+  if (y1 && y2) {
+    const c1 = y1.length === 2 ? `20${y1}` : y1;
+    const c2 = y2.length === 2 ? `20${y2}` : y2;
+    if (c1 === c2) return true;
+  }
+  return false;
+};
+
 export default function FacultyDashboard() {
   const navigate = useNavigate();
   const { getRegulationForBatch } = useRegulations();
@@ -1688,25 +1719,63 @@ export default function FacultyDashboard() {
         const isOverdue = !isDone && task.toDate && task.toDate < todayStr;
         const isDueSoon = !isDone && task.toDate && task.toDate >= todayStr;
 
-        // Derive progKey/department from assignedGroups by fuzzy-matching batch+semester+code,
-        // then fall back to the first department recorded on the assignment itself.
-        // Check both old and canonical code since subject_assignments may use either.
+        const taskDeptList = Array.isArray(task.departments) && task.departments.length > 0 ? task.departments : [];
+
+        // Derive matching assigned group for this subject using smart batch and code matching
         const matchingGroup = assignedGroups.find(g =>
-          (normBatch(g.batch) === normBatch(task.batch) ||
-            normBatch(g.batch).includes(normBatch(task.batch)) ||
-            normBatch(task.batch).includes(normBatch(g.batch))) &&
+          isBatchMatch(g.batch, task.batch) &&
           String(g.semester) === String(task.semester) &&
           (g.codes || []).some(c => {
             const cNorm = String(c).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
             const rawCodeNorm = String(rawCode).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
             const canonicalCodeNorm = String(canonicalCode).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-            if (canonicalCodeNorm) {
-              return cNorm === rawCodeNorm || cNorm === canonicalCodeNorm;
-            }
-            return cNorm === rawCodeNorm;
+            return cNorm === rawCodeNorm || (canonicalCodeNorm && cNorm === canonicalCodeNorm);
           })
         );
-        const excelFirstDept = Array.isArray(task.departments) && task.departments.length > 0 ? task.departments[0] : null;
+
+        // Any group where faculty teaches this subject
+        const anyGroupWithCode = !matchingGroup ? assignedGroups.find(g =>
+          (g.codes || []).some(c => {
+            const cNorm = String(c).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+            const rawCodeNorm = String(rawCode).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+            const canonicalCodeNorm = String(canonicalCode).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+            return cNorm === rawCodeNorm || (canonicalCodeNorm && cNorm === canonicalCodeNorm);
+          })
+        ) : null;
+
+        // Any previously created QP for this subject by this faculty
+        const existingQpWithDept = generatedSets.find(q => q && q.department);
+
+        // Intelligently find which department from task.departments corresponds to this faculty
+        let matchedDeptObj = null;
+        if (existingQpWithDept) {
+          matchedDeptObj = taskDeptList.find(d => isDeptMatch(d.dept, existingQpWithDept.department));
+        }
+        if (!matchedDeptObj && matchingGroup?.department) {
+          matchedDeptObj = taskDeptList.find(d => isDeptMatch(d.dept, matchingGroup.department));
+        }
+        if (!matchedDeptObj && anyGroupWithCode?.department) {
+          matchedDeptObj = taskDeptList.find(d => isDeptMatch(d.dept, anyGroupWithCode.department));
+        }
+        if (!matchedDeptObj && facultyDept) {
+          matchedDeptObj = taskDeptList.find(d => isDeptMatch(d.dept, facultyDept));
+        }
+        if (!matchedDeptObj && assignedGroups.length > 0) {
+          matchedDeptObj = taskDeptList.find(d =>
+            assignedGroups.some(g => isDeptMatch(d.dept, g.department))
+          );
+        }
+        if (!matchedDeptObj && taskDeptList.length > 0) {
+          matchedDeptObj = taskDeptList[0];
+        }
+
+        // Put the faculty's matched department FIRST in orderedDepartments so the card displays their department first
+        const orderedDepartments = matchedDeptObj
+          ? [matchedDeptObj, ...taskDeptList.filter(d => d !== matchedDeptObj)]
+          : taskDeptList;
+
+        const resolvedProgKey = matchedDeptObj?.progKey || matchedDeptObj?.prog || matchingGroup?.progKey || 'UG';
+        const resolvedDept = matchedDeptObj?.dept || (matchingGroup ? String(matchingGroup.department).replace(/_/g, ' ') : '') || '';
 
         return {
           ...task,
@@ -1719,8 +1788,10 @@ export default function FacultyDashboard() {
           isDone,
           isOverdue,
           isDueSoon,
-          progKey: (matchingGroup?.progKey || excelFirstDept?.progKey || excelFirstDept?.prog || ''),
-          department: (matchingGroup?.department || excelFirstDept?.dept || '')
+          progKey: resolvedProgKey,
+          department: resolvedDept,
+          departments: orderedDepartments,
+          section: (matchingGroup?.section || (Array.isArray(matchingGroup?.sections) && matchingGroup.sections[0]) || task.section || '')
         };
       })
       // Deduplicate using a unique composite key combining document ID, exam ID/name, batch, semester, and course code/name.
@@ -1770,7 +1841,7 @@ export default function FacultyDashboard() {
         if (ka !== kb) return ka.localeCompare(kb);
         return String(b.academicYear || '').localeCompare(String(a.academicYear || ''));
       });
-  }, [qpSetterTasks, baseQps, currentUid, assignedGroups, courseBankNameMap, allSyllabusDocs, isValidSubjectForBatchSem]);
+  }, [qpSetterTasks, baseQps, currentUid, assignedGroups, courseBankNameMap, allSyllabusDocs, isValidSubjectForBatchSem, facultyDept]);
 
   const statsCards = [
     { label: "Assigned Subjects", value: assignedCount, icon: BookOpen, color: "indigo" },
@@ -2163,11 +2234,21 @@ export default function FacultyDashboard() {
                       {Array.isArray(task.departments) && task.departments.length > 0 && (
                         <div className="flex items-center gap-1.5 flex-wrap mb-3">
                           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Depts:</span>
-                          {task.departments.map((d, dIdx) => (
-                            <span key={dIdx} className="text-[10px] font-bold px-2 py-0.5 bg-indigo-50 text-indigo-800 rounded-md border border-indigo-200/60">
-                              {d.progKey ? `${d.progKey} ` : ''}{(d.dept || '').replace(/_/g, ' ')}
-                            </span>
-                          ))}
+                          {task.departments.map((d, dIdx) => {
+                            const isMyDept = isDeptMatch(d.dept, task.department) || isDeptMatch(d.dept, facultyDept);
+                            return (
+                              <span
+                                key={dIdx}
+                                className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${
+                                  isMyDept
+                                    ? 'bg-indigo-50 text-indigo-800 border-indigo-200/60 font-black'
+                                    : 'bg-slate-100 text-slate-600 border-slate-200'
+                                }`}
+                              >
+                                {d.progKey ? `${d.progKey} ` : ''}{(d.dept || '').replace(/_/g, ' ')}
+                              </span>
+                            );
+                          })}
                         </div>
                       )}
 
@@ -2244,9 +2325,11 @@ export default function FacultyDashboard() {
                     <div className="pt-2">
                       <button
                         onClick={() => {
-                          const firstDept = Array.isArray(task.departments) && task.departments[0] ? task.departments[0] : null;
-                          const taskProgKey = task.progKey || (firstDept ? firstDept.progKey || firstDept.prog : '') || '';
-                          const taskDept = task.department || (firstDept ? firstDept.dept : '') || '';
+                          const matchedDept = (Array.isArray(task.departments) ? task.departments : []).find(d =>
+                            isDeptMatch(d.dept, task.department) || isDeptMatch(d.dept, facultyDept)
+                          ) || (Array.isArray(task.departments) && task.departments[0] ? task.departments[0] : null);
+                          const taskProgKey = task.progKey || (matchedDept ? matchedDept.progKey || matchedDept.prog : '') || '';
+                          const taskDept = task.department || (matchedDept ? matchedDept.dept : '') || '';
                           const taskSec = task.section || (Array.isArray(task.sections) && task.sections[0] ? task.sections[0] : '');
                           const taskExam = task.examName || task.examId || task.exam || '';
                           // Always pass the intended set so QPG never defaults back to Set 1 and

@@ -353,7 +353,7 @@ export default function NonTeachingAppraisal() {
 
   return (
     <HRLayout>
-      <div className="space-y-6 max-w-6xl mx-auto pb-16">
+      <div className="w-full space-y-6 pb-16">
         {/* Header Title Banner */}
         <div className="bg-gradient-to-r from-slate-900 via-teal-950 to-slate-900 rounded-3xl p-6 md:p-8 text-white shadow-xl relative overflow-hidden border border-slate-800">
           <div className="absolute top-0 right-0 w-96 h-96 bg-teal-500/10 rounded-full blur-3xl pointer-events-none"></div>

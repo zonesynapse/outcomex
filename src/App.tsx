@@ -101,6 +101,7 @@ import NonTeachingAppraisal from "./pages/NonTeachingAppraisal";
 import HODAppraisal from "./pages/HODAppraisal";
 import AppraisalReviews from "./pages/AppraisalReviews";
 import AppraisalSettings from "./pages/AppraisalSettings";
+import HRGrossAnalytics from "./pages/HRGrossAnalytics";
 import IAScheduleCreation from "./pages/IAScheduleCreation";
 import ExamCellDashboard from "./pages/ExamCell/ExamCellDashboard";
 import ExamCellQPReview from "./pages/ExamCell/ExamCellQPReview";
@@ -245,6 +246,7 @@ export default function App() {
         <Route path="/hr/non-teaching-appraisal" element={<ProtectedRoute><NonTeachingAppraisal /></ProtectedRoute>} />
         <Route path="/hr/hod-appraisal" element={<ProtectedRoute><HODAppraisal /></ProtectedRoute>} />
         <Route path="/hr/reviews" element={<ProtectedRoute><AppraisalReviews /></ProtectedRoute>} />
+        <Route path="/hr/gross-analytics" element={<ProtectedRoute><HRGrossAnalytics /></ProtectedRoute>} />
         <Route path="/hr/settings" element={<ProtectedRoute><AppraisalSettings /></ProtectedRoute>} />
 
         {/* Mentoring Module Routes */}

@@ -340,7 +340,13 @@ export default function NonTeachingAppraisal() {
       const docId = `${currentUser.uid}_${academicYear.replace(/[^a-zA-Z0-9]/g, "_")}_non_teaching`;
       const docRef = doc(db, "non_teaching_appraisals", docId);
 
-      const status = isSubmit ? "Submitted" : existingAppraisal?.status || "Draft";
+      const deptRaw = String(formData.department || userProfile?.department || "").toLowerCase().trim();
+      const normDept = deptRaw.replace(/[^a-z0-9]/g, '');
+      const isAdministration = normDept === "administration" || normDept === "admin" || (normDept.includes("administration") && !normDept.includes("business"));
+
+      const status = isSubmit
+        ? (isAdministration ? "HOD_Approved" : "Submitted")
+        : existingAppraisal?.status || "Draft";
 
       const payload = {
         id: docId,
@@ -354,14 +360,26 @@ export default function NonTeachingAppraisal() {
         status,
         submittedAt: isSubmit ? new Date().toISOString() : existingAppraisal?.submittedAt || null,
         updatedAt: new Date().toISOString(),
-        formData
+        formData,
+        ...(isSubmit && isAdministration ? {
+          coordinatorApproved: true,
+          forwardedToPrincipal: true,
+          hodReview: {
+            comments: "Forwarded directly to Principal for review (Administration Department - Coordinator Approved).",
+            grade: "Good",
+            reviewedBy: "Administration Coordinator",
+            reviewedAt: new Date().toISOString()
+          }
+        } : {})
       };
 
       await setDoc(docRef, payload, { merge: true });
 
       showToast(
         isSubmit
-          ? "Non-Teaching Appraisal Request Submitted to HOD Successfully!"
+          ? (isAdministration
+              ? "Non-Teaching Appraisal Forwarded to Principal (Coordinator Approved)!"
+              : "Non-Teaching Appraisal Request Submitted to HOD Successfully!")
           : "Draft Saved Successfully!",
         "success"
       );
@@ -439,7 +457,7 @@ export default function NonTeachingAppraisal() {
 
   return (
     <Layout title="Non-Teaching Staff Appraisal Request">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <div className="w-full pb-10">
 
         {/* Toast Alert */}
         {toast.show && (

@@ -41,7 +41,7 @@ export const FACULTY_ATTITUDE_EVALUATION_QUESTIONS = [
   },
   {
     id: 3,
-    title: "Customer Focus & Empathy",
+    title: "Student Focus & Empathy",
     statement: "Keeps the learner, parent, or stakeholder at the centre of their decisions."
   },
   {
@@ -56,7 +56,7 @@ export const FACULTY_ATTITUDE_EVALUATION_QUESTIONS = [
   },
   {
     id: 6,
-    title: "Inquisitiveness & Creative Problem-Solving",
+    title: "Inquisitiveness & Critical Thinking & Problem-Solving",
     statement: "Asks probing questions, evaluates answers critically, and solves problems in novel ways."
   },
   {
@@ -126,7 +126,7 @@ export const NON_TEACHING_GENERAL_ATTITUDE_QUESTIONS = [
   { id: 12, title: "AI Literacy & Judgment", statement: "Proactively learns and uses AI tools, and exercises judgment on when to trust AI output versus human intuition." },
   { id: 13, title: "Growth Mindset", statement: "Continuously improves, quickly acquires new skills, and unlearns old habits where needed." },
   { id: 14, title: "Clarity in Communication", statement: "Articulates ideas clearly and persuasively, in speech and in writing." },
-  { id: 15, title: "Inquisitiveness & Creative Problem-Solving", statement: "Asks probing questions, evaluates answers critically, and solves problems in novel ways." },
+  { id: 15, title: "Inquisitiveness & Critical Thinking & Problem-Solving", statement: "Asks probing questions, evaluates answers critically, and solves problems in novel ways." },
   { id: 16, title: "Proactive", statement: "Anticipates needs and acts ahead of requirements." },
   { id: 17, title: "Stakeholder Focus & Empathy", statement: "Keeps students, staff, and other stakeholders at the centre of their decisions." },
   { id: 18, title: "Process & Service Improvement", statement: "Actively looks for ways to improve processes and service delivery in their area." },
@@ -190,11 +190,41 @@ export const getHodAttitudeQuestions = (app) => {
 };
 
 export const ATTITUDE_RATING_OPTIONS = [
-  { value: 1, code: "1 SD", label: "Strongly Disagree" },
-  { value: 2, code: "2 D", label: "Disagree" },
-  { value: 3, code: "3 N", label: "Neutral" },
-  { value: 4, code: "4 A", label: "Agree" },
-  { value: 5, code: "5 SA", label: "Strongly Agree" }
+  { 
+    value: 1, 
+    code: "1", 
+    label: "Needs Significant Improvement", 
+    badgeBg: "bg-rose-100 text-rose-800 border-rose-300", 
+    color: "hover:bg-rose-50 text-rose-700 border-rose-200" 
+  },
+  { 
+    value: 2, 
+    code: "2", 
+    label: "Needs Improvement", 
+    badgeBg: "bg-orange-100 text-orange-800 border-orange-300", 
+    color: "hover:bg-orange-50 text-orange-700 border-orange-200" 
+  },
+  { 
+    value: 3, 
+    code: "3", 
+    label: "Meets Expectations", 
+    badgeBg: "bg-amber-100 text-amber-800 border-amber-300", 
+    color: "hover:bg-amber-50 text-amber-700 border-amber-200" 
+  },
+  { 
+    value: 4, 
+    code: "4", 
+    label: "Exceeds Expectations", 
+    badgeBg: "bg-blue-100 text-blue-800 border-blue-300", 
+    color: "hover:bg-blue-50 text-blue-700 border-blue-200" 
+  },
+  { 
+    value: 5, 
+    code: "5", 
+    label: "Outstanding", 
+    badgeBg: "bg-emerald-100 text-emerald-800 border-emerald-300", 
+    color: "hover:bg-teal-50 text-teal-700 border-teal-200" 
+  }
 ];
 
 const getBase64ImageFromUrl = async (imageUrl) => {
@@ -758,6 +788,14 @@ export default function HODDashboard() {
     const norm1 = String(docDept).toLowerCase().replace(/^(department of\s+|dept of\s+|be\s+|btech\s+|me\s+|mtech\s+|ug\s+|pg\s+)/gi, '').replace(/[^a-z0-9]/g, '');
     const norm2 = String(targetDept).toLowerCase().replace(/^(department of\s+|dept of\s+|be\s+|btech\s+|me\s+|mtech\s+|ug\s+|pg\s+)/gi, '').replace(/[^a-z0-9]/g, '');
     
+    // College general Administration staff must never match any academic department or HOD
+    if (norm1 === 'administration' || norm1 === 'admin' || (norm1.includes('administration') && !norm1.includes('business'))) return false;
+    if (norm2 === 'administration' || norm2 === 'admin' || (norm2.includes('administration') && !norm2.includes('business'))) return false;
+
+    // College general Administration department must never match Business Administration (MBA)
+    if (norm1 === 'administration' && (norm2.includes('business') || norm2 === 'mba')) return false;
+    if (norm2 === 'administration' && (norm1.includes('business') || norm1 === 'mba')) return false;
+
     if (norm1 === norm2) return true;
     if (norm1.includes(norm2) || norm2.includes(norm1)) return true;
 
@@ -1037,7 +1075,7 @@ export default function HODDashboard() {
 
   const handleOpenAttitudeModal = (app) => {
     setAttitudeAppraisal(app);
-    const existing = app.attitudeEvaluation || app.attitudeForm || {};
+    const existing = app.attitudeDraft || app.attitudeEvaluation || app.attitudeForm || {};
     setAttitudeRatings(existing.ratings ? { ...existing.ratings } : {});
     setAttitudeRemarks(existing.remarks || "");
     setAttitudeModalOpen(true);
@@ -1059,7 +1097,7 @@ export default function HODDashboard() {
     setAttitudeRatings(updated);
   };
 
-  const handleSaveAttitudeEvaluation = async () => {
+  const handleSaveAttitudeEvaluation = async (isSubmitToPrincipal = false) => {
     if (!attitudeAppraisal) return;
     setAttitudeSaving(true);
     try {
@@ -1076,6 +1114,7 @@ export default function HODDashboard() {
         formTitle: isNonTeaching ? "Non-Teaching Attitude Form" : "Teacher Attitude Evaluation",
         subtitle: isNonTeaching ? "CKGEI — Non-Teaching Staff Evaluation Questionnaire" : "CKGEI — Teacher Evaluation Questionnaire",
         ratings: attitudeRatings,
+        hodRatings: attitudeRatings,
         remarks: attitudeRemarks.trim(),
         totalScore,
         maxScore,
@@ -1085,20 +1124,33 @@ export default function HODDashboard() {
         totalQuestions: activeQuestions.length,
         evaluatedAt: new Date().toISOString(),
         evaluatedBy: hodName || currentUid || "HOD",
-        evaluatedByRole: "HOD"
+        evaluatedByRole: "HOD",
+        submittedToPrincipal: isSubmitToPrincipal,
+        isDraft: !isSubmitToPrincipal,
+        submittedToPrincipalAt: isSubmitToPrincipal ? new Date().toISOString() : null
       };
 
       const targetColl = attitudeAppraisal.collectionName || (isNonTeaching ? 'non_teaching_appraisals' : 'faculty_appraisals');
 
-      await updateDoc(doc(db, targetColl, attitudeAppraisal.id), {
+      const updateData = isSubmitToPrincipal ? {
         attitudeEvaluation: evalPayload,
-        attitudeForm: evalPayload
-      });
+        attitudeForm: evalPayload,
+        attitudeSubmittedToPrincipal: true,
+        attitudeSubmittedAt: new Date().toISOString(),
+        attitudeDraft: null,
+        ...(attitudeAppraisal.status === "Submitted" ? { status: "HOD_Approved" } : {})
+      } : {
+        attitudeDraft: evalPayload,
+        attitudeSubmittedToPrincipal: false
+      };
+
+      await updateDoc(doc(db, targetColl, attitudeAppraisal.id), updateData);
 
       // Update state locally
-      setAppraisalList(prev => prev.map(a => a.id === attitudeAppraisal.id ? { ...a, attitudeEvaluation: evalPayload, attitudeForm: evalPayload } : a));
+      setAppraisalList(prev => prev.map(a => a.id === attitudeAppraisal.id ? { ...a, ...updateData } : a));
 
       setAttitudeModalOpen(false);
+      alert(isSubmitToPrincipal ? "Attitude Form submitted to Principal successfully!" : "Attitude Evaluation draft saved successfully! It will remain on your dashboard until you submit to Principal.");
     } catch (err) {
       console.error("Failed to save attitude evaluation:", err);
       alert("Failed to save evaluation. Please try again.");
@@ -1810,32 +1862,33 @@ export default function HODDashboard() {
 
     const checkIncludeInList = (data) => {
       if (!data.status || data.status === "Draft") return false;
-      const isReviewed = data.status !== "Submitted";
-      const attitudeDone = Boolean(
-        (data.attitudeEvaluation?.ratings && Object.keys(data.attitudeEvaluation.ratings).length > 0) ||
-        (data.attitudeForm?.ratings && Object.keys(data.attitudeForm.ratings).length > 0)
-      );
-
-      // Once BOTH Review (Forwarded) and Attitude Form are completed, HIDE from HOD Dashboard!
-      if (isReviewed && attitudeDone) {
+      const deptName = String(data.department || data.formData?.department || "").toLowerCase().trim();
+      const normDept = deptName.replace(/[^a-z0-9]/g, '');
+      // Administration non-teaching staff must never appear on any HOD dashboard
+      if (normDept === "administration" || normDept === "admin" || (normDept.includes("administration") && !normDept.includes("business"))) {
         return false;
       }
 
-      // If Review is still pending (Submitted), ALWAYS show so HOD can perform Review and Attitude Form.
-      if (!isReviewed) {
-        return true;
+      const isReviewed = data.status !== "Submitted";
+      const isAttitudeSubmitted = Boolean(
+        data.attitudeSubmittedToPrincipal === true ||
+        (data.attitudeEvaluation?.submittedToPrincipal === true && data.attitudeEvaluation?.isDraft !== true)
+      );
+
+      // Once BOTH Review (Forwarded) and Attitude Form are submitted to Principal, HIDE from HOD Dashboard!
+      if (isReviewed && isAttitudeSubmitted) {
+        return false;
       }
 
-      // If already reviewed (HOD_Approved / Approved) but Attitude Form is NOT done yet, ONLY show Assistant/Associate/Full Professors.
-      const desig = data.designation || data.formData?.designation || data.staffDesignation || "";
-      return isTeachingFaculty(desig);
+      // If either Review or Attitude Form is still pending submission to Principal, KEEP in HOD Dashboard!
+      return true;
     };
 
     const unsubFaculty = onSnapshot(collection(db, 'faculty_appraisals'), (snap1) => {
       const facList = [];
       snap1.forEach((d) => {
         const data = d.data() || {};
-        if (isDeptMatch(data.department, hodDepartment) && checkIncludeInList(data)) {
+        if (isDeptMatch(data.department || data.formData?.department, hodDepartment) && checkIncludeInList(data)) {
           facList.push({ id: d.id, collectionName: 'faculty_appraisals', ...data });
         }
       });
@@ -1844,7 +1897,8 @@ export default function HODDashboard() {
         const nonTeachList = [];
         snap2.forEach((d) => {
           const data = d.data() || {};
-          if (isDeptMatch(data.department, hodDepartment) && checkIncludeInList(data)) {
+          const dDept = data.department || data.formData?.department;
+          if (isDeptMatch(dDept, hodDepartment) && checkIncludeInList(data)) {
             nonTeachList.push({ id: d.id, collectionName: 'non_teaching_appraisals', ...data });
           }
         });
@@ -4392,18 +4446,30 @@ export default function HODDashboard() {
                     <button
                       onClick={() => handleOpenAttitudeModal(app)}
                       className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs ${
-                        (app.attitudeEvaluation?.ratings && Object.keys(app.attitudeEvaluation.ratings).length > 0) || (app.attitudeForm?.ratings && Object.keys(app.attitudeForm.ratings).length > 0)
+                        (app.attitudeSubmittedToPrincipal === true || app.attitudeEvaluation?.submittedToPrincipal === true)
                           ? "bg-teal-700 hover:bg-teal-800 text-white"
+                          : (app.attitudeDraft || (app.attitudeEvaluation?.ratings && Object.keys(app.attitudeEvaluation.ratings).length > 0))
+                          ? "bg-amber-600 hover:bg-amber-700 text-white"
                           : "bg-indigo-600 hover:bg-indigo-700 text-white"
                       }`}
-                      title="Attitude Form"
+                      title={
+                        (app.attitudeSubmittedToPrincipal === true || app.attitudeEvaluation?.submittedToPrincipal === true)
+                          ? "Attitude Form (Submitted to Principal)"
+                          : (app.attitudeDraft || (app.attitudeEvaluation?.ratings && Object.keys(app.attitudeEvaluation.ratings).length > 0))
+                          ? "Attitude Form (Draft Saved on HOD end)"
+                          : "Attitude Form"
+                      }
                     >
                       <Award size={13} /> Attitude Form
-                      {((app.attitudeEvaluation?.totalScore !== undefined) || (app.attitudeForm?.totalScore !== undefined)) && (
+                      {(app.attitudeSubmittedToPrincipal === true || app.attitudeEvaluation?.submittedToPrincipal === true) ? (
                         <span className="ml-0.5 bg-black/25 text-white px-1.5 py-0.2 rounded text-[9px] font-black">
                           {app.attitudeEvaluation?.totalScore ?? app.attitudeForm?.totalScore}/{app.attitudeEvaluation?.maxScore || app.attitudeForm?.maxScore || (getHodAttitudeQuestions(app).length * 5)}
                         </span>
-                      )}
+                      ) : (app.attitudeDraft || (app.attitudeEvaluation?.ratings && Object.keys(app.attitudeEvaluation.ratings).length > 0)) ? (
+                        <span className="ml-0.5 bg-amber-950/40 text-amber-100 px-1.5 py-0.2 rounded text-[9px] font-black">
+                          Draft
+                        </span>
+                      ) : null}
                     </button>
                   </div>
                 </div>
@@ -7157,16 +7223,16 @@ export default function HODDashboard() {
                   <button
                     type="button"
                     onClick={() => handleSetAllRatings(5)}
-                    className="px-2.5 py-1 rounded-lg bg-teal-100 hover:bg-teal-200 text-teal-800 text-[11px] font-bold transition-all cursor-pointer"
+                    className="px-2.5 py-1 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-[11px] font-bold transition-all cursor-pointer"
                   >
-                    Set all 5 (SA)
+                    Set all 5 (Outstanding)
                   </button>
                   <button
                     type="button"
                     onClick={() => handleSetAllRatings(4)}
-                    className="px-2.5 py-1 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-[11px] font-bold transition-all cursor-pointer"
+                    className="px-2.5 py-1 rounded-lg bg-blue-100 hover:bg-blue-200 text-blue-800 text-[11px] font-bold transition-all cursor-pointer"
                   >
-                    Set all 4 (A)
+                    Set all 4 (Exceeds Expectations)
                   </button>
                   <button
                     type="button"
@@ -7179,7 +7245,51 @@ export default function HODDashboard() {
               </div>
 
               {/* Questionnaire Table (Scrollable) */}
-              <div className="overflow-y-auto p-4 md:p-6 space-y-6 flex-1">
+              <div className="overflow-y-auto p-4 md:p-6 space-y-5 flex-1">
+
+                {/* Evaluation Rubrics Reference Guide Card */}
+                <div className="bg-gradient-to-r from-slate-50 via-blue-50/40 to-slate-50 border border-blue-200/80 rounded-2xl p-4 shadow-2xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-lg bg-[#1c355e] text-amber-400 flex items-center justify-center font-black text-xs shadow-2xs">
+                        <Award size={13} />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-[#1c355e] uppercase tracking-wider">
+                          Evaluation Rubrics & Scoring Criteria
+                        </h4>
+                        <p className="text-[11px] text-zinc-500 font-medium">
+                          Standardized 5-point performance scale applied across all evaluation parameters.
+                        </p>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-bold text-[#1c355e] bg-white px-2.5 py-1 rounded-full border border-blue-200 shadow-2xs">
+                      Rubric Scale: 1 (Lowest) to 5 (Highest)
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
+                    {ATTITUDE_RATING_OPTIONS.map((rubric) => (
+                      <div
+                        key={rubric.value}
+                        className="flex items-center gap-2.5 p-2.5 rounded-xl border border-zinc-200/90 bg-white shadow-2xs transition-all hover:border-blue-300 hover:shadow-xs"
+                      >
+                        <span className={`w-7 h-7 rounded-lg flex items-center justify-center font-black text-sm shrink-0 border shadow-2xs ${rubric.badgeBg}`}>
+                          {rubric.value}
+                        </span>
+                        <div className="min-w-0">
+                          <div className="text-[9px] uppercase font-bold text-zinc-400 tracking-wider">
+                            Score {rubric.value}
+                          </div>
+                          <div className="text-xs font-bold text-zinc-800 leading-tight" title={rubric.label}>
+                            {rubric.label}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
                 <div className="border border-zinc-300 rounded-2xl overflow-hidden shadow-xs">
                   <table className="w-full text-left border-collapse">
                     <thead>
@@ -7187,8 +7297,15 @@ export default function HODDashboard() {
                         <th className="p-3.5 w-12 text-center border-r border-blue-900/60">#</th>
                         <th className="p-3.5 border-r border-blue-900/60">Attitude & Statement</th>
                         {ATTITUDE_RATING_OPTIONS.map((opt) => (
-                          <th key={opt.value} className="p-3 w-16 text-center border-r border-blue-900/60 last:border-r-0" title={opt.label}>
-                            <div className="font-black text-xs">{opt.code}</div>
+                          <th key={opt.value} className="p-2.5 w-28 text-center border-r border-blue-900/60 last:border-r-0" title={`Score ${opt.value}: ${opt.label}`}>
+                            <div className="flex items-center justify-center gap-1 mb-0.5">
+                              <span className="w-5 h-5 rounded-md bg-white/20 text-white font-black text-xs inline-flex items-center justify-center">
+                                {opt.value}
+                              </span>
+                            </div>
+                            <div className="text-[10px] font-medium text-blue-100 leading-tight tracking-normal">
+                              {opt.label}
+                            </div>
                           </th>
                         ))}
                       </tr>
@@ -7257,8 +7374,13 @@ export default function HODDashboard() {
 
               {/* Modal Footer */}
               <div className="bg-zinc-50 border-t border-zinc-200 px-6 py-4 flex flex-wrap items-center justify-between gap-4">
-                <div className="text-xs text-zinc-600">
-                  Total Evaluated Score: <strong className="text-[#1c355e] text-sm font-black">{currentTotal} / {maxScore}</strong>
+                <div className="text-xs text-zinc-600 flex items-center gap-2">
+                  <span>Total Evaluated Score: <strong className="text-[#1c355e] text-sm font-black">{currentTotal} / {maxScore}</strong></span>
+                  {(attitudeAppraisal?.attitudeDraft || attitudeAppraisal?.attitudeSubmittedToPrincipal === false) && (
+                    <span className="text-[10px] font-bold text-amber-800 bg-amber-100 border border-amber-300 px-2.5 py-0.5 rounded-full">
+                      Draft (Not submitted to Principal)
+                    </span>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-3">
@@ -7271,12 +7393,21 @@ export default function HODDashboard() {
                   </button>
                   <button
                     type="button"
-                    onClick={handleSaveAttitudeEvaluation}
+                    onClick={() => handleSaveAttitudeEvaluation(false)}
                     disabled={attitudeSaving}
-                    className="px-6 py-2.5 rounded-xl bg-[#1c355e] hover:bg-[#152847] text-white text-xs font-bold transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50 shadow-md shadow-blue-900/20"
+                    className="px-4 py-2.5 rounded-xl border border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-800 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shadow-xs"
                   >
                     {attitudeSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                    Save Attitude Evaluation
+                    Save Draft
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSaveAttitudeEvaluation(true)}
+                    disabled={attitudeSaving}
+                    className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white text-xs font-bold transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50 shadow-md shadow-emerald-700/20"
+                  >
+                    {attitudeSaving ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                    Submit to Principal
                   </button>
                 </div>
               </div>

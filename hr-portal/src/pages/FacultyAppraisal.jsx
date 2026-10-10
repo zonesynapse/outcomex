@@ -1233,7 +1233,7 @@ export default function FacultyAppraisal() {
 
   return (
     <Layout title="Faculty Self Appraisal Form">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <div className="w-full space-y-6 pb-12">
 
         {/* Toast Alert */}
         {toast.show && (

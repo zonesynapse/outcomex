@@ -131,6 +131,7 @@ export default function AdminRoleConfig() {
     { id: "non-teaching-appraisal-request", label: "HR — Non-Teaching Appraisal Request", path: "/hr/non-teaching-appraisal", module: "HR" },
     { id: "hod-appraisal-request", label: "HR — HOD Appraisal Request", path: "/hr/hod-appraisal", module: "HR" },
     { id: "faculty-appraisal-reviews", label: "HR — Appraisal Reviews", path: "/hr/reviews", module: "HR" },
+    { id: "hr-gross-analytics", label: "HR — Gross Analytics", path: "/hr/gross-analytics", module: "HR" },
     { id: "appraisal-settings", label: "HR — Appraisal Settings Manager", path: "/hr/settings", module: "HR" },
     { id: "resource-hub-dashboard", label: "Resource Hub — Overview", path: "/resource-hub", module: "Resource Hub" },
     { id: "resource-hub-booking", label: "Resource Hub — Request Booking", path: "/resource-hub/booking", module: "Resource Hub" },

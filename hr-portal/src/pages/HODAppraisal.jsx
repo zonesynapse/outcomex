@@ -499,7 +499,7 @@ export default function HODAppraisal() {
 
   return (
     <HRLayout title="Coordinator Appraisal Request">
-      <div className="max-w-5xl mx-auto space-y-6 pb-20">
+      <div className="w-full space-y-6 pb-20">
 
         {/* Toast Notification */}
         {toast.show && (

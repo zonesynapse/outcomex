@@ -6,7 +6,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import {
   User, CheckCircle2, AlertCircle, FileText, ChevronRight,
   Eye, Check, Search, Building2, Filter, Loader2, ArrowLeft,
-  X, Star, Printer, Undo2, Award, Sparkles, Send, GraduationCap, Library, Paperclip, Save
+  X, Star, Printer, Undo2, Award, Sparkles, Send, GraduationCap, Library, Paperclip, Save, Edit2
 } from "lucide-react";
 import Layout from "../components/Layout";
 import { getSchoolShortName, isSameInstitution, getSchoolBannerTitle } from "../utils/appraisalScore";
@@ -39,7 +39,7 @@ export const HOD_ATTITUDE_EVALUATION_QUESTIONS = [
   },
   {
     id: 3,
-    title: "Customer Focus & Empathy",
+    title: "Student Focus & Empathy",
     statement: "Keeps the learner, parent, or stakeholder at the centre of their decisions."
   },
   {
@@ -54,7 +54,7 @@ export const HOD_ATTITUDE_EVALUATION_QUESTIONS = [
   },
   {
     id: 6,
-    title: "Inquisitiveness & Creative Problem-Solving",
+    title: "Inquisitiveness & Critical Thinking & Problem-Solving",
     statement: "Asks probing questions, evaluates answers critically, and solves problems in novel ways."
   },
   {
@@ -122,10 +122,10 @@ export const HOD_ATTITUDE_EVALUATION_QUESTIONS = [
 export const TEACHER_ATTITUDE_EVALUATION_QUESTIONS = [
   { id: 1, title: "Ownership & Accountability", statement: "Takes full responsibility for their role, decisions, and outcomes." },
   { id: 2, title: "Emotional Intelligence & Collaboration", statement: "Stays self-aware and empathetic, and works effectively with others." },
-  { id: 3, title: "Customer Focus & Empathy", statement: "Keeps the learner, parent, or stakeholder at the centre of their decisions." },
+  { id: 3, title: "Student Focus & Empathy", statement: "Keeps the learner, parent, or stakeholder at the centre of their decisions." },
   { id: 4, title: "Resilience & Adaptability", statement: "Remains steady and effective through setbacks, pressure, and change." },
   { id: 5, title: "Growth Mindset", statement: "Continuously improves, quickly acquires new skills, and unlearns old habits where needed." },
-  { id: 6, title: "Inquisitiveness & Creative Problem-Solving", statement: "Asks probing questions, evaluates answers critically, and solves problems in novel ways." },
+  { id: 6, title: "Inquisitiveness & Critical Thinking & Problem-Solving", statement: "Asks probing questions, evaluates answers critically, and solves problems in novel ways." },
   { id: 7, title: "AI Literacy & Judgment", statement: "Proactively learns and uses AI tools, and exercises judgment on when to trust AI output versus human intuition." },
   { id: 8, title: "Integrity & Ethical Judgement", statement: "Acts with consistent honesty, fairness, and principled conduct." },
   { id: 9, title: "Clarity in Communication", statement: "Articulates ideas clearly and persuasively, in speech and in writing." },
@@ -153,7 +153,7 @@ export const NON_TEACHING_GENERAL_ATTITUDE_QUESTIONS = [
   { id: 12, title: "AI Literacy & Judgment", statement: "Proactively learns and uses AI tools, and exercises judgment on when to trust AI output versus human intuition." },
   { id: 13, title: "Growth Mindset", statement: "Continuously improves, quickly acquires new skills, and unlearns old habits where needed." },
   { id: 14, title: "Clarity in Communication", statement: "Articulates ideas clearly and persuasively, in speech and in writing." },
-  { id: 15, title: "Inquisitiveness & Creative Problem-Solving", statement: "Asks probing questions, evaluates answers critically, and solves problems in novel ways." },
+  { id: 15, title: "Inquisitiveness & Critical Thinking & Problem-Solving", statement: "Asks probing questions, evaluates answers critically, and solves problems in novel ways." },
   { id: 16, title: "Proactive", statement: "Anticipates needs and acts ahead of requirements." },
   { id: 17, title: "Stakeholder Focus & Empathy", statement: "Keeps students, staff, and other stakeholders at the centre of their decisions." },
   { id: 18, title: "Process & Service Improvement", statement: "Actively looks for ways to improve processes and service delivery in their area." },
@@ -220,11 +220,41 @@ export const getAttitudeQuestions = (app) => {
 };
 
 export const ATTITUDE_RATING_OPTIONS = [
-  { value: 1, code: "1 SD", label: "Strongly Disagree", color: "hover:bg-rose-50 text-rose-700 border-rose-200" },
-  { value: 2, code: "2 D", label: "Disagree", color: "hover:bg-orange-50 text-orange-700 border-orange-200" },
-  { value: 3, code: "3 N", label: "Neutral", color: "hover:bg-amber-50 text-amber-700 border-amber-200" },
-  { value: 4, code: "4 A", label: "Agree", color: "hover:bg-emerald-50 text-emerald-700 border-emerald-200" },
-  { value: 5, code: "5 SA", label: "Strongly Agree", color: "hover:bg-teal-50 text-teal-700 border-teal-200" }
+  { 
+    value: 1, 
+    code: "1", 
+    label: "Needs Significant Improvement", 
+    badgeBg: "bg-rose-100 text-rose-800 border-rose-300", 
+    color: "hover:bg-rose-50 text-rose-700 border-rose-200" 
+  },
+  { 
+    value: 2, 
+    code: "2", 
+    label: "Needs Improvement", 
+    badgeBg: "bg-orange-100 text-orange-800 border-orange-300", 
+    color: "hover:bg-orange-50 text-orange-700 border-orange-200" 
+  },
+  { 
+    value: 3, 
+    code: "3", 
+    label: "Meets Expectations", 
+    badgeBg: "bg-amber-100 text-amber-800 border-amber-300", 
+    color: "hover:bg-amber-50 text-amber-700 border-amber-200" 
+  },
+  { 
+    value: 4, 
+    code: "4", 
+    label: "Exceeds Expectations", 
+    badgeBg: "bg-blue-100 text-blue-800 border-blue-300", 
+    color: "hover:bg-blue-50 text-blue-700 border-blue-200" 
+  },
+  { 
+    value: 5, 
+    code: "5", 
+    label: "Outstanding", 
+    badgeBg: "bg-emerald-100 text-emerald-800 border-emerald-300", 
+    color: "hover:bg-teal-50 text-teal-700 border-teal-200" 
+  }
 ];
 
 export default function AppraisalReviews() {
@@ -249,6 +279,7 @@ export default function AppraisalReviews() {
   // Scoring states (Parity with HODDashboard review modal)
   const [hodFacultyScoresMap, setHodFacultyScoresMap] = useState({});
   const [principalFacultyScoresMap, setPrincipalFacultyScoresMap] = useState({});
+  const [principalHodScoresMap, setPrincipalHodScoresMap] = useState({});
 
   // Non-teaching evaluation states
   const [nonTeachingEvalMarks, setNonTeachingEvalMarks] = useState({
@@ -257,6 +288,24 @@ export default function AppraisalReviews() {
   const [nonTeachingSpecificComment, setNonTeachingSpecificComment] = useState("");
   const [nonTeachingRecommendation, setNonTeachingRecommendation] = useState("His / Her contribution to be appreciated and recommended");
   const [nonTeachingIncrementGrade, setNonTeachingIncrementGrade] = useState("A");
+
+  // Universal proof extraction helper for single files, arrays, and nested structures
+  const extractProofList = (target) => {
+    if (!target) return [];
+    if (Array.isArray(target)) {
+      return target
+        .filter(p => p && (p.fileUrl || typeof p === "string"))
+        .map(p => typeof p === "string" ? { fileUrl: p, fileName: "Proof Document" } : p);
+    }
+    if (Array.isArray(target.proofs)) return target.proofs;
+    if (Array.isArray(target.proof)) return target.proof;
+    if (Array.isArray(target.proofFiles)) return target.proofFiles;
+    if (target.fileUrl) return [{ fileUrl: target.fileUrl, fileName: target.fileName || "Proof Attachment" }];
+    if (target.proof && typeof target.proof === "object" && target.proof.fileUrl) {
+      return [{ fileUrl: target.proof.fileUrl, fileName: target.proof.fileName || "Proof Attachment" }];
+    }
+    return [];
+  };
 
   const isSectionVisible = (id) => {
     const field = customFieldsConfig.find(f => f.id === id);
@@ -418,7 +467,11 @@ export default function AppraisalReviews() {
   const handleOpenAttitudeModal = (app) => {
     setAttitudeAppraisal(app);
     const existing = app.attitudeEvaluation || app.attitudeForm || {};
-    setAttitudeRatings(existing.ratings ? { ...existing.ratings } : {});
+    const isPrincipalOrHR = userRole === "Principal" || userRole === "HR" || userRole === "Admin";
+    const defaultRatings = isPrincipalOrHR
+      ? (existing.principalRatings || existing.hodRatings || existing.ratings || {})
+      : (existing.hodRatings || existing.ratings || {});
+    setAttitudeRatings({ ...defaultRatings });
     setAttitudeRemarks(existing.remarks || "");
     setAttitudeModalOpen(true);
   };
@@ -443,6 +496,7 @@ export default function AppraisalReviews() {
     if (!attitudeAppraisal) return;
     setAttitudeSaving(true);
     try {
+      const isPrincipalOrHR = userRole === "Principal" || userRole === "HR" || userRole === "Admin";
       const activeQuestions = getAttitudeQuestions(attitudeAppraisal);
       const totalScore = Object.values(attitudeRatings).reduce((sum, v) => sum + (Number(v) || 0), 0);
       const maxScore = activeQuestions.length * 5;
@@ -453,6 +507,7 @@ export default function AppraisalReviews() {
       const isNonTeaching = attitudeAppraisal.formType === "non_teaching" || attitudeAppraisal.collectionName === "non_teaching_appraisals";
 
       const evalPayload = {
+        ...(attitudeAppraisal.attitudeEvaluation || {}),
         formTitle: isNonTeaching 
           ? "Non-Teaching Attitude Form" 
           : attitudeAppraisal.formType === "hod" 
@@ -464,6 +519,8 @@ export default function AppraisalReviews() {
           ? "CKGEI — Coordinator / HoD Evaluation Questionnaire" 
           : "CKGEI — Teacher Evaluation Questionnaire",
         ratings: attitudeRatings,
+        principalRatings: isPrincipalOrHR ? attitudeRatings : (attitudeAppraisal.attitudeEvaluation?.principalRatings || {}),
+        hodRatings: attitudeAppraisal.attitudeEvaluation?.hodRatings || (!isPrincipalOrHR ? attitudeRatings : attitudeAppraisal.attitudeEvaluation?.ratings) || {},
         remarks: attitudeRemarks.trim(),
         totalScore,
         maxScore,
@@ -472,8 +529,8 @@ export default function AppraisalReviews() {
         evaluatedCount,
         totalQuestions: activeQuestions.length,
         evaluatedAt: new Date().toISOString(),
-        evaluatedBy: currentUser?.displayName || currentUser?.email || "Reviewer",
-        evaluatedByRole: userRole || "Reviewer"
+        evaluatedBy: currentUser?.displayName || currentUser?.email || (isPrincipalOrHR ? "Principal" : "Reviewer"),
+        evaluatedByRole: userRole || (isPrincipalOrHR ? "Principal" : "Reviewer")
       };
 
       const targetColl = attitudeAppraisal.formType === "hod"
@@ -572,13 +629,53 @@ export default function AppraisalReviews() {
     });
 
     const unsubNonTeaching = onSnapshot(collection(db, "non_teaching_appraisals"), (snap) => {
-      nonTeachingList = snap.docs.map((d) => ({ id: d.id, formType: "non_teaching", facultyName: d.data().staffName || d.data().name, ...d.data() }));
+      nonTeachingList = snap.docs.map((d) => {
+        const data = d.data() || {};
+        const dept = String(data.department || data.formData?.department || "").toLowerCase().trim();
+        const normDept = dept.replace(/[^a-z0-9]/g, '');
+        const isAdministration = normDept === "administration" || normDept === "admin" || (normDept.includes("administration") && !normDept.includes("business"));
+
+        let effectiveStatus = data.status;
+        if (isAdministration && effectiveStatus === "Submitted") {
+          effectiveStatus = "HOD_Approved";
+          try {
+            updateDoc(doc(db, "non_teaching_appraisals", d.id), {
+              status: "HOD_Approved",
+              coordinatorApproved: true,
+              "hodReview.comments": "Forwarded directly to Principal for review (Administration Department - Coordinator Approved).",
+              "hodReview.grade": "Good",
+              "hodReview.reviewedBy": "Administration Coordinator",
+              "hodReview.reviewedAt": new Date().toISOString()
+            }).catch(() => {});
+          } catch (e) {}
+        }
+
+        return {
+          id: d.id,
+          formType: "non_teaching",
+          facultyName: data.staffName || data.name,
+          ...data,
+          status: effectiveStatus
+        };
+      });
       setAppraisals([...facultyList, ...nonTeachingList, ...hodList]);
       setLoading(false);
     });
 
     const unsubHOD = onSnapshot(collection(db, "hod_appraisals"), (snap) => {
-      hodList = snap.docs.map((d) => ({ id: d.id, formType: "hod", facultyName: d.data().hodName || d.data().name, ...d.data() }));
+      hodList = snap.docs.map((d) => {
+        const data = d.data();
+        const fData = data.formData || {};
+        return {
+          id: d.id,
+          formType: "hod",
+          facultyName: fData.hodName || data.hodName || data.name || "Head of Department",
+          facultyEmail: fData.hodEmail || data.hodEmail || data.email || "",
+          department: fData.department || data.department || "",
+          designation: fData.designation || data.designation || "Head of the Department",
+          ...data
+        };
+      });
       setAppraisals([...facultyList, ...nonTeachingList, ...hodList]);
       setLoading(false);
     });
@@ -591,8 +688,8 @@ export default function AppraisalReviews() {
   }, [currentUser]);
 
   const filteredAppraisals = appraisals.filter((app) => {
-    const nameMatch = (app.facultyName || "").toLowerCase().includes(searchTerm.toLowerCase());
-    const emailMatch = (app.facultyEmail || "").toLowerCase().includes(searchTerm.toLowerCase());
+    const nameMatch = (app.facultyName || app.hodName || app.staffName || "").toLowerCase().includes(searchTerm.toLowerCase());
+    const emailMatch = (app.facultyEmail || app.hodEmail || app.staffEmail || app.email || "").toLowerCase().includes(searchTerm.toLowerCase());
 
     const depMatch = userRole === "HOD"
       ? app.department === userDept
@@ -631,11 +728,23 @@ export default function AppraisalReviews() {
     }
     setPrincipalFacultyScoresMap(initialPrincipalScores);
 
+    // Initialize Principal HOD KRA scores map
+    const k1 = app.formData?.kra1 || app.kra1 || {};
+    const k5 = app.formData?.kra5 || app.kra5 || {};
+    const initHodKraScores = {
+      kra1: app.principalReview?.kraScores?.kra1 ?? app.kraScores?.kra1 ?? k1.score ?? 0,
+      kra2: app.principalReview?.kraScores?.kra2 ?? app.kraScores?.kra2 ?? 0,
+      kra3: app.principalReview?.kraScores?.kra3 ?? app.kraScores?.kra3 ?? 0,
+      kra4: app.principalReview?.kraScores?.kra4 ?? app.kraScores?.kra4 ?? 0,
+      kra5: app.principalReview?.kraScores?.kra5 ?? app.kraScores?.kra5 ?? k5.score ?? 0
+    };
+    setPrincipalHodScoresMap(initHodKraScores);
+
     const bd = app.autoScore?.breakdown;
     const allRows = bd ? [...(bd.part1Rows || []), ...(bd.part2Rows || [])] : [];
     const initPrincipalTotal = allRows.length > 0
       ? allRows.reduce((a, r) => a + (Number(initialPrincipalScores[r.id] ?? initialHodScores[r.id] ?? r.scored) || 0), 0)
-      : "";
+      : (app.formType === "hod" ? (app.principalReview?.finalRating ?? app.totalScore ?? Object.values(initHodKraScores).reduce((a, b) => a + Number(b || 0), 0)) : "");
 
     // Initialize non-teaching performance evaluation rating states
     const existingEval = app.performanceEvaluation;
@@ -713,6 +822,15 @@ export default function AppraisalReviews() {
       if (selectedAppraisal.hodReview) {
         updatePayload.hodReview = selectedAppraisal.hodReview;
       }
+      if (selectedAppraisal.formType === "hod") {
+        updatePayload.principalReview.kraScores = principalHodScoresMap;
+        updatePayload.principalReview.principalTotalScore = finalRating !== "" 
+          ? Number(finalRating) 
+          : Object.values(principalHodScoresMap).reduce((a, b) => a + (Number(b) || 0), 0);
+        if (!updatePayload.principalReview.finalRating) {
+          updatePayload.principalReview.finalRating = String(updatePayload.principalReview.principalTotalScore);
+        }
+      }
     }
 
     if (!isNonTeaching && selectedAppraisal.autoScore?.breakdown) {
@@ -763,7 +881,8 @@ export default function AppraisalReviews() {
     try {
       const targetColl = isNonTeaching ? "non_teaching_appraisals" : selectedAppraisal.formType === "hod" ? "hod_appraisals" : "faculty_appraisals";
       await updateDoc(doc(db, targetColl, selectedAppraisal.id), updatePayload);
-      showToast(`Appraisal successfully updated to: ${newStatus.replace("_", " ")}`, "success");
+      const isAlreadyApproved = selectedAppraisal.status === "Approved" && newStatus === "Approved";
+      showToast(isAlreadyApproved ? "Appraisal marks updated successfully!" : `Appraisal successfully updated to: ${newStatus.replace("_", " ")}`, "success");
       setSelectedAppraisal(null);
     } catch (error) {
       console.error("Error updating appraisal:", error);
@@ -823,6 +942,126 @@ export default function AppraisalReviews() {
   };
 
   const handlePrintPDF = (app) => {
+    if (app.formType === "hod") {
+      const data = app.formData || app;
+      const doc = new jsPDF("p", "pt", "a4");
+
+      doc.setFont("Times", "bold");
+      doc.setFontSize(14);
+      doc.text("CK COLLEGE OF ENGINEERING & TECHNOLOGY, CUDDALORE - 607 003", 30, 45);
+      doc.setFontSize(10);
+      doc.setFont("Times", "normal");
+      doc.text("An ISO 9001:2015 Certified Institution", 220, 60);
+      doc.setFont("Times", "bold");
+      doc.setFontSize(12);
+      doc.text(`HEAD OF THE DEPARTMENT'S PERFORMANCE APPRAISAL (${app.academicYear || "2024-2025"})`, 90, 80);
+
+      doc.setDrawColor(200, 200, 200);
+      doc.line(30, 95, 565, 95);
+
+      // Profile Details Grid
+      doc.setFont("Times", "bold");
+      doc.setFontSize(10);
+      doc.text("1. GENERAL INFORMATION OF HOD", 30, 115);
+
+      const info = [
+        ["HOD Name:", data.hodName || app.facultyName || "", "Department:", data.department || app.department || ""],
+        ["Designation:", data.designation || "Head of the Department", "Date of Joining:", data.doj || "-"],
+        ["Qualification:", data.qualification || "-", "Academic Session:", app.academicYear || ""],
+        ["Email ID:", app.hodEmail || app.facultyEmail || "-", "Status:", app.status || ""]
+      ];
+
+      doc.autoTable({
+        startY: 125,
+        margin: { left: 30, right: 30 },
+        body: info,
+        theme: "plain",
+        styles: { font: "Times", fontSize: 9, cellPadding: 4 },
+        columnStyles: { 0: { fontStyle: "bold", width: 90 }, 2: { fontStyle: "bold", width: 90 } }
+      });
+
+      // 5 KRAs Summary Table
+      doc.setFont("Times", "bold");
+      doc.text("2. KEY RESULT AREAS (KRA 1 TO 5) SCORE SUMMARY", 30, doc.lastAutoTable.finalY + 25);
+
+      const k1 = data.kra1 || app.kra1 || {};
+      const k5 = data.kra5 || app.kra5 || {};
+      const s1 = app.kraScores?.kra1 ?? k1.score ?? 0;
+      const s2 = app.kraScores?.kra2 ?? 0;
+      const s3 = app.kraScores?.kra3 ?? 0;
+      const s4 = app.kraScores?.kra4 ?? 0;
+      const s5 = app.kraScores?.kra5 ?? k5.score ?? 0;
+      const st = app.totalScore ?? (s1 + s2 + s3 + s4 + s5);
+
+      const ps1 = app.principalReview?.kraScores?.kra1 ?? s1;
+      const ps2 = app.principalReview?.kraScores?.kra2 ?? s2;
+      const ps3 = app.principalReview?.kraScores?.kra3 ?? s3;
+      const ps4 = app.principalReview?.kraScores?.kra4 ?? s4;
+      const ps5 = app.principalReview?.kraScores?.kra5 ?? s5;
+      const pst = app.principalReview?.finalRating ? Number(app.principalReview.finalRating) : (ps1 + ps2 + ps3 + ps4 + ps5);
+
+      const kraData = [
+        ["KRA I: Department Academic Improvement", "30", String(s1), String(ps1)],
+        ["KRA II: Department Student Centric Activities", "25", String(s2), String(ps2)],
+        ["KRA III: Faculty Enrichment Efforts for Department", "20", String(s3), String(ps3)],
+        ["KRA IV: Significant Contribution towards Dept / Personal Dev.", "5", String(s4), String(ps4)],
+        ["KRA V: Academic Excellence and Self Development (IIY)", "20", String(s5), String(ps5)],
+        ["Grand Total Score", "100", String(st), String(pst)]
+      ];
+
+      doc.autoTable({
+        startY: doc.lastAutoTable.finalY + 35,
+        margin: { left: 30, right: 30 },
+        head: [["Key Result Area (KRA) Particulars", "Max Marks", "Self Score", "Principal Score"]],
+        body: kraData,
+        theme: "striped",
+        headStyles: { fillColor: [18, 12, 122], textColor: 255, font: "Times", fontStyle: "bold", fontSize: 9 },
+        styles: { font: "Times", fontSize: 9 }
+      });
+
+      // Evaluation Sheet
+      doc.addPage();
+      doc.setFont("Times", "bold");
+      doc.setFontSize(12);
+      doc.text("PRINCIPAL EVALUATION & APPROVAL SHEET", 30, 45);
+      doc.line(30, 55, 565, 55);
+
+      const cb = app.principalReview?.checkboxes || {};
+      const cbText = [
+        cb.appreciated ? "[x] His / Her contribution to be appreciated and recommended" : "[ ] His / Her contribution to be appreciated and recommended",
+        cb.satisfactory ? "[x] Satisfactory performance" : "[ ] Satisfactory performance",
+        cb.underutilized ? "[x] Potential underutilized" : "[ ] Potential underutilized",
+        cb.counseling ? "[x] Counseling is required" : "[ ] Counseling is required",
+        cb.improvementDesired ? "[x] Performance improvement is desired / to be warned" : "[ ] Performance improvement is desired / to be warned"
+      ].join("\n");
+
+      const principalInfo = [
+        ["Final Rating / Total Score:", String(pst)],
+        ["Recommended Appraisal Grade:", app.principalReview?.grade || "Pending Approval"],
+        ["Principal Remarks / Checkboxes:", cbText],
+        ["Review Comments:", app.principalReview?.comments || "N/A"],
+        ["Approved / Reviewed By:", app.principalReview?.reviewedBy || "-"],
+        ["Date:", app.principalReview?.reviewedAt ? new Date(app.principalReview.reviewedAt).toLocaleDateString() : "-"]
+      ];
+
+      doc.autoTable({
+        startY: 75,
+        margin: { left: 30, right: 30 },
+        body: principalInfo,
+        theme: "plain",
+        styles: { font: "Times", fontSize: 9, cellPadding: 5 },
+        columnStyles: { 0: { fontStyle: "bold", width: 140 } }
+      });
+
+      const finalY = doc.lastAutoTable.finalY + 70;
+      doc.setFont("Times", "bold");
+      doc.text("Digital Signature of HoD", 30, finalY);
+      doc.text("Signature of Principal", 410, finalY);
+
+      doc.save(`HOD_Appraisal_${(app.facultyName || app.hodName || "HOD").replace(/\s+/g, "_")}_${app.academicYear || "2024-2025"}.pdf`);
+      return;
+    }
+
     const data = app.formData || app;
     const doc = new jsPDF("p", "pt", "a4");
 
@@ -957,7 +1196,7 @@ export default function AppraisalReviews() {
 
   return (
     <Layout title="Faculty Appraisal Requests">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <div className="w-full pb-8">
 
         {/* Toast Alert */}
         {toast.show && (
@@ -998,18 +1237,30 @@ export default function AppraisalReviews() {
                 <button
                   onClick={() => handleOpenAttitudeModal(selectedAppraisal)}
                   className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border ${
-                    (selectedAppraisal.attitudeEvaluation?.ratings && Object.keys(selectedAppraisal.attitudeEvaluation.ratings).length > 0) || (selectedAppraisal.attitudeForm?.ratings && Object.keys(selectedAppraisal.attitudeForm.ratings).length > 0)
+                    (selectedAppraisal.attitudeSubmittedToPrincipal === true || selectedAppraisal.attitudeEvaluation?.submittedToPrincipal === true)
                       ? "bg-teal-50 hover:bg-teal-100 border-teal-200 text-teal-700"
+                      : (selectedAppraisal.attitudeDraft || selectedAppraisal.attitudeEvaluation?.isDraft)
+                      ? "bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-700"
                       : "bg-indigo-50 hover:bg-indigo-100 border-indigo-200 text-indigo-700"
                   }`}
-                  title="Attitude Form"
+                  title={
+                    (selectedAppraisal.attitudeSubmittedToPrincipal === true || selectedAppraisal.attitudeEvaluation?.submittedToPrincipal === true)
+                      ? "Attitude Form (Submitted by HOD)"
+                      : (selectedAppraisal.attitudeDraft || selectedAppraisal.attitudeEvaluation?.isDraft)
+                      ? "Attitude Form (Draft on HOD end - Not yet submitted to Principal)"
+                      : "Attitude Form"
+                  }
                 >
                   <Award size={14} /> Attitude Form
-                  {((selectedAppraisal.attitudeEvaluation?.totalScore !== undefined) || (selectedAppraisal.attitudeForm?.totalScore !== undefined)) && (
+                  {(selectedAppraisal.attitudeSubmittedToPrincipal === true || selectedAppraisal.attitudeEvaluation?.submittedToPrincipal === true) ? (
                     <span className="ml-1 bg-teal-200 text-teal-900 px-1.5 py-0.2 rounded-full text-[10px] font-black">
                       {selectedAppraisal.attitudeEvaluation?.totalScore ?? selectedAppraisal.attitudeForm?.totalScore}/{selectedAppraisal.attitudeEvaluation?.maxScore || selectedAppraisal.attitudeForm?.maxScore || (getAttitudeQuestions(selectedAppraisal).length * 5)}
                     </span>
-                  )}
+                  ) : (selectedAppraisal.attitudeDraft || selectedAppraisal.attitudeEvaluation?.isDraft) ? (
+                    <span className="ml-1 bg-amber-200 text-amber-900 px-1.5 py-0.2 rounded-full text-[10px] font-black">
+                      Draft (HOD)
+                    </span>
+                  ) : null}
                 </button>
                 <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${selectedAppraisal.status === "Approved" ? "bg-emerald-500/20 text-emerald-700 border border-emerald-500/30" :
                     selectedAppraisal.status === "HOD_Approved" ? "bg-blue-500/20 text-blue-700 border border-blue-500/30" :
@@ -1019,14 +1270,19 @@ export default function AppraisalReviews() {
                   }`}>
                   {selectedAppraisal.status === "HOD_Approved" ? "COORDINATOR APPROVED" : selectedAppraisal.status.replace("_", " ")}
                 </span>
+                {(userRole === "Principal" || userRole === "Admin") && selectedAppraisal.status === "Approved" && (
+                  <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
+                    Principal Editable
+                  </span>
+                )}
               </div>
             </div>
 
             {/* Appraisal Details Content */}
-            <div className="p-6 md:p-8 grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="p-4 sm:p-6 md:p-8 grid grid-cols-1 xl:grid-cols-12 gap-8">
 
-              {/* Left Column: Form Details & Tables (2 cols wide) */}
-              <div className="lg:col-span-2 space-y-8">
+              {/* Left Column: Form Details & Tables (8-9 cols wide on xl/2xl) */}
+              <div className="xl:col-span-8 2xl:col-span-9 space-y-8">
 
                 {/* Custom internal detail tabs */}
                 {(() => {
@@ -1070,491 +1326,680 @@ export default function AppraisalReviews() {
                 {/* ── HOD APPRAISAL FORM REVIEW VIEWS ── */}
                 {selectedAppraisal?.formType === "hod" && (
                   <>
-                    {activeDetailsTab === 1 && (
-                      <div className="space-y-6 animate-fadeIn">
-                        <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 space-y-4">
-                          <span className="text-xs font-black text-indigo-950 uppercase tracking-wider block border-b border-zinc-200 pb-2">
-                            HOD Profile & Designation Details
-                          </span>
-                          <div className="grid grid-cols-2 md:grid-cols-3 gap-6 text-xs">
-                            <div>
-                              <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">HOD Name</span>
-                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.hodName || selectedAppraisal.hodName || selectedAppraisal.facultyName}</span>
+                    {/* Sub-Tab 1: Profile & Info */}
+                    {activeDetailsTab === 1 && (() => {
+                      const fData = selectedAppraisal.formData || {};
+                      const hodName = fData.hodName || selectedAppraisal.hodName || selectedAppraisal.facultyName || selectedAppraisal.name || "Head of Department";
+                      const department = fData.department || selectedAppraisal.department || "-";
+                      const designation = fData.designation || selectedAppraisal.designation || "Head of the Department";
+                      const doj = fData.doj || selectedAppraisal.doj || "-";
+                      const qualification = fData.qualification || selectedAppraisal.qualification || "-";
+                      const email = fData.hodEmail || selectedAppraisal.hodEmail || selectedAppraisal.email || selectedAppraisal.facultyEmail || "-";
+                      const facultyId = selectedAppraisal.facultyId || selectedAppraisal.staffId || selectedAppraisal.employeeId || selectedAppraisal.uid || "-";
+                      const academicYear = selectedAppraisal.academicYear || "2024-2025";
+                      const status = selectedAppraisal.status || "Draft";
+                      const submittedAt = selectedAppraisal.submittedAt || selectedAppraisal.declarationDate || selectedAppraisal.updatedAt;
+                      const declaration = selectedAppraisal.declaration === true;
+                      const totalScore = selectedAppraisal.totalScore || 0;
+
+                      return (
+                        <div className="space-y-6 animate-fadeIn">
+                          {/* Profile Overview Card */}
+                          <div className="bg-slate-50 p-6 rounded-3xl border border-slate-200/80 shadow-xs space-y-5">
+                            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 pb-3">
+                              <div className="flex items-center gap-2">
+                                <User className="text-[#120c7a]" size={18} />
+                                <span className="text-xs font-black text-indigo-950 uppercase tracking-wider">
+                                  General Information of HoD
+                                </span>
+                              </div>
+                              <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase border ${
+                                status === "Approved" ? "bg-emerald-100 text-emerald-800 border-emerald-300" :
+                                status === "HOD_Approved" ? "bg-blue-100 text-blue-800 border-blue-300" :
+                                status === "Submitted" ? "bg-amber-100 text-amber-800 border-amber-300" :
+                                status === "Returned" ? "bg-rose-100 text-rose-800 border-rose-300" :
+                                "bg-zinc-100 text-zinc-700 border-zinc-200"
+                              }`}>
+                                {status === "HOD_Approved" ? "Coordinator Approved" : status.replace("_", " ")}
+                              </span>
                             </div>
-                            <div>
-                              <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">Department</span>
-                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.department || selectedAppraisal.department}</span>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 text-xs">
+                              <div className="bg-white p-3 rounded-2xl border border-zinc-150">
+                                <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">Name of the HoD</span>
+                                <span className="font-extrabold text-slate-850 text-sm">{hodName}</span>
+                              </div>
+                              <div className="bg-white p-3 rounded-2xl border border-zinc-150">
+                                <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">Department</span>
+                                <span className="font-extrabold text-slate-850">{department}</span>
+                              </div>
+                              <div className="bg-white p-3 rounded-2xl border border-zinc-150">
+                                <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">Designation</span>
+                                <span className="font-extrabold text-slate-850">{designation}</span>
+                              </div>
+                              <div className="bg-white p-3 rounded-2xl border border-zinc-150">
+                                <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">Date of Joining</span>
+                                <span className="font-bold text-slate-800">{doj}</span>
+                              </div>
+                              <div className="bg-white p-3 rounded-2xl border border-zinc-150">
+                                <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">Qualification</span>
+                                <span className="font-bold text-slate-800">{qualification}</span>
+                              </div>
+                              <div className="bg-white p-3 rounded-2xl border border-zinc-150">
+                                <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">Official Email</span>
+                                <span className="font-bold text-slate-800 break-all">{email}</span>
+                              </div>
                             </div>
-                            <div>
-                              <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">Designation</span>
-                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.designation || selectedAppraisal.designation || "Head of Department"}</span>
-                            </div>
-                            <div>
-                              <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">Date of Joining</span>
-                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.doj || selectedAppraisal.doj || "-"}</span>
-                            </div>
-                            <div>
-                              <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">Qualification</span>
-                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.qualification || selectedAppraisal.qualification || "-"}</span>
-                            </div>
-                            <div>
-                              <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">Academic Session</span>
-                              <span className="font-bold text-slate-800">{selectedAppraisal.academicYear}</span>
+                          </div>
+
+                          {/* Digital Declaration Notice */}
+                          <div className={`p-4 rounded-2xl border flex items-start gap-3 ${declaration ? "bg-emerald-50/70 border-emerald-200 text-emerald-950" : "bg-amber-50/70 border-amber-200 text-amber-950"}`}>
+                            {declaration ? (
+                              <CheckCircle2 size={18} className="text-emerald-600 shrink-0 mt-0.5" />
+                            ) : (
+                              <AlertCircle size={18} className="text-amber-600 shrink-0 mt-0.5" />
+                            )}
+                            <div className="space-y-0.5 text-xs">
+                              <span className="font-extrabold uppercase tracking-wide block">
+                                {declaration ? "Digitally Certified Declaration" : "Declaration Pending"}
+                              </span>
+                              <p className="font-medium text-[11px] leading-relaxed opacity-90">
+                                "I hereby declare that the particulars furnished above in my HOD Performance Appraisal for the Academic Year <strong>{academicYear}</strong> are true, correct, and complete to the best of my knowledge and belief."
+                              </p>
+                              <div className="pt-1 text-[10px] font-bold opacity-80">
+                                Digital Signature: <span className="underline">{hodName}</span>
+                              </div>
                             </div>
                           </div>
                         </div>
-                      </div>
-                    )}
+                      );
+                    })()}
 
-                    {activeDetailsTab === 2 && (
-                      <div className="space-y-6 animate-fadeIn">
-                        <div className="border-b border-zinc-150 pb-2 mb-4">
-                          <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">Key Result Areas (KRA 1 to KRA 5) Performance Breakdown</h4>
-                          <p className="text-[10px] text-zinc-400 font-semibold uppercase">HOD Self Appraisal Scores, Parameters & Evidence Attachments</p>
-                        </div>
+                    {/* Sub-Tab 2: KRA Performance (1-5) */}
+                    {activeDetailsTab === 2 && (() => {
+                      const fData = selectedAppraisal.formData || {};
 
-                        {/* KRA I: Department Academic Improvement */}
-                        {(() => {
-                          const k1 = selectedAppraisal.formData?.kra1 || {};
-                          const k1Score = selectedAppraisal.kraScores?.kra1 ?? k1.score ?? 0;
-                          const tierLabels = {
-                            "65_above": "Pass % Increased by 6.5% & above (30 Marks)",
-                            "50_64": "Pass % Increased by 5.0% - 6.4% (25 Marks)",
-                            "40_49": "Pass % Increased by 4.0% - 4.9% (20 Marks)",
-                            "30_39": "Pass % Increased by 3.0% - 3.9% (15 Marks)",
-                            "21_29": "Pass % Increased by 2.1% - 2.9% (10 Marks)",
-                            "below_20": "Pass % Increased by 2.0% & below (5 Marks)"
-                          };
-                          return (
-                            <div className="bg-slate-50 border border-slate-200/80 p-5 rounded-2xl space-y-3">
-                              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/60 pb-2">
-                                <span className="text-xs font-black text-[#120c7a] uppercase tracking-wider">
-                                  KRA I: Department Academic Improvement
+                      // KRA 1
+                      const k1 = fData.kra1 || selectedAppraisal.kra1 || {};
+                      const k1Score = selectedAppraisal.kraScores?.kra1 ?? k1.score ?? 0;
+                      const k1TierLabels = {
+                        "65_above": "≥ 65% Pass (30 Marks)",
+                        "50_64": "50 – 64% Pass (25 Marks)",
+                        "40_49": "40 – 49% Pass (20 Marks)",
+                        "30_39": "30 – 39% Pass (12 Marks)",
+                        "21_29": "21 – 29% Pass (8 Marks)",
+                        "below_20": "< 20% Pass (0 Marks)"
+                      };
+                      const getK1AutoLabel = (p) => {
+                        const num = parseFloat(p);
+                        if (isNaN(num)) return null;
+                        if (num >= 65) return "≥ 65% Pass (30 Marks)";
+                        if (num >= 50) return "50 – 64% Pass (25 Marks)";
+                        if (num >= 40) return "40 – 49% Pass (20 Marks)";
+                        if (num >= 30) return "30 – 39% Pass (12 Marks)";
+                        if (num >= 21) return "21 – 29% Pass (8 Marks)";
+                        return "< 20% Pass (0 Marks)";
+                      };
+                      const k1Proofs = extractProofList(k1.proof || k1.proofs);
+
+                      // KRA 2
+                      const k2 = fData.kra2 || selectedAppraisal.kra2 || {};
+                      const k2Score = selectedAppraisal.kraScores?.kra2 ?? 0;
+                      const k2Items = [
+                        { key: "coCurricular", label: "1. Ensured Minimum of 60% Student's Participation in Co-curricular Activities (Student Innovation Club) and Remarkable Achievements" },
+                        { key: "ipkt", label: "2. Industrial Practical Knowledge Training (IPKT) (2/Semester per Class)" },
+                        { key: "guestLectures", label: "3. Industrial Oriented Guest Lecture – 3 /Semester" },
+                        { key: "valueAdded", label: "4. Conduction of Value Added Course (min. of 4 days duration) – 1/Year" },
+                        { key: "softSkillsPlacement", label: "5. Soft Skill Training / Career guidance / GATE awareness / Life Skill Program / Placement Special Efforts" }
+                      ];
+
+                      // KRA 3
+                      const k3 = fData.kra3 || selectedAppraisal.kra3 || {};
+                      const k3Score = selectedAppraisal.kraScores?.kra3 ?? 0;
+                      const k3Items = [
+                        { key: "fundingProposal", label: "1. Submission of Major funding proposal – 1 per Year" },
+                        { key: "testingConsultancy", label: "2. Revenue generation through Testing & Consultancy / Other sources – as per Target" },
+                        { key: "onlineCourse", label: "3. Online Course – 1 per faculty / Semester" },
+                        { key: "publications", label: "4. Publications of Research Papers in reputed Journal / International Conference - 2 per faculty / Semester" }
+                      ];
+                      const k3TierLabels = {
+                        "100": "100% Target Met (5 Marks)",
+                        "80-99": "80% – 99% Target Met (2.5 Marks)",
+                        "80_99": "80% – 99% Target Met (2.5 Marks)",
+                        "below": "Below 80% Target (0 Marks)"
+                      };
+
+                      // KRA 4
+                      const k4 = Array.isArray(fData.kra4 || selectedAppraisal.kra4) 
+                        ? (fData.kra4 || selectedAppraisal.kra4) 
+                        : (fData.kra4 || selectedAppraisal.kra4 ? Object.values(fData.kra4 || selectedAppraisal.kra4) : []);
+                      const k4Score = selectedAppraisal.kraScores?.kra4 ?? 0;
+
+                      // KRA 5
+                      const k5 = fData.kra5 || selectedAppraisal.kra5 || {};
+                      const k5Score = selectedAppraisal.kraScores?.kra5 ?? k5.score ?? 0;
+                      const k5ResultTierLabels = {
+                        "90_above": "≥ 90% Pass (10 Marks)",
+                        "81_90": "81% – 90% Pass (8 Marks)",
+                        "71_80": "71% – 80% Pass (6 Marks)",
+                        "61_70": "61% – 70% Pass (4 Marks)",
+                        "51_60": "51% – 60% Pass (2 Marks)",
+                        "below_50": "< 50% Pass (0 Marks)"
+                      };
+                      const k5ResultProofs = extractProofList(k5.resultProof || k5.resultProofs);
+                      const k5CourseProofs = extractProofList(k5.onlineCourse);
+                      const k5PubProofs = extractProofList(k5.publication);
+
+                      return (
+                        <div className="space-y-8 animate-fadeIn">
+                          <div className="border-b border-zinc-150 pb-2">
+                            <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">
+                              Key Result Areas (KRA 1 to KRA 5) Performance Breakdown
+                            </h4>
+                            <p className="text-[10px] text-zinc-400 font-semibold uppercase">
+                              HOD Self Appraisal Scores, Qualitative Parameters, Metric Tiers & Attached Evidence
+                            </p>
+                          </div>
+
+                          {/* KRA I: Department Academic Improvement */}
+                          <div className="bg-slate-50 border border-slate-200/80 p-6 rounded-3xl space-y-4 shadow-xs">
+                            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/60 pb-3">
+                              <div className="flex items-center gap-2">
+                                <span className="w-7 h-7 rounded-xl bg-indigo-100 text-[#120c7a] font-black text-xs flex items-center justify-center">
+                                  I
                                 </span>
-                                <span className="px-3 py-1 bg-indigo-50 border border-indigo-150 text-[#120c7a] rounded-full text-xs font-extrabold">
-                                  Self Score: {k1Score} / 30 Marks
+                                <div>
+                                  <span className="text-xs font-black text-[#120c7a] uppercase tracking-wider block">
+                                    KRA I: Department Academic Improvement
+                                  </span>
+                                  <span className="text-[10px] text-zinc-500 font-medium">
+                                    Department Performance in Anna University Examination (Target: Overall Pass % = 65%)
+                                  </span>
+                                </div>
+                              </div>
+                              <span className="px-3 py-1 bg-indigo-50 border border-indigo-200 text-[#120c7a] rounded-full text-xs font-extrabold shadow-2xs">
+                                Self Score: {k1Score} / 30 Marks
+                              </span>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                              <div className="bg-white p-3.5 rounded-2xl border border-zinc-200">
+                                <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">Overall Dept Pass % Achieved</span>
+                                <span className="font-extrabold text-slate-850 text-base">{k1.passPct ? `${k1.passPct}%` : "Not specified"}</span>
+                              </div>
+                              <div className="bg-white p-3.5 rounded-2xl border border-zinc-200">
+                                <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">Performance Metric Tier</span>
+                                <span className="font-extrabold text-slate-850 text-sm">
+                                  {k1TierLabels[k1.tier] || getK1AutoLabel(k1.passPct) || k1.tier || "No Tier Selected"}
                                 </span>
                               </div>
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-                                <div className="bg-white p-3 rounded-xl border border-zinc-200">
-                                  <span className="block text-[10px] font-black text-zinc-400 uppercase">Pass % Achieved</span>
-                                  <span className="font-bold text-slate-800">{k1.passPct ? `${k1.passPct}%` : "-"}</span>
-                                </div>
-                                <div className="bg-white p-3 rounded-xl border border-zinc-200">
-                                  <span className="block text-[10px] font-black text-zinc-400 uppercase">Target Tier Selected</span>
-                                  <span className="font-bold text-slate-800">{tierLabels[k1.tier] || k1.tier || "-"}</span>
+                            </div>
+
+                            {k1.remarks && (
+                              <div className="bg-white p-3.5 rounded-2xl border border-zinc-200 text-xs">
+                                <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-1">
+                                  Remarks / Details on Exam Performance
+                                </span>
+                                <p className="font-medium text-slate-750 leading-relaxed">{cleanText(k1.remarks)}</p>
+                              </div>
+                            )}
+
+                            {k1Proofs.length > 0 && (
+                              <div className="bg-white p-3.5 rounded-2xl border border-zinc-200">
+                                <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-2">
+                                  Attached Evidence Document(s):
+                                </span>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  {k1Proofs.map((pf, pIdx) => (
+                                    <a
+                                      key={pIdx}
+                                      href={pf.fileUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 px-3 py-1 rounded-xl text-xs transition-all hover:bg-indigo-100"
+                                    >
+                                      <Paperclip size={12} className="text-indigo-500" />
+                                      <span className="truncate max-w-[260px]">{pf.fileName || `Evidence Doc #${pIdx + 1}`}</span>
+                                    </a>
+                                  ))}
                                 </div>
                               </div>
-                              {k1.remarks && (
-                                <div className="bg-white p-3 rounded-xl border border-zinc-200 text-xs text-slate-700">
-                                  <span className="block text-[10px] font-black text-zinc-400 uppercase mb-1">Remarks & Details</span>
-                                  <p className="font-medium">{k1.remarks}</p>
+                            )}
+                          </div>
+
+                          {/* KRA II: Department Student Centric Activities */}
+                          <div className="bg-slate-50 border border-slate-200/80 p-6 rounded-3xl space-y-4 shadow-xs">
+                            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/60 pb-3">
+                              <div className="flex items-center gap-2">
+                                <span className="w-7 h-7 rounded-xl bg-indigo-100 text-[#120c7a] font-black text-xs flex items-center justify-center">
+                                  II
+                                </span>
+                                <div>
+                                  <span className="text-xs font-black text-[#120c7a] uppercase tracking-wider block">
+                                    KRA II: Department Student Centric Activities
+                                  </span>
+                                  <span className="text-[10px] text-zinc-500 font-medium">
+                                    Organizing Student Centered Special Programs & Co-curricular Participation (5 Marks each parameter)
+                                  </span>
                                 </div>
-                              )}
-                              {(() => {
-                                const proofs = (() => {
-                                  if (!k1.proof) return [];
-                                  if (Array.isArray(k1.proof)) return k1.proof;
-                                  if (Array.isArray(k1.proof.proofs)) return k1.proof.proofs;
-                                  if (k1.proof.fileUrl) return [{ fileUrl: k1.proof.fileUrl, fileName: k1.proof.fileName || "File" }];
-                                  return [];
-                                })();
-                                if (proofs.length === 0) return null;
+                              </div>
+                              <span className="px-3 py-1 bg-indigo-50 border border-indigo-200 text-[#120c7a] rounded-full text-xs font-extrabold shadow-2xs">
+                                Self Score: {k2Score} / 25 Marks
+                              </span>
+                            </div>
+
+                            <div className="space-y-3.5">
+                              {k2Items.map((item, idx) => {
+                                const sub = k2[item.key] || {};
+                                const proofs = extractProofList(sub);
                                 return (
+                                  <div key={item.key} className="bg-white p-4 rounded-2xl border border-zinc-200 text-xs space-y-2">
+                                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                      <span className="font-bold text-slate-850 text-xs leading-relaxed">{item.label}</span>
+                                      <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider shrink-0 w-fit ${
+                                        sub.achieved ? "bg-emerald-100 text-emerald-800 border border-emerald-300" : "bg-zinc-100 text-zinc-600 border border-zinc-200"
+                                      }`}>
+                                        {sub.achieved ? "100% Target Achieved (5 Marks)" : "Below Target (0 Marks)"}
+                                      </span>
+                                    </div>
+                                    {sub.remarks && (
+                                      <p className="text-slate-700 font-medium text-[11px] bg-slate-50 p-2.5 rounded-xl border border-zinc-150 leading-relaxed">
+                                        {cleanText(sub.remarks)}
+                                      </p>
+                                    )}
+                                    {proofs.length > 0 && (
+                                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                                        <span className="text-[10px] font-bold text-zinc-400 uppercase">Attached Proof(s):</span>
+                                        {proofs.map((pf, pIdx) => (
+                                          <a
+                                            key={pIdx}
+                                            href={pf.fileUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 rounded-lg text-[11px]"
+                                          >
+                                            <Paperclip size={11} className="text-indigo-500" />
+                                            <span className="truncate max-w-[240px]">{pf.fileName || `Proof #${pIdx + 1}`}</span>
+                                          </a>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          {/* KRA III: Faculty Enrichment Efforts for Department */}
+                          <div className="bg-slate-50 border border-slate-200/80 p-6 rounded-3xl space-y-4 shadow-xs">
+                            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/60 pb-3">
+                              <div className="flex items-center gap-2">
+                                <span className="w-7 h-7 rounded-xl bg-indigo-100 text-[#120c7a] font-black text-xs flex items-center justify-center">
+                                  III
+                                </span>
+                                <div>
+                                  <span className="text-xs font-black text-[#120c7a] uppercase tracking-wider block">
+                                    KRA III: Faculty Enrichment Efforts for Department
+                                  </span>
+                                  <span className="text-[10px] text-zinc-500 font-medium">
+                                    Developing Ambience for R&D Activities & Invest in Yourself (100% Target: 5 Marks | 80-99%: 2.5 Marks)
+                                  </span>
+                                </div>
+                              </div>
+                              <span className="px-3 py-1 bg-indigo-50 border border-indigo-200 text-[#120c7a] rounded-full text-xs font-extrabold shadow-2xs">
+                                Self Score: {k3Score} / 20 Marks
+                              </span>
+                            </div>
+
+                            <div className="space-y-3.5">
+                              {k3Items.map((item) => {
+                                const sub = k3[item.key] || {};
+                                const proofs = extractProofList(sub);
+                                return (
+                                  <div key={item.key} className="bg-white p-4 rounded-2xl border border-zinc-200 text-xs space-y-2">
+                                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                      <span className="font-bold text-slate-850 text-xs leading-relaxed">{item.label}</span>
+                                      <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider shrink-0 w-fit border ${
+                                        sub.tier === "100" 
+                                          ? "bg-emerald-100 text-emerald-800 border-emerald-300" 
+                                          : (sub.tier === "80-99" || sub.tier === "80_99")
+                                          ? "bg-indigo-100 text-indigo-800 border-indigo-300"
+                                          : "bg-zinc-100 text-zinc-600 border-zinc-200"
+                                      }`}>
+                                        {k3TierLabels[sub.tier] || sub.tier || "Below 80% (0 Marks)"}
+                                      </span>
+                                    </div>
+                                    {sub.remarks && (
+                                      <p className="text-slate-700 font-medium text-[11px] bg-slate-50 p-2.5 rounded-xl border border-zinc-150 leading-relaxed">
+                                        {cleanText(sub.remarks)}
+                                      </p>
+                                    )}
+                                    {proofs.length > 0 && (
+                                      <div className="flex flex-wrap items-center gap-2 pt-1">
+                                        <span className="text-[10px] font-bold text-zinc-400 uppercase">Attached Proof(s):</span>
+                                        {proofs.map((pf, pIdx) => (
+                                          <a
+                                            key={pIdx}
+                                            href={pf.fileUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 rounded-lg text-[11px]"
+                                          >
+                                            <Paperclip size={11} className="text-indigo-500" />
+                                            <span className="truncate max-w-[240px]">{pf.fileName || `Proof #${pIdx + 1}`}</span>
+                                          </a>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          {/* KRA IV: Significant Contribution towards Department / Personal Development */}
+                          <div className="bg-slate-50 border border-slate-200/80 p-6 rounded-3xl space-y-4 shadow-xs">
+                            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/60 pb-3">
+                              <div className="flex items-center gap-2">
+                                <span className="w-7 h-7 rounded-xl bg-indigo-100 text-[#120c7a] font-black text-xs flex items-center justify-center">
+                                  IV
+                                </span>
+                                <div>
+                                  <span className="text-xs font-black text-[#120c7a] uppercase tracking-wider block">
+                                    KRA IV: Significant Contribution towards Dept / Personal Development
+                                  </span>
+                                  <span className="text-[10px] text-zinc-500 font-medium">
+                                    CoE / MoU / Book, Chapter Publication / Interaction with outside world / Foreign visit / Special Awards (2.5 Marks each, Max 5 Marks)
+                                  </span>
+                                </div>
+                              </div>
+                              <span className="px-3 py-1 bg-indigo-50 border border-indigo-200 text-[#120c7a] rounded-full text-xs font-extrabold shadow-2xs">
+                                Self Score: {k4Score} / 5 Marks
+                              </span>
+                            </div>
+
+                            {k4 && k4.length > 0 ? (
+                              <div className="space-y-3.5">
+                                {k4.map((contrib, idx) => {
+                                  const proofs = extractProofList(contrib);
+                                  return (
+                                    <div key={idx} className="bg-white p-4 rounded-2xl border border-zinc-200 text-xs space-y-2">
+                                      <div className="flex items-center justify-between">
+                                        <span className="font-extrabold text-slate-850 text-xs">
+                                          Contribution #{idx + 1}: {contrib.title || "Institutional Contribution"}
+                                        </span>
+                                        <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-indigo-50 text-indigo-800 border border-indigo-200">
+                                          2.5 Marks
+                                        </span>
+                                      </div>
+                                      {contrib.description && (
+                                        <p className="text-slate-700 font-medium text-[11px] leading-relaxed bg-slate-50 p-2.5 rounded-xl border border-zinc-150">
+                                          {cleanText(contrib.description)}
+                                        </p>
+                                      )}
+                                      {proofs.length > 0 && (
+                                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                                          <span className="text-[10px] font-bold text-zinc-400 uppercase">Attached Proof(s):</span>
+                                          {proofs.map((pf, pIdx) => (
+                                            <a
+                                              key={pIdx}
+                                              href={pf.fileUrl}
+                                              target="_blank"
+                                              rel="noreferrer"
+                                              className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 rounded-lg text-[11px]"
+                                            >
+                                              <Paperclip size={11} className="text-indigo-500" />
+                                              <span className="truncate max-w-[240px]">{pf.fileName || `Proof #${pIdx + 1}`}</span>
+                                            </a>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <div className="bg-white p-4 rounded-2xl border border-dashed border-zinc-250 text-center text-zinc-400 italic text-xs">
+                                No specific contributions submitted for KRA IV.
+                              </div>
+                            )}
+                          </div>
+
+                          {/* KRA V: Academic Excellence and Self Development (IIY) */}
+                          <div className="bg-slate-50 border border-slate-200/80 p-6 rounded-3xl space-y-4 shadow-xs">
+                            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/60 pb-3">
+                              <div className="flex items-center gap-2">
+                                <span className="w-7 h-7 rounded-xl bg-indigo-100 text-[#120c7a] font-black text-xs flex items-center justify-center">
+                                  V
+                                </span>
+                                <div>
+                                  <span className="text-xs font-black text-[#120c7a] uppercase tracking-wider block">
+                                    KRA V: Academic Excellence and Self Development (IIY)
+                                  </span>
+                                  <span className="text-[10px] text-zinc-500 font-medium">
+                                    Anna University Subject Exam Pass % (Max 10 Marks) + Online Course (5 Marks) + Research Publication (5 Marks)
+                                  </span>
+                                </div>
+                              </div>
+                              <span className="px-3 py-1 bg-indigo-50 border border-indigo-200 text-[#120c7a] rounded-full text-xs font-extrabold shadow-2xs">
+                                Self Score: {k5Score} / 20 Marks
+                              </span>
+                            </div>
+
+                            <div className="space-y-3.5 text-xs">
+                              {/* Sub 1: Anna University Exam Result */}
+                              <div className="bg-white p-4 rounded-2xl border border-zinc-200 space-y-2">
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                  <span className="font-bold text-slate-850 text-xs">
+                                    1. Anna University Examination Result (Theory Pass % Target: 95% | Analytical Pass % Target: 90%)
+                                  </span>
+                                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-50 text-indigo-800 border border-indigo-200 shrink-0 w-fit">
+                                    {k5ResultTierLabels[k5.resultTier] || k5.resultTier || "Below 50% (0 Marks)"}
+                                  </span>
+                                </div>
+                                {k5.resultRemarks && (
+                                  <p className="text-slate-700 font-medium text-[11px] bg-slate-50 p-2.5 rounded-xl border border-zinc-150 leading-relaxed">
+                                    {cleanText(k5.resultRemarks)}
+                                  </p>
+                                )}
+                                {k5ResultProofs.length > 0 && (
                                   <div className="flex flex-wrap items-center gap-2 pt-1">
-                                    <span className="text-[10px] font-bold text-zinc-400 uppercase">Evidence Document(s):</span>
-                                    {proofs.map((pf, pIdx) => (
+                                    <span className="text-[10px] font-bold text-zinc-400 uppercase">Result Sheet Proof(s):</span>
+                                    {k5ResultProofs.map((pf, pIdx) => (
                                       <a
                                         key={pIdx}
                                         href={pf.fileUrl}
                                         target="_blank"
                                         rel="noreferrer"
-                                        className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
+                                        className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 rounded-lg text-[11px]"
                                       >
-                                        <Paperclip size={11} />
-                                        <span>{pf.fileName || `Evidence #${pIdx + 1}`}</span>
+                                        <Paperclip size={11} className="text-indigo-500" />
+                                        <span className="truncate max-w-[240px]">{pf.fileName || `Result Proof #${pIdx + 1}`}</span>
                                       </a>
                                     ))}
                                   </div>
-                                );
-                              })()}
-                            </div>
-                          );
-                        })()}
+                                )}
+                              </div>
 
-                        {/* KRA II: Department Student Centric Activities */}
-                        {(() => {
-                          const k2 = selectedAppraisal.formData?.kra2 || {};
-                          const k2Score = selectedAppraisal.kraScores?.kra2 ?? 0;
-                          const k2SubItems = [
-                            { key: "coCurricular", label: "Co-Curricular Activities Organized" },
-                            { key: "ipkt", label: "Industrial / Practical Knowledge Training" },
-                            { key: "guestLectures", label: "Guest Lectures / Seminars Organized" },
-                            { key: "valueAdded", label: "Value Added Courses Conducted" },
-                            { key: "softSkillsPlacement", label: "Soft Skills & Placement Training" }
-                          ];
-                          return (
-                            <div className="bg-slate-50 border border-slate-200/80 p-5 rounded-2xl space-y-4">
-                              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/60 pb-2">
-                                <span className="text-xs font-black text-[#120c7a] uppercase tracking-wider">
-                                  KRA II: Department Student Centric Activities
-                                </span>
-                                <span className="px-3 py-1 bg-indigo-50 border border-indigo-150 text-[#120c7a] rounded-full text-xs font-extrabold">
-                                  Self Score: {k2Score} / 25 Marks
-                                </span>
-                              </div>
-                              <div className="space-y-3">
-                                {k2SubItems.map((item) => {
-                                  const sub = k2[item.key] || {};
-                                  const proofs = (() => {
-                                    if (Array.isArray(sub.proofs)) return sub.proofs;
-                                    if (Array.isArray(sub)) return sub;
-                                    if (sub.fileUrl) return [{ fileUrl: sub.fileUrl, fileName: sub.fileName || "File" }];
-                                    return [];
-                                  })();
-                                  return (
-                                    <div key={item.key} className="bg-white p-3.5 rounded-xl border border-zinc-200 text-xs space-y-1.5">
-                                      <div className="flex items-center justify-between">
-                                        <span className="font-bold text-slate-800">{item.label}</span>
-                                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
-                                          sub.achieved ? "bg-emerald-100 text-emerald-800 border border-emerald-200" : "bg-zinc-100 text-zinc-500 border border-zinc-200"
-                                        }`}>
-                                          {sub.achieved ? "Achieved (5 Marks)" : "Not Achieved (0 Marks)"}
-                                        </span>
-                                      </div>
-                                      {sub.remarks && (
-                                        <p className="text-zinc-600 font-medium text-[11px] bg-slate-50 p-2 rounded-lg border border-zinc-150">
-                                          {cleanText(sub.remarks)}
-                                        </p>
-                                      )}
-                                      {proofs.length > 0 && (
-                                        <div className="flex flex-wrap items-center gap-2 pt-0.5">
-                                          <span className="text-[10px] font-bold text-zinc-400 uppercase">Proof(s):</span>
-                                          {proofs.map((pf, pIdx) => (
-                                            <a
-                                              key={pIdx}
-                                              href={pf.fileUrl}
-                                              target="_blank"
-                                              rel="noreferrer"
-                                              className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
-                                            >
-                                              <Paperclip size={11} />
-                                              <span>{pf.fileName || `Proof #${pIdx + 1}`}</span>
-                                            </a>
-                                          ))}
-                                        </div>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          );
-                        })()}
-
-                        {/* KRA III: Faculty Enrichment Efforts */}
-                        {(() => {
-                          const k3 = selectedAppraisal.formData?.kra3 || {};
-                          const k3Score = selectedAppraisal.kraScores?.kra3 ?? 0;
-                          const k3SubItems = [
-                            { key: "fundingProposal", label: "Funding Proposals Submitted" },
-                            { key: "testingConsultancy", label: "Testing & Consultancy Works" },
-                            { key: "onlineCourse", label: "Online / MOOC Courses by Faculty" },
-                            { key: "publications", label: "Research Publications in Indexed Journals" }
-                          ];
-                          const k3TierLabels = {
-                            "100": "100% Target Met (5 Marks)",
-                            "80_99": "80% - 99% Target Met (2.5 Marks)",
-                            "below": "Below 80% Target (0 Marks)"
-                          };
-                          return (
-                            <div className="bg-slate-50 border border-slate-200/80 p-5 rounded-2xl space-y-4">
-                              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/60 pb-2">
-                                <span className="text-xs font-black text-[#120c7a] uppercase tracking-wider">
-                                  KRA III: Faculty Enrichment Efforts for Department
-                                </span>
-                                <span className="px-3 py-1 bg-indigo-50 border border-indigo-150 text-[#120c7a] rounded-full text-xs font-extrabold">
-                                  Self Score: {k3Score} / 20 Marks
-                                </span>
-                              </div>
-                              <div className="space-y-3">
-                                {k3SubItems.map((item) => {
-                                  const sub = k3[item.key] || {};
-                                  const proofs = (() => {
-                                    if (Array.isArray(sub.proofs)) return sub.proofs;
-                                    if (Array.isArray(sub)) return sub;
-                                    if (sub.fileUrl) return [{ fileUrl: sub.fileUrl, fileName: sub.fileName || "File" }];
-                                    return [];
-                                  })();
-                                  return (
-                                    <div key={item.key} className="bg-white p-3.5 rounded-xl border border-zinc-200 text-xs space-y-1.5">
-                                      <div className="flex items-center justify-between">
-                                        <span className="font-bold text-slate-800">{item.label}</span>
-                                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-indigo-50 text-indigo-800 border border-indigo-200">
-                                          {k3TierLabels[sub.tier] || sub.tier || "Target Below 80%"}
-                                        </span>
-                                      </div>
-                                      {sub.remarks && (
-                                        <p className="text-zinc-600 font-medium text-[11px] bg-slate-50 p-2 rounded-lg border border-zinc-150">
-                                          {cleanText(sub.remarks)}
-                                        </p>
-                                      )}
-                                      {proofs.length > 0 && (
-                                        <div className="flex flex-wrap items-center gap-2 pt-0.5">
-                                          <span className="text-[10px] font-bold text-zinc-400 uppercase">Proof(s):</span>
-                                          {proofs.map((pf, pIdx) => (
-                                            <a
-                                              key={pIdx}
-                                              href={pf.fileUrl}
-                                              target="_blank"
-                                              rel="noreferrer"
-                                              className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
-                                            >
-                                              <Paperclip size={11} />
-                                              <span>{pf.fileName || `Proof #${pIdx + 1}`}</span>
-                                            </a>
-                                          ))}
-                                        </div>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          );
-                        })()}
-
-                        {/* KRA IV: Significant Contribution towards Department / Personal Development */}
-                        {(() => {
-                          const k4 = selectedAppraisal.formData?.kra4 || [];
-                          const k4Score = selectedAppraisal.kraScores?.kra4 ?? 0;
-                          return (
-                            <div className="bg-slate-50 border border-slate-200/80 p-5 rounded-2xl space-y-4">
-                              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/60 pb-2">
-                                <span className="text-xs font-black text-[#120c7a] uppercase tracking-wider">
-                                  KRA IV: Significant Contributions towards Department / Personal Development
-                                </span>
-                                <span className="px-3 py-1 bg-indigo-50 border border-indigo-150 text-[#120c7a] rounded-full text-xs font-extrabold">
-                                  Self Score: {k4Score} / 5 Marks
-                                </span>
-                              </div>
-                              {Array.isArray(k4) && k4.length > 0 ? (
-                                <div className="space-y-3">
-                                  {k4.map((item, idx) => {
-                                    const proofs = (() => {
-                                      if (Array.isArray(item.proofs)) return item.proofs;
-                                      if (Array.isArray(item)) return item;
-                                      if (item.fileUrl) return [{ fileUrl: item.fileUrl, fileName: item.fileName || "File" }];
-                                      return [];
-                                    })();
-                                    return (
-                                      <div key={idx} className="bg-white p-3.5 rounded-xl border border-zinc-200 text-xs space-y-1">
-                                        <span className="font-bold text-slate-800 block text-xs">{idx + 1}. {item.title || "Contribution"}</span>
-                                        {item.description && (
-                                          <p className="text-zinc-600 font-medium text-[11px]">{cleanText(item.description)}</p>
-                                        )}
-                                        {proofs.length > 0 && (
-                                          <div className="flex flex-wrap items-center gap-2 pt-1">
-                                            <span className="text-[10px] font-bold text-zinc-400 uppercase">Proof(s):</span>
-                                            {proofs.map((pf, pIdx) => (
-                                              <a
-                                                key={pIdx}
-                                                href={pf.fileUrl}
-                                                target="_blank"
-                                                rel="noreferrer"
-                                                className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
-                                              >
-                                                <Paperclip size={11} />
-                                                <span>{pf.fileName || `Proof #${pIdx + 1}`}</span>
-                                              </a>
-                                            ))}
-                                          </div>
-                                        )}
-                                      </div>
-                                    );
-                                  })}
+                              {/* Sub 2: Online Course */}
+                              <div className="bg-white p-4 rounded-2xl border border-zinc-200 space-y-2">
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                  <span className="font-bold text-slate-850 text-xs">
+                                    2. Online Course – 1 per Semester
+                                  </span>
+                                  <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider shrink-0 w-fit ${
+                                    k5.onlineCourse?.achieved ? "bg-emerald-100 text-emerald-800 border border-emerald-300" : "bg-zinc-100 text-zinc-600 border border-zinc-200"
+                                  }`}>
+                                    {k5.onlineCourse?.achieved ? "100% Target Achieved (5 Marks)" : "Below Target (0 Marks)"}
+                                  </span>
                                 </div>
-                              ) : (
-                                <p className="text-xs text-zinc-400 italic">No contributions specified.</p>
-                              )}
-                            </div>
-                          );
-                        })()}
-
-                        {/* KRA V: Academic Excellence & Self Development (IIY) */}
-                        {(() => {
-                          const k5 = selectedAppraisal.formData?.kra5 || {};
-                          const k5Score = selectedAppraisal.kraScores?.kra5 ?? k5.score ?? 0;
-                          const k5ResultTierLabels = {
-                            "90_above": "Pass % >= 90% (10 Marks)",
-                            "81_90": "Pass % 81% - 90% (8 Marks)",
-                            "71_80": "Pass % 71% - 80% (6 Marks)",
-                            "61_70": "Pass % 61% - 70% (4 Marks)",
-                            "51_60": "Pass % 51% - 60% (2 Marks)",
-                            "below_50": "Pass % < 50% (0 Marks)"
-                          };
-
-                          const getKra5Proofs = (subItem) => {
-                            if (!subItem) return [];
-                            if (Array.isArray(subItem)) return subItem;
-                            if (Array.isArray(subItem.proofs)) return subItem.proofs;
-                            if (subItem.fileUrl) return [{ fileUrl: subItem.fileUrl, fileName: subItem.fileName || "File" }];
-                            return [];
-                          };
-
-                          const resultProofs = getKra5Proofs(k5.resultProof);
-                          const courseProofs = getKra5Proofs(k5.onlineCourse);
-                          const pubProofs = getKra5Proofs(k5.publication);
-
-                          return (
-                            <div className="bg-slate-50 border border-slate-200/80 p-5 rounded-2xl space-y-4">
-                              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/60 pb-2">
-                                <span className="text-xs font-black text-[#120c7a] uppercase tracking-wider">
-                                  KRA V: Academic Excellence and Self Development (IIY)
-                                </span>
-                                <span className="px-3 py-1 bg-indigo-50 border border-indigo-150 text-[#120c7a] rounded-full text-xs font-extrabold">
-                                  Self Score: {k5Score} / 20 Marks
-                                </span>
-                              </div>
-
-                              <div className="space-y-3 text-xs">
-                                <div className="bg-white p-3.5 rounded-xl border border-zinc-200 space-y-1.5">
-                                  <div className="flex items-center justify-between">
-                                    <span className="font-bold text-slate-800">1. Academic Pass Result Target</span>
-                                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-indigo-50 text-indigo-800 border border-indigo-200">
-                                      {k5ResultTierLabels[k5.resultTier] || k5.resultTier || "Below 50%"}
-                                    </span>
+                                {k5.onlineCourse?.remarks && (
+                                  <p className="text-slate-700 font-medium text-[11px] bg-slate-50 p-2.5 rounded-xl border border-zinc-150 leading-relaxed">
+                                    {cleanText(k5.onlineCourse.remarks)}
+                                  </p>
+                                )}
+                                {k5CourseProofs.length > 0 && (
+                                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                                    <span className="text-[10px] font-bold text-zinc-400 uppercase">Certificate Proof(s):</span>
+                                    {k5CourseProofs.map((pf, pIdx) => (
+                                      <a
+                                        key={pIdx}
+                                        href={pf.fileUrl}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 rounded-lg text-[11px]"
+                                      >
+                                        <Paperclip size={11} className="text-indigo-500" />
+                                        <span className="truncate max-w-[240px]">{pf.fileName || `Certificate #${pIdx + 1}`}</span>
+                                      </a>
+                                    ))}
                                   </div>
-                                  {k5.resultRemarks && (
-                                    <p className="text-zinc-600 font-medium text-[11px] bg-slate-50 p-2 rounded-lg border border-zinc-150">
-                                      {cleanText(k5.resultRemarks)}
-                                    </p>
-                                  )}
-                                  {resultProofs.length > 0 && (
-                                    <div className="flex flex-wrap items-center gap-2 pt-0.5">
-                                      <span className="text-[10px] font-bold text-zinc-400 uppercase">Result Proof(s):</span>
-                                      {resultProofs.map((pf, pIdx) => (
-                                        <a
-                                          key={pIdx}
-                                          href={pf.fileUrl}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
-                                        >
-                                          <Paperclip size={11} />
-                                          <span>{pf.fileName || `Result Proof #${pIdx + 1}`}</span>
-                                        </a>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-
-                                <div className="bg-white p-3.5 rounded-xl border border-zinc-200 space-y-1.5">
-                                  <div className="flex items-center justify-between">
-                                    <span className="font-bold text-slate-800">2. Online / MOOC Course Completion</span>
-                                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
-                                      k5.onlineCourse?.achieved ? "bg-emerald-100 text-emerald-800 border border-emerald-200" : "bg-zinc-100 text-zinc-500 border border-zinc-200"
-                                    }`}>
-                                      {k5.onlineCourse?.achieved ? "Achieved (5 Marks)" : "Not Achieved (0 Marks)"}
-                                    </span>
-                                  </div>
-                                  {k5.onlineCourse?.remarks && (
-                                    <p className="text-zinc-600 font-medium text-[11px] bg-slate-50 p-2 rounded-lg border border-zinc-150">
-                                      {cleanText(k5.onlineCourse.remarks)}
-                                    </p>
-                                  )}
-                                  {courseProofs.length > 0 && (
-                                    <div className="flex flex-wrap items-center gap-2 pt-0.5">
-                                      <span className="text-[10px] font-bold text-zinc-400 uppercase">Certificate Proof(s):</span>
-                                      {courseProofs.map((pf, pIdx) => (
-                                        <a
-                                          key={pIdx}
-                                          href={pf.fileUrl}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
-                                        >
-                                          <Paperclip size={11} />
-                                          <span>{pf.fileName || `Certificate #${pIdx + 1}`}</span>
-                                        </a>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-
-                                <div className="bg-white p-3.5 rounded-xl border border-zinc-200 space-y-1.5">
-                                  <div className="flex items-center justify-between">
-                                    <span className="font-bold text-slate-800">3. Research Paper Publication</span>
-                                    <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
-                                      k5.publication?.achieved ? "bg-emerald-100 text-emerald-800 border border-emerald-200" : "bg-zinc-100 text-zinc-500 border border-zinc-200"
-                                    }`}>
-                                      {k5.publication?.achieved ? "Achieved (5 Marks)" : "Not Achieved (0 Marks)"}
-                                    </span>
-                                  </div>
-                                  {k5.publication?.remarks && (
-                                    <p className="text-zinc-600 font-medium text-[11px] bg-slate-50 p-2 rounded-lg border border-zinc-150">
-                                      {cleanText(k5.publication.remarks)}
-                                    </p>
-                                  )}
-                                  {pubProofs.length > 0 && (
-                                    <div className="flex flex-wrap items-center gap-2 pt-0.5">
-                                      <span className="text-[10px] font-bold text-zinc-400 uppercase">Publication Proof(s):</span>
-                                      {pubProofs.map((pf, pIdx) => (
-                                        <a
-                                          key={pIdx}
-                                          href={pf.fileUrl}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
-                                        >
-                                          <Paperclip size={11} />
-                                          <span>{pf.fileName || `Publication Proof #${pIdx + 1}`}</span>
-                                        </a>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
+                                )}
                               </div>
-                            </div>
-                          );
-                        })()}
-                      </div>
-                    )}
 
-                    {activeDetailsTab === 3 && (
-                      <div className="space-y-6 animate-fadeIn">
-                        <div className="bg-gradient-to-br from-indigo-50 to-slate-50 p-6 rounded-2xl border border-indigo-100 space-y-4">
-                          <span className="text-xs font-black text-indigo-950 uppercase tracking-wider block border-b border-indigo-100 pb-2">
-                            HOD Performance Score Summary
-                          </span>
-                          <div className="flex items-center justify-between bg-white p-4 rounded-xl border border-indigo-100">
-                            <div>
-                              <span className="text-xs font-bold text-slate-700 block">Total KRA Self Performance Score</span>
-                              <span className="text-[10px] text-zinc-400 font-medium">Cumulative score across KRA 1 to KRA 5 (Max 100 Marks)</span>
-                            </div>
-                            <div className="text-right">
-                              <span className="text-2xl font-black text-[#120c7a]">{selectedAppraisal.totalScore || 0}</span>
-                              <span className="text-xs font-bold text-zinc-400"> / 100</span>
+                              {/* Sub 3: Research Paper Publication */}
+                              <div className="bg-white p-4 rounded-2xl border border-zinc-200 space-y-2">
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                  <span className="font-bold text-slate-850 text-xs">
+                                    3. Publication of Research Paper in reputed Journal / International Conference – 1 per Semester
+                                  </span>
+                                  <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider shrink-0 w-fit ${
+                                    k5.publication?.achieved ? "bg-emerald-100 text-emerald-800 border border-emerald-300" : "bg-zinc-100 text-zinc-600 border border-zinc-200"
+                                  }`}>
+                                    {k5.publication?.achieved ? "100% Target Achieved (5 Marks)" : "Below Target (0 Marks)"}
+                                  </span>
+                                </div>
+                                {k5.publication?.remarks && (
+                                  <p className="text-slate-700 font-medium text-[11px] bg-slate-50 p-2.5 rounded-xl border border-zinc-150 leading-relaxed">
+                                    {cleanText(k5.publication.remarks)}
+                                  </p>
+                                )}
+                                {k5PubProofs.length > 0 && (
+                                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                                    <span className="text-[10px] font-bold text-zinc-400 uppercase">Publication Copy Proof(s):</span>
+                                    {k5PubProofs.map((pf, pIdx) => (
+                                      <a
+                                        key={pIdx}
+                                        href={pf.fileUrl}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 rounded-lg text-[11px]"
+                                      >
+                                        <Paperclip size={11} className="text-indigo-500" />
+                                        <span className="truncate max-w-[240px]">{pf.fileName || `Publication #${pIdx + 1}`}</span>
+                                      </a>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           </div>
                         </div>
+                      );
+                    })()}
 
-                        <div className="bg-emerald-50/60 p-5 rounded-2xl border border-emerald-100/80 space-y-2">
-                          <span className="text-xs font-black text-emerald-950 uppercase tracking-wider block border-b border-emerald-200/50 pb-2">
-                            Digital Declaration & Submission
-                          </span>
-                          <div className="flex items-center gap-2 text-xs text-emerald-900 font-bold pt-1">
-                            <CheckCircle2 size={16} className="text-emerald-600" />
-                            <span>Self Appraisal information & ratings digitally certified by HOD.</span>
+                    {/* Sub-Tab 3: Scores & Declaration */}
+                    {activeDetailsTab === 3 && (() => {
+                      const fData = selectedAppraisal.formData || {};
+                      const k1 = fData.kra1 || selectedAppraisal.kra1 || {};
+                      const k5 = fData.kra5 || selectedAppraisal.kra5 || {};
+                      const s1 = selectedAppraisal.kraScores?.kra1 ?? k1.score ?? 0;
+                      const s2 = selectedAppraisal.kraScores?.kra2 ?? 0;
+                      const s3 = selectedAppraisal.kraScores?.kra3 ?? 0;
+                      const s4 = selectedAppraisal.kraScores?.kra4 ?? 0;
+                      const s5 = selectedAppraisal.kraScores?.kra5 ?? k5.score ?? 0;
+                      const totalScore = selectedAppraisal.totalScore ?? (s1 + s2 + s3 + s4 + s5);
+                      const hodName = fData.hodName || selectedAppraisal.hodName || selectedAppraisal.facultyName || "Head of Department";
+                      const academicYear = selectedAppraisal.academicYear || "2024-2025";
+                      const submittedAt = selectedAppraisal.submittedAt || selectedAppraisal.declarationDate || selectedAppraisal.updatedAt;
+
+                      const kraRows = [
+                        { sno: "I", title: "Department Academic Improvement", desc: "Anna University Exam Results (Target: 65% Pass)", max: 30, score: s1 },
+                        { sno: "II", title: "Department Student Centric Activities", desc: "Co-curricular, IPKT, Guest Lectures, VAC, Soft Skills", max: 25, score: s2 },
+                        { sno: "III", title: "Faculty Enrichment Efforts for Department", desc: "Funding Proposals, Testing, Online Courses, Publications", max: 20, score: s3 },
+                        { sno: "IV", title: "Significant Contribution towards Department / Personal Dev.", desc: "CoE, MoUs, Books, International Collaborations, Awards", max: 5, score: s4 },
+                        { sno: "V", title: "Academic Excellence and Self Development (IIY)", desc: "Subject Pass % (10), Online Course (5), Research Paper (5)", max: 20, score: s5 }
+                      ];
+
+                      return (
+                        <div className="space-y-6 animate-fadeIn">
+                          {/* KRA Breakdown Table */}
+                          <div className="bg-white border border-zinc-200 rounded-3xl overflow-hidden shadow-xs">
+                            <div className="bg-gradient-to-r from-indigo-50 to-blue-50 px-5 py-3 border-b border-indigo-100 flex items-center justify-between">
+                              <span className="text-xs font-black text-indigo-950 uppercase tracking-widest">
+                                Institutional KRA Performance Score Breakdown
+                              </span>
+                              <span className="text-xs font-black text-[#120c7a] bg-white px-3 py-1 rounded-xl border border-indigo-150">
+                                Total: {totalScore} / 100
+                              </span>
+                            </div>
+
+                            <table className="w-full border-collapse text-xs">
+                              <thead>
+                                <tr className="bg-zinc-50 border-b border-zinc-200 text-zinc-500 font-bold text-left">
+                                  <th className="p-3 w-12 text-center">S.No</th>
+                                  <th className="p-3">Key Result Area (KRA)</th>
+                                  <th className="p-3 text-center w-24">Max Marks</th>
+                                  <th className="p-3 text-center w-28 text-indigo-800">Self Score</th>
+                                  <th className="p-3 text-center w-24">% Score</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-zinc-150">
+                                {kraRows.map((row) => (
+                                  <tr key={row.sno} className="hover:bg-slate-50/50">
+                                    <td className="p-3 text-center font-bold text-zinc-500">{row.sno}</td>
+                                    <td className="p-3">
+                                      <span className="font-extrabold text-slate-850 block">{row.title}</span>
+                                      <span className="text-[10px] text-zinc-400 font-medium">{row.desc}</span>
+                                    </td>
+                                    <td className="p-3 text-center font-bold text-zinc-600">{row.max}</td>
+                                    <td className="p-3 text-center font-black text-indigo-750 text-sm">{row.score}</td>
+                                    <td className="p-3 text-center font-bold text-slate-700">
+                                      {row.max > 0 ? `${((row.score / row.max) * 100).toFixed(0)}%` : "-"}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                              <tfoot>
+                                <tr className="bg-gradient-to-r from-indigo-700 via-indigo-800 to-[#120c7a] text-white font-black">
+                                  <td colSpan={2} className="p-3.5 text-right text-xs uppercase tracking-wider">
+                                    Grand Total Performance Score
+                                  </td>
+                                  <td className="p-3.5 text-center text-zinc-200">100</td>
+                                  <td className="p-3.5 text-center text-base text-amber-300">{totalScore}</td>
+                                  <td className="p-3.5 text-center text-sm">{totalScore}%</td>
+                                </tr>
+                              </tfoot>
+                            </table>
                           </div>
-                          {selectedAppraisal.declarationDate && (
-                            <span className="text-[10px] text-emerald-700 font-semibold block">
-                              Submitted Date: {new Date(selectedAppraisal.declarationDate).toLocaleString()}
-                            </span>
-                          )}
+
+                          {/* Digital Declaration Card */}
+                          <div className="bg-emerald-50/60 p-6 rounded-3xl border border-emerald-200/80 space-y-4">
+                            <div className="flex items-center gap-2 border-b border-emerald-200/50 pb-2">
+                              <CheckCircle2 size={18} className="text-emerald-700" />
+                              <span className="text-xs font-black text-emerald-950 uppercase tracking-wider">
+                                Official Digital Declaration & Verification
+                              </span>
+                            </div>
+                            <p className="text-xs font-medium text-emerald-950 leading-relaxed">
+                              "I hereby declare that the particulars furnished above in my HOD Performance Appraisal for the Academic Year <strong>{academicYear}</strong> are true, correct, and complete to the best of my knowledge and belief."
+                            </p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 text-xs">
+                              <div className="bg-white/80 p-3 rounded-2xl border border-emerald-200">
+                                <span className="block text-[10px] font-black text-emerald-700 uppercase tracking-wider">Digital Signature of HoD</span>
+                                <span className="font-extrabold text-emerald-950 text-sm underline">{hodName}</span>
+                              </div>
+                              <div className="bg-white/80 p-3 rounded-2xl border border-emerald-200">
+                                <span className="block text-[10px] font-black text-emerald-700 uppercase tracking-wider">Certification Timestamp</span>
+                                <span className="font-extrabold text-emerald-950">
+                                  {submittedAt ? new Date(submittedAt).toLocaleString("en-IN") : "Digital Signature Registered"}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      );
+                    })()}
                   </>
                 )}
 
@@ -2842,7 +3287,8 @@ export default function AppraisalReviews() {
                         const gHodT = p1HodT + p2HodT;
                         const gPrincipalT = p1PrincipalT + p2PrincipalT;
 
-                        const isEditable = selectedAppraisal.status !== "Approved";
+                        const isPrincipalUser = userRole === "Principal" || userRole === "Admin";
+                        const isEditable = isPrincipalUser || selectedAppraisal.status !== "Approved";
 
                         const rowEls = (rows) => rows.map((r) => {
                           const hodVal = hodFacultyScoresMap[r.id] ?? r.scored;
@@ -2936,6 +3382,132 @@ export default function AppraisalReviews() {
                   </div>
                 )}
 
+                {/* ── HOD PERFORMANCE EVALUATION SCORECARD (5 KRAs EVALUATION) ── */}
+                {selectedAppraisal.formType === "hod" && (
+                  <div className="mt-8 border border-zinc-200 rounded-3xl overflow-hidden bg-white shadow-xs">
+                    <div className="bg-indigo-50/70 px-5 py-3.5 border-b border-indigo-100 flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <span className="text-[11px] font-black text-indigo-950 uppercase tracking-widest block">
+                          HOD Performance Evaluation Scorecard (5 KRAs Evaluation)
+                        </span>
+                        <span className="text-[10px] text-indigo-700 font-medium">
+                          Principal review of self scores across the 5 institutional Key Result Areas (Max 100 Marks)
+                        </span>
+                      </div>
+                      {(() => {
+                        const fData = selectedAppraisal.formData || {};
+                        const k1 = fData.kra1 || selectedAppraisal.kra1 || {};
+                        const k5 = fData.kra5 || selectedAppraisal.kra5 || {};
+                        const s1 = selectedAppraisal.kraScores?.kra1 ?? k1.score ?? 0;
+                        const s2 = selectedAppraisal.kraScores?.kra2 ?? 0;
+                        const s3 = selectedAppraisal.kraScores?.kra3 ?? 0;
+                        const s4 = selectedAppraisal.kraScores?.kra4 ?? 0;
+                        const s5 = selectedAppraisal.kraScores?.kra5 ?? k5.score ?? 0;
+                        const selfTotal = selectedAppraisal.totalScore ?? (s1 + s2 + s3 + s4 + s5);
+                        const principalTotal = Object.values(principalHodScoresMap).reduce((a, b) => a + (Number(b) || 0), 0);
+                        return (
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-black text-indigo-800 bg-indigo-100/70 px-2.5 py-0.5 rounded-full border border-indigo-200">
+                              Self Score: {selfTotal} / 100
+                            </span>
+                            <span className="text-[10px] font-black text-purple-800 bg-purple-100/70 px-2.5 py-0.5 rounded-full border border-purple-200">
+                              Principal Score: {principalTotal} / 100
+                            </span>
+                          </div>
+                        );
+                      })()}
+                    </div>
+
+                    <table className="w-full border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-zinc-50 text-zinc-500 font-bold border-b border-zinc-200">
+                          <th className="p-3 text-left">Key Result Area (KRA) Particulars</th>
+                          <th className="p-3 text-center w-24">Max Marks</th>
+                          <th className="p-3 text-center w-28 text-indigo-700 font-black">HOD Self Score</th>
+                          <th className="p-3 text-center w-36 text-purple-700 font-black">Principal Score</th>
+                        </tr>
+                      </thead>
+                      {(() => {
+                        const fData = selectedAppraisal.formData || {};
+                        const k1 = fData.kra1 || selectedAppraisal.kra1 || {};
+                        const k5 = fData.kra5 || selectedAppraisal.kra5 || {};
+                        const s1 = selectedAppraisal.kraScores?.kra1 ?? k1.score ?? 0;
+                        const s2 = selectedAppraisal.kraScores?.kra2 ?? 0;
+                        const s3 = selectedAppraisal.kraScores?.kra3 ?? 0;
+                        const s4 = selectedAppraisal.kraScores?.kra4 ?? 0;
+                        const s5 = selectedAppraisal.kraScores?.kra5 ?? k5.score ?? 0;
+                        const selfTotal = selectedAppraisal.totalScore ?? (s1 + s2 + s3 + s4 + s5);
+
+                        const isPrincipalUser = userRole === "Principal" || userRole === "Admin";
+                        const isEditable = isPrincipalUser || selectedAppraisal.status !== "Approved";
+
+                        const kraItems = [
+                          { key: "kra1", title: "KRA I: Department Academic Improvement", desc: "Anna University exam pass percentage (Target: 65%)", max: 30, selfScore: s1 },
+                          { key: "kra2", title: "KRA II: Department Student Centric Activities", desc: "Co-curricular, IPKT, Guest Lectures, VAC, Soft Skills (5 each)", max: 25, selfScore: s2 },
+                          { key: "kra3", title: "KRA III: Faculty Enrichment Efforts for Department", desc: "R&D funding, testing consultancy, online courses, publications", max: 20, selfScore: s3 },
+                          { key: "kra4", title: "KRA IV: Significant Contribution towards Dept / Personal Dev.", desc: "CoE, MoUs, books, international visits, awards (2.5 each)", max: 5, selfScore: s4 },
+                          { key: "kra5", title: "KRA V: Academic Excellence and Self Development (IIY)", desc: "Theory pass % (10), Online course (5), Research publication (5)", max: 20, selfScore: s5 }
+                        ];
+
+                        const principalTotal = Object.values(principalHodScoresMap).reduce((a, b) => a + (Number(b) || 0), 0);
+
+                        return (
+                          <>
+                            <tbody className="divide-y divide-zinc-100">
+                              {kraItems.map((item) => {
+                                const currentPrincipalVal = principalHodScoresMap[item.key] ?? item.selfScore;
+                                return (
+                                  <tr key={item.key} className="hover:bg-slate-50/50">
+                                    <td className="p-3">
+                                      <span className="font-extrabold text-slate-800 block">{item.title}</span>
+                                      <span className="text-[10px] text-zinc-400 font-medium">{item.desc}</span>
+                                    </td>
+                                    <td className="p-3 text-center font-bold text-zinc-600">{item.max}</td>
+                                    <td className="p-3 text-center font-black text-indigo-700 text-sm">{item.selfScore}</td>
+                                    <td className="p-3 text-center font-black">
+                                      {isEditable ? (
+                                        <input
+                                          type="number"
+                                          step="0.5"
+                                          min="0"
+                                          max={item.max}
+                                          value={currentPrincipalVal === undefined || currentPrincipalVal === null ? "" : currentPrincipalVal}
+                                          onChange={(e) => {
+                                            const inputVal = e.target.value;
+                                            const parsed = inputVal === "" ? 0 : Math.min(item.max, Math.max(0, Number(inputVal)));
+                                            const nextMap = {
+                                              ...principalHodScoresMap,
+                                              [item.key]: parsed
+                                            };
+                                            setPrincipalHodScoresMap(nextMap);
+                                            const newTotal = Object.values(nextMap).reduce((a, b) => a + (Number(b) || 0), 0);
+                                            setFinalRating(String(newTotal));
+                                          }}
+                                          className="w-16 text-center font-black text-purple-900 bg-white border-2 border-purple-400 rounded-lg py-1 px-1.5 shadow-xs focus:ring-2 focus:ring-purple-500 focus:border-purple-600 focus:outline-none"
+                                        />
+                                      ) : (
+                                        <span className="text-purple-700 font-bold">{currentPrincipalVal}</span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                            <tfoot>
+                              <tr className="bg-gradient-to-r from-[#120c7a] via-indigo-800 to-purple-800 text-white font-black">
+                                <td className="p-3 text-right text-xs uppercase tracking-wider">Grand Total Performance Score</td>
+                                <td className="p-3 text-center text-zinc-200">100</td>
+                                <td className="p-3 text-center text-base text-amber-300">{selfTotal}</td>
+                                <td className="p-3 text-center text-base text-purple-200">{principalTotal}</td>
+                              </tr>
+                            </tfoot>
+                          </>
+                        );
+                      })()}
+                    </table>
+                  </div>
+                )}
+
                 {/* ── NON-TEACHING PERFORMANCE EVALUATION SHEET (RATING & MARKS) ── */}
                 {(selectedAppraisal.formType === "non_teaching" || selectedAppraisal.collectionName === "non_teaching_appraisals") && (
                   <div className="mt-8 border border-zinc-200 rounded-2xl overflow-hidden bg-white shadow-xs p-5 space-y-6">
@@ -2983,7 +3555,7 @@ export default function AppraisalReviews() {
                                       <button
                                         key={mVal}
                                         type="button"
-                                        disabled={selectedAppraisal.status === "Approved"}
+                                        disabled={!(userRole === "Principal" || userRole === "Admin") && selectedAppraisal.status === "Approved"}
                                         onClick={() => setNonTeachingEvalMarks({ ...nonTeachingEvalMarks, [cat.id]: mVal })}
                                         className={`w-7 h-7 rounded-lg text-xs font-black transition-all cursor-pointer ${
                                           currentScore === mVal
@@ -3019,7 +3591,7 @@ export default function AppraisalReviews() {
                         <label className="block text-xs font-bold text-zinc-700 mb-1.5">Any other specific comment:</label>
                         <textarea
                           rows={3}
-                          disabled={selectedAppraisal.status === "Approved"}
+                          disabled={!(userRole === "Principal" || userRole === "Admin") && selectedAppraisal.status === "Approved"}
                           value={nonTeachingSpecificComment}
                           onChange={(e) => setNonTeachingSpecificComment(e.target.value)}
                           className="w-full rounded-2xl border border-zinc-200 p-3 text-xs font-medium focus:ring-2 focus:ring-indigo-500 bg-white outline-none"
@@ -3031,7 +3603,7 @@ export default function AppraisalReviews() {
                         <div>
                           <label className="block text-xs font-bold text-zinc-700 mb-1.5">Recommendation</label>
                           <select
-                            disabled={selectedAppraisal.status === "Approved"}
+                            disabled={!(userRole === "Principal" || userRole === "Admin") && selectedAppraisal.status === "Approved"}
                             value={nonTeachingRecommendation}
                             onChange={(e) => setNonTeachingRecommendation(e.target.value)}
                             className="w-full rounded-xl border border-zinc-200 p-2.5 text-xs font-bold bg-white focus:ring-2 focus:ring-indigo-500"
@@ -3048,7 +3620,7 @@ export default function AppraisalReviews() {
                         <div>
                           <label className="block text-xs font-bold text-zinc-700 mb-1.5">Recommend for Suitable Increment Under Grade</label>
                           <select
-                            disabled={selectedAppraisal.status === "Approved"}
+                            disabled={!(userRole === "Principal" || userRole === "Admin") && selectedAppraisal.status === "Approved"}
                             value={nonTeachingIncrementGrade}
                             onChange={(e) => setNonTeachingIncrementGrade(e.target.value)}
                             className="w-full rounded-xl border border-zinc-200 p-2.5 text-xs font-bold bg-white focus:ring-2 focus:ring-indigo-500"
@@ -3089,7 +3661,7 @@ export default function AppraisalReviews() {
               </div>
 
               {/* Right Column: Reviewing Actions & Comments Portlet */}
-              <div className="bg-slate-50 border border-slate-200 rounded-3xl p-6 h-fit space-y-6">
+              <div className="xl:col-span-4 2xl:col-span-3 bg-slate-50 border border-slate-200 rounded-3xl p-6 h-fit space-y-6 sticky top-6">
 
                 <div>
                   <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider mb-2 flex items-center gap-1.5">
@@ -3098,8 +3670,8 @@ export default function AppraisalReviews() {
                   <p className="text-[11px] text-zinc-500">Provide evaluation grade and recommendation comments for this appraisal request.</p>
                 </div>
 
-                {/* HOD Recommendations (shown to Principal/Admin) */}
-                {selectedAppraisal.hodReview && userRole !== "HOD" && (
+                {/* HOD Recommendations (shown to Principal/Admin for faculty/staff) */}
+                {selectedAppraisal.hodReview && userRole !== "HOD" && selectedAppraisal.formType !== "hod" && (
                   <div className="bg-blue-50 border border-blue-150 p-4 rounded-2xl space-y-2">
                     <span className="text-[10px] font-black text-blue-900 uppercase tracking-widest block border-b border-blue-200 pb-1">HOD Review Recommendations</span>
                     <div>
@@ -3234,23 +3806,51 @@ export default function AppraisalReviews() {
                     </>
                   )}
 
-                  {(userRole === "Principal" || userRole === "Admin") && (selectedAppraisal.status === "HOD_Approved" || selectedAppraisal.status === "Submitted") && (
-                    <>
-                      <button
-                        onClick={() => handleReviewAction("Approved")}
-                        disabled={actioning}
-                        className="w-full py-2.5 bg-gradient-to-r from-indigo-650 to-indigo-800 hover:from-indigo-700 hover:to-indigo-900 text-white font-black rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-indigo-100 cursor-pointer disabled:opacity-50"
-                      >
-                        <CheckCircle2 size={14} /> Finalize & Approve
-                      </button>
-                      <button
-                        onClick={() => setCorrectionModalOpen(true)}
-                        disabled={actioning}
-                        className="w-full py-2.5 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                      >
-                        <Undo2 size={14} /> Return for Correction
-                      </button>
-                    </>
+                  {(userRole === "Principal" || userRole === "Admin") && (
+                    selectedAppraisal.status === "Approved" ? (
+                      <div className="space-y-2">
+                        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-2.5 text-center">
+                          <span className="text-[11px] font-bold text-emerald-800 flex items-center justify-center gap-1">
+                            <CheckCircle2 size={13} className="text-emerald-600" />
+                            Appraisal Approved
+                          </span>
+                          <p className="text-[10px] text-emerald-700 mt-0.5 font-medium">
+                            Unlocked for Principal: You can modify marks, ratings, or remarks and save updates anytime.
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => handleReviewAction("Approved")}
+                          disabled={actioning}
+                          className="w-full py-2.5 bg-gradient-to-r from-purple-700 to-indigo-800 hover:from-purple-800 hover:to-indigo-900 text-white font-black rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-purple-100 cursor-pointer disabled:opacity-50"
+                        >
+                          {actioning ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save Updated Marks
+                        </button>
+                        <button
+                          onClick={() => setCorrectionModalOpen(true)}
+                          disabled={actioning}
+                          className="w-full py-2 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        >
+                          <Undo2 size={13} /> Re-route for Correction
+                        </button>
+                      </div>
+                    ) : (selectedAppraisal.status === "HOD_Approved" || selectedAppraisal.status === "Submitted") ? (
+                      <>
+                        <button
+                          onClick={() => handleReviewAction("Approved")}
+                          disabled={actioning}
+                          className="w-full py-2.5 bg-gradient-to-r from-indigo-650 to-indigo-800 hover:from-indigo-700 hover:to-indigo-900 text-white font-black rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-indigo-100 cursor-pointer disabled:opacity-50"
+                        >
+                          <CheckCircle2 size={14} /> Finalize & Approve
+                        </button>
+                        <button
+                          onClick={() => setCorrectionModalOpen(true)}
+                          disabled={actioning}
+                          className="w-full py-2.5 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        >
+                          <Undo2 size={14} /> Return for Correction
+                        </button>
+                      </>
+                    ) : null
                   )}
                 </div>
 
@@ -3355,7 +3955,11 @@ export default function AppraisalReviews() {
                             </span>
                           </td>
                           <td className="p-4 text-center font-bold text-indigo-950">
-                            {app.hodReview?.grade ? (
+                            {app.formType === "hod" ? (
+                              <span className="inline-flex items-center justify-center gap-1 text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-full text-xs font-black border border-indigo-200 shadow-2xs">
+                                Self: {app.totalScore ?? 0} / 100
+                              </span>
+                            ) : app.hodReview?.grade ? (
                               <span className="flex items-center justify-center gap-1">
                                 <Star size={10} className="fill-amber-400 text-amber-400" /> {app.hodReview.grade}
                               </span>
@@ -3380,25 +3984,49 @@ export default function AppraisalReviews() {
                             <div className="flex items-center justify-center gap-1.5 flex-wrap min-w-[200px]">
                               <button
                                 onClick={() => handleOpenDetails(app)}
-                                className="px-3 py-1.5 bg-[#120c7a] hover:bg-[#1a10a0] text-white rounded-lg text-[10px] font-bold tracking-wide uppercase transition-all inline-flex items-center gap-1 cursor-pointer shadow-xs"
+                                className={`px-3 py-1.5 text-white rounded-lg text-[10px] font-bold tracking-wide uppercase transition-all inline-flex items-center gap-1 cursor-pointer shadow-xs ${
+                                  (userRole === "Principal" || userRole === "Admin") && app.status === "Approved"
+                                    ? "bg-purple-700 hover:bg-purple-800"
+                                    : "bg-[#120c7a] hover:bg-[#1a10a0]"
+                                }`}
                               >
-                                <Eye size={12} /> Review
+                                {(userRole === "Principal" || userRole === "Admin") && app.status === "Approved" ? (
+                                  <>
+                                    <Edit2 size={12} /> Edit Marks
+                                  </>
+                                ) : (
+                                  <>
+                                    <Eye size={12} /> Review
+                                  </>
+                                )}
                               </button>
                               <button
                                 onClick={() => handleOpenAttitudeModal(app)}
                                 className={`px-3 py-1.5 rounded-lg text-[10px] font-bold tracking-wide uppercase transition-all inline-flex items-center gap-1 cursor-pointer shadow-xs ${
-                                  (app.attitudeEvaluation?.ratings && Object.keys(app.attitudeEvaluation.ratings).length > 0) || (app.attitudeForm?.ratings && Object.keys(app.attitudeForm.ratings).length > 0)
+                                  (app.attitudeSubmittedToPrincipal === true || app.attitudeEvaluation?.submittedToPrincipal === true)
                                     ? "bg-teal-700 hover:bg-teal-800 text-white"
+                                    : (app.attitudeDraft || app.attitudeEvaluation?.isDraft)
+                                    ? "bg-amber-600 hover:bg-amber-700 text-white"
                                     : "bg-indigo-600 hover:bg-indigo-700 text-white"
                                 }`}
-                                title="Attitude Form"
+                                title={
+                                  (app.attitudeSubmittedToPrincipal === true || app.attitudeEvaluation?.submittedToPrincipal === true)
+                                    ? "Attitude Form (Submitted by HOD)"
+                                    : (app.attitudeDraft || app.attitudeEvaluation?.isDraft)
+                                    ? "Attitude Form (Draft on HOD end - Not yet submitted to Principal)"
+                                    : "Attitude Form"
+                                }
                               >
                                 <Award size={12} /> Attitude Form
-                                {((app.attitudeEvaluation?.totalScore !== undefined) || (app.attitudeForm?.totalScore !== undefined)) && (
+                                {(app.attitudeSubmittedToPrincipal === true || app.attitudeEvaluation?.submittedToPrincipal === true) ? (
                                   <span className="ml-0.5 bg-black/25 text-white px-1.5 py-0.2 rounded text-[9px] font-black">
                                     {app.attitudeEvaluation?.totalScore ?? app.attitudeForm?.totalScore}/{app.attitudeEvaluation?.maxScore || app.attitudeForm?.maxScore || (getAttitudeQuestions(app).length * 5)}
                                   </span>
-                                )}
+                                ) : (app.attitudeDraft || app.attitudeEvaluation?.isDraft) ? (
+                                  <span className="ml-0.5 bg-amber-950/40 text-amber-100 px-1.5 py-0.2 rounded text-[9px] font-black">
+                                    Draft (HOD)
+                                  </span>
+                                ) : null}
                               </button>
                             </div>
                           </td>
@@ -3462,6 +4090,7 @@ export default function AppraisalReviews() {
           const currentTotal = Object.values(attitudeRatings).reduce((sum, v) => sum + (Number(v) || 0), 0);
           const evaluatedCount = Object.keys(attitudeRatings).filter(k => (Number(attitudeRatings[k]) || 0) > 0).length;
           const isNonTeaching = attitudeAppraisal.formType === "non_teaching" || attitudeAppraisal.collectionName === "non_teaching_appraisals";
+          const isPrincipalOrHR = userRole === "Principal" || userRole === "HR" || userRole === "Admin";
 
           return (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-3 md:p-6 overflow-y-auto">
@@ -3523,6 +4152,16 @@ export default function AppraisalReviews() {
                   </div>
                 </div>
 
+                {/* Pending / Draft Banner */}
+                {(!attitudeAppraisal.attitudeSubmittedToPrincipal && !attitudeAppraisal.attitudeEvaluation?.submittedToPrincipal) && (
+                  <div className="bg-amber-50 border-b border-amber-200 px-6 py-2.5 flex items-center justify-between text-xs text-amber-900">
+                    <span className="font-bold flex items-center gap-1.5">
+                      <Clock size={14} className="text-amber-600" />
+                      Status: {attitudeAppraisal.attitudeDraft ? "Draft Saved on HOD end (Pending final submission to Principal)" : "Pending evaluation by HOD (Not yet submitted to Principal)"}
+                    </span>
+                  </div>
+                )}
+
                 {/* Quick Actions & Legend Bar */}
                 <div className="bg-blue-50/60 border-b border-blue-100 px-6 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs">
                   <div className="flex items-center gap-3 text-zinc-600 font-medium">
@@ -3535,16 +4174,16 @@ export default function AppraisalReviews() {
                     <button
                       type="button"
                       onClick={() => handleSetAllRatings(5)}
-                      className="px-2.5 py-1 rounded-lg bg-teal-100 hover:bg-teal-200 text-teal-800 text-[11px] font-bold transition-all cursor-pointer"
+                      className="px-2.5 py-1 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-[11px] font-bold transition-all cursor-pointer"
                     >
-                      Set all 5 (SA)
+                      Set all 5 (Outstanding)
                     </button>
                     <button
                       type="button"
                       onClick={() => handleSetAllRatings(4)}
-                      className="px-2.5 py-1 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-[11px] font-bold transition-all cursor-pointer"
+                      className="px-2.5 py-1 rounded-lg bg-blue-100 hover:bg-blue-200 text-blue-800 text-[11px] font-bold transition-all cursor-pointer"
                     >
-                      Set all 4 (A)
+                      Set all 4 (Exceeds Expectations)
                     </button>
                     <button
                       type="button"
@@ -3557,7 +4196,51 @@ export default function AppraisalReviews() {
                 </div>
 
                 {/* Questionnaire Table (Scrollable) */}
-                <div className="overflow-y-auto p-4 md:p-6 space-y-6 flex-1">
+                <div className="overflow-y-auto p-4 md:p-6 space-y-5 flex-1">
+
+                  {/* Evaluation Rubrics Reference Guide Card */}
+                  <div className="bg-gradient-to-r from-slate-50 via-blue-50/40 to-slate-50 border border-blue-200/80 rounded-2xl p-4 shadow-2xs">
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                      <div className="flex items-center gap-2">
+                        <div className="w-6 h-6 rounded-lg bg-[#1c355e] text-amber-400 flex items-center justify-center font-black text-xs shadow-2xs">
+                          <Award size={13} />
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-bold text-[#1c355e] uppercase tracking-wider">
+                            Evaluation Rubrics & Scoring Criteria
+                          </h4>
+                          <p className="text-[11px] text-zinc-500 font-medium">
+                            Standardized 5-point performance scale applied across all evaluation parameters.
+                          </p>
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-bold text-[#1c355e] bg-white px-2.5 py-1 rounded-full border border-blue-200 shadow-2xs">
+                        Rubric Scale: 1 (Lowest) to 5 (Highest)
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
+                      {ATTITUDE_RATING_OPTIONS.map((rubric) => (
+                        <div
+                          key={rubric.value}
+                          className="flex items-center gap-2.5 p-2.5 rounded-xl border border-zinc-200/90 bg-white shadow-2xs transition-all hover:border-blue-300 hover:shadow-xs"
+                        >
+                          <span className={`w-7 h-7 rounded-lg flex items-center justify-center font-black text-sm shrink-0 border shadow-2xs ${rubric.badgeBg}`}>
+                            {rubric.value}
+                          </span>
+                          <div className="min-w-0">
+                            <div className="text-[9px] uppercase font-bold text-zinc-400 tracking-wider">
+                              Score {rubric.value}
+                            </div>
+                            <div className="text-xs font-bold text-zinc-800 leading-tight" title={rubric.label}>
+                              {rubric.label}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
                   <div className="border border-zinc-300 rounded-2xl overflow-hidden shadow-xs">
                     <table className="w-full text-left border-collapse">
                       <thead>
@@ -3565,10 +4248,23 @@ export default function AppraisalReviews() {
                           <th className="p-3.5 w-12 text-center border-r border-blue-900/60">#</th>
                           <th className="p-3.5 border-r border-blue-900/60">Attitude & Statement</th>
                           {ATTITUDE_RATING_OPTIONS.map((opt) => (
-                            <th key={opt.value} className="p-3 w-16 text-center border-r border-blue-900/60 last:border-r-0" title={opt.label}>
-                              <div className="font-black text-xs">{opt.code}</div>
+                            <th key={opt.value} className="p-2.5 w-28 text-center border-r border-blue-900/60" title={`Score ${opt.value}: ${opt.label}`}>
+                              <div className="flex items-center justify-center gap-1 mb-0.5">
+                                <span className="w-5 h-5 rounded-md bg-white/20 text-white font-black text-xs inline-flex items-center justify-center">
+                                  {opt.value}
+                                </span>
+                              </div>
+                              <div className="text-[10px] font-medium text-blue-100 leading-tight tracking-normal">
+                                {opt.label}
+                              </div>
                             </th>
                           ))}
+                          {isPrincipalOrHR && (
+                            <th className="p-3 w-28 text-center border-l border-blue-900/60 bg-[#142847]" title="Principal / HR Mark (1 to 5)">
+                              <div className="font-black text-xs text-amber-300">Score (1-5)</div>
+                              <div className="text-[9px] text-zinc-300 font-medium tracking-normal lowercase first-letter:uppercase">Principal / HR</div>
+                            </th>
+                          )}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-zinc-200 text-xs">
@@ -3611,6 +4307,32 @@ export default function AppraisalReviews() {
                                   </td>
                                 );
                               })}
+                              {isPrincipalOrHR && (
+                                <td className="p-2.5 text-center bg-amber-50/40 border-l border-zinc-200">
+                                  <div className="flex items-center justify-center">
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      max={5}
+                                      value={currentVal || ""}
+                                      onChange={(e) => {
+                                        const raw = e.target.value;
+                                        if (raw === "") {
+                                          handleSetRating(q.id, 0);
+                                          return;
+                                        }
+                                        const num = parseInt(raw, 10);
+                                        if (!isNaN(num)) {
+                                          const clamped = Math.max(1, Math.min(5, num));
+                                          handleSetRating(q.id, clamped);
+                                        }
+                                      }}
+                                      className="w-14 h-8 text-center text-xs font-bold text-[#1c355e] bg-white border-2 border-amber-400 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 shadow-xs"
+                                      placeholder="1-5"
+                                    />
+                                  </div>
+                                </td>
+                              )}
                             </tr>
                           );
                         })}

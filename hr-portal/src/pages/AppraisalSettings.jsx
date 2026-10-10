@@ -733,7 +733,7 @@ export default function AppraisalSettings() {
         </div>
       )}
 
-      <div className="mx-auto max-w-6xl px-4 py-8 md:px-6">
+      <div className="w-full space-y-6 pb-12">
 
         {/* Banner Hero */}
         <div className="bg-gradient-to-br from-[#120c7a] via-[#1b11a4] to-indigo-950 rounded-3xl p-6 md:p-8 text-white shadow-xl relative overflow-hidden mb-8">

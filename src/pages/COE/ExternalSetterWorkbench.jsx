@@ -5,7 +5,7 @@ import {
   collection, doc, getDoc, getDocs, updateDoc, onSnapshot, query, where, serverTimestamp
 } from "firebase/firestore";
 import {
-  Lock, Eye, CheckCircle2, XCircle, FileText, Upload, Sparkles, AlertCircle,
+  Lock, Eye, EyeOff, CheckCircle2, XCircle, FileText, Upload, Sparkles, AlertCircle,
   Send, Edit3, BookOpen, Layers, RefreshCw, ChevronRight, Landmark, X, Printer,
   ShieldCheck, Award, FileCheck, Building2, Check, ArrowLeft, Info, HelpCircle,
   ClipboardCheck, Mail, Camera, ExternalLink, Split
@@ -245,6 +245,7 @@ export default function ExternalSetterWorkbench() {
   const [authenticatedSetter, setAuthenticatedSetter] = useState(null);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loginError, setLoginError] = useState("");
   const [authenticating, setAuthenticating] = useState(false);
 
@@ -955,46 +956,47 @@ export default function ExternalSetterWorkbench() {
   }, [viewState, acceptanceSubmitted, submittedSuccess, assignment]);
 
   // -------------------------------------------------------------------------
-  // RENDER: LOGIN SCREEN (If not authenticated)
-  // -------------------------------------------------------------------------
   // -------------------------------------------------------------------------
   // RENDER: LOGIN SCREEN (If not authenticated)
   // -------------------------------------------------------------------------
   if (!authenticatedSetter) {
     return (
-      <div className="min-h-screen relative font-sans text-slate-800 flex flex-col justify-between overflow-hidden bg-slate-50">
-        {/* Full-bleed Actual Campus Photo Background Image with Crisp Light Gradient Overlays */}
+      <div className="min-h-screen relative font-sans text-slate-800 flex flex-col justify-between overflow-x-hidden bg-slate-900">
+        {/* Full-width Actual Campus Photo Background with subtle 15-25% translucent overlay */}
         <div
-          className="absolute inset-0 bg-cover bg-center bg-no-repeat transition-transform duration-1000 scale-105"
+          className="absolute inset-0 bg-cover bg-center bg-no-repeat pointer-events-none"
           style={{ backgroundImage: `url('/ckcet_campus.png')` }}
         >
-          <div className="absolute inset-0 bg-gradient-to-r from-slate-50/70 via-white/35 to-blue-50/45 backdrop-blur-[0.5px]" />
-          <div className="absolute inset-0 bg-gradient-to-t from-slate-100/70 via-transparent to-slate-50/30" />
-          {/* Ambient Lighting Orbs */}
-          <div className="absolute -top-24 -left-24 w-96 h-96 bg-blue-400/20 rounded-full blur-3xl pointer-events-none" />
-          <div className="absolute -bottom-24 -right-24 w-96 h-96 bg-amber-400/15 rounded-full blur-3xl pointer-events-none" />
-          <div className="absolute top-1/2 left-1/3 w-[500px] h-[500px] bg-indigo-400/15 rounded-full blur-3xl pointer-events-none" />
+          {/* Subtle translucent overlay (15–25%) ensuring campus buildings, sky, and greenery remain clearly visible */}
+          <div className="absolute inset-0 bg-white/20" />
+          <div className="absolute inset-0 bg-gradient-to-r from-blue-900/15 via-transparent to-slate-900/20" />
         </div>
 
-        {/* TOP BRANDING BAR (FULL WIDTH & RESPONSIVE LOGO BANNER MATCHING IMAGE 2) */}
-        <header className="relative z-20 border-b border-slate-200/80 bg-white/95 backdrop-blur-xl px-4 sm:px-8 lg:px-12 py-2.5 sm:py-3 shadow-xs w-full">
-          <div className="w-full flex items-center justify-between gap-4">
+        {/* TOP INSTITUTIONAL BRANDING HEADER */}
+        <header className="relative z-20 shrink-0 border-b border-slate-200/90 bg-white/95 backdrop-blur-md px-4 sm:px-8 lg:px-12 py-2.5 sm:py-3 shadow-xs w-full">
+          <div className="w-full max-w-7xl mx-auto flex items-center justify-between gap-4">
 
-            {/* Left: Clean CKCET Banner Logo */}
+            {/* Left: Clean CKCET Banner Logo and College Details */}
             <div className="flex items-center gap-3 flex-1 min-w-0">
               <div className="h-10 sm:h-12 lg:h-14 shrink-0 flex items-center">
-                <img src="/logo.png" alt="CKCET Banner Logo" className="h-full w-auto max-w-[260px] sm:max-w-[460px] lg:max-w-[650px] object-contain" />
+                <img
+                  src="/logo.png"
+                  alt="CKCET Logo"
+                  className="h-full w-auto max-w-[260px] sm:max-w-[440px] lg:max-w-[620px] object-contain"
+                />
               </div>
             </div>
 
             {/* Right: Office of Controller of Examinations + Portal Badge */}
             <div className="flex items-center gap-3 sm:gap-4 shrink-0">
-              <div className="hidden lg:flex flex-col items-end">
+              <div className="hidden lg:flex flex-col items-end text-right">
                 <span className="text-xs sm:text-sm font-black text-[#120c7a] uppercase tracking-wider flex items-center gap-1.5 whitespace-nowrap">
                   <ShieldCheck className="h-4 w-4 text-blue-700" />
-                  Office of the Controller of Examinations
+                  OFFICE OF THE CONTROLLER OF EXAMINATIONS
                 </span>
-                <span className="text-[11px] sm:text-xs text-slate-500 font-semibold mt-0.5 whitespace-nowrap">End Semester Examinations {effectiveExamSession}</span>
+                <span className="text-[11px] sm:text-xs text-slate-500 font-semibold mt-0.5 whitespace-nowrap">
+                  End Semester Examinations {effectiveExamSession || "Nov. / Dec. 2026"}
+                </span>
               </div>
               <div className="h-8 sm:h-10 w-px bg-slate-200/80 hidden lg:block" />
               <div className="px-3.5 sm:px-4 py-2 rounded-xl bg-blue-50/90 border border-blue-200/90 text-[#120c7a] text-xs sm:text-sm font-black flex items-center gap-2 shadow-2xs whitespace-nowrap">
@@ -1007,149 +1009,170 @@ export default function ExternalSetterWorkbench() {
           </div>
         </header>
 
-        {/* HERO + LOGIN CONTAINER (MATCHING MOCKUP DESIGN EXACTLY) */}
-        <main className="relative z-20 flex-1 flex items-center justify-center p-4 sm:p-6 md:p-10">
-          <div className="w-full max-w-7xl grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
+        {/* HERO + LOGIN CONTAINER */}
+        <main className="relative z-10 flex-1 flex items-center justify-center px-4 py-8 sm:px-6 md:px-8 lg:px-12 w-full my-auto">
+          <div className="w-full max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12 items-center">
 
-            {/* LEFT COLUMN: CENTERED HERO BRANDING */}
-            <div className="lg:col-span-7 space-y-6 text-center flex flex-col items-center justify-center">
-
-              {/* CENTERED BADGE WITH EXTENDED SIDE LINES */}
-              <div className="flex items-center justify-center gap-3 sm:gap-4 w-full">
-                <div className="w-12 sm:w-20 lg:w-24 h-px bg-slate-400/60" />
-                <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-blue-50/90 border border-blue-200/90 shadow-2xs backdrop-blur-md">
-                  <div className="p-1 rounded-md bg-[#120c7a] text-white">
-                    <ShieldCheck className="h-3.5 w-3.5" />
-                  </div>
-                  <span className="text-[11px] sm:text-xs font-black uppercase tracking-widest text-[#120c7a]">
-                    Confidential Question Setter Workbench
+            {/* LEFT COLUMN: HERO CONTENT (UPPER-MIDDLE AREA, HORIZONTALLY CENTERED) */}
+            <div className="lg:col-span-7 flex flex-col items-center justify-center text-center">
+              <div
+                className="w-full max-w-[760px] rounded-[20px] px-6 py-7 sm:px-8 sm:py-8 shadow-xs flex flex-col items-center text-center space-y-5"
+                style={{
+                  backgroundColor: "rgba(255, 255, 255, 0.35)",
+                  backdropFilter: "blur(6px)",
+                  WebkitBackdropFilter: "blur(6px)",
+                  border: "1px solid rgba(255, 255, 255, 0.55)"
+                }}
+              >
+                {/* Small, Elegant Pill */}
+                <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-white/95 border border-blue-200/90 shadow-2xs">
+                  <ShieldCheck className="h-3.5 w-3.5 text-[#101943]" />
+                  <span className="text-[11px] sm:text-xs font-black tracking-widest text-[#101943] uppercase">
+                    CONFIDENTIAL QUESTION SETTER WORKBENCH
                   </span>
                 </div>
-                <div className="w-12 sm:w-20 lg:w-24 h-px bg-slate-400/60" />
-              </div>
 
-              {/* CENTERED TITLE & DESCRIPTION */}
-              <div className="space-y-4 text-center">
-                <h2 className="text-4xl sm:text-5xl lg:text-6xl font-black leading-[1.12] tracking-tight text-[#0b132b]">
-                  Next-Gen <span className="text-[#2563eb]">Autonomous Examination</span>
-                  <br />
-                  <span className="text-[#2563eb]">& Question Portal</span>
-                </h2>
-                <p className="text-slate-600 text-base sm:text-lg font-medium leading-relaxed max-w-2xl mx-auto text-center">
-                  A first-of-its-kind digital initiative of <span className="text-slate-900 font-extrabold">CKCET</span>, enabling secure, seamless and expert-driven <span className="text-slate-900 font-extrabold">Question Paper Setting</span> for Autonomous End Semester Examinations.
+                {/* Main Heading: "Next-Gen Autonomous Examination & Question Portal" */}
+                <h1
+                  className="text-3xl sm:text-4xl lg:text-[44px] font-extrabold leading-[1.18] tracking-tight text-center"
+                  style={{
+                    textShadow: "0 1px 2px rgba(255, 255, 255, 0.95)"
+                  }}
+                >
+                  <span className="text-[#101943] block">Next-Gen Autonomous Examination</span>
+                  <span className="text-[#234FE8] block mt-1.5 font-extrabold">
+                    & Question Portal
+                  </span>
+                </h1>
+
+                {/* Description directly below heading */}
+                <p
+                  className="text-base sm:text-lg lg:text-[19px] font-semibold leading-[1.5] text-[#172554] text-center max-w-[720px] mx-auto"
+                  style={{
+                    textShadow: "0 1px 2px rgba(255, 255, 255, 0.95)"
+                  }}
+                >
+                  A first-of-its-kind digital initiative of <strong className="font-extrabold text-[#101943]">CKCET</strong>, enabling secure, seamless and expert-driven <strong className="font-extrabold text-[#101943]">Question Paper Setting</strong> for Autonomous End Semester Examinations.
                 </p>
               </div>
-
             </div>
 
-            {/* RIGHT COLUMN: WHITE GLASSMORPHISM LOGIN CARD */}
-            <div className="lg:col-span-5 w-full max-w-md sm:max-w-lg lg:max-w-none mx-auto lg:mx-0">
-              <div className="relative group">
-                {/* Card Glow Effect */}
-                <div className="absolute -inset-0.5 bg-gradient-to-r from-[#120c7a]/20 via-blue-500/20 to-indigo-500/20 rounded-3xl blur-md opacity-60 group-hover:opacity-100 transition duration-1000" />
+            {/* RIGHT COLUMN: REFINED LOGIN CARD (360-400px width on desktop) */}
+            <div className="lg:col-span-5 flex justify-center lg:justify-end w-full">
+              <div className="w-full max-w-[390px] bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-[22px] p-6 sm:p-8 shadow-xl shadow-slate-950/10 space-y-5">
 
-                <div className="relative bg-white/95 backdrop-blur-2xl border border-blue-100/90 rounded-3xl p-6 sm:p-8 md:p-9 shadow-2xl shadow-blue-950/15 space-y-6">
-
-                  {/* Card Header */}
-                  <div className="text-center space-y-2">
-                    <div className="inline-flex items-center justify-center h-14 w-14 bg-[#120c7a] rounded-2xl text-white shadow-xl shadow-[#120c7a]/20 ring-4 ring-blue-50 mb-1 mx-auto">
-                      <Lock className="h-7 w-7 text-amber-300" />
-                    </div>
-                    <h3 className="text-2xl font-black text-slate-900 tracking-tight font-serif">
-                      QP Setter Sign In
-                    </h3>
-                    <p className="text-slate-500 text-xs font-semibold max-w-xs mx-auto">
-                      Sign in using the official credentials provided in your COE invitation.
-                    </p>
+                {/* Card Header */}
+                <div className="text-center space-y-2">
+                  <div className="inline-flex items-center justify-center h-12 w-12 bg-[#120c7a] rounded-xl text-white shadow-md mx-auto mb-1">
+                    <Lock className="h-6 w-6 text-amber-400" />
                   </div>
-
-                  {/* Login Error Notification */}
-                  {loginError && (
-                    <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold flex items-start gap-3 shadow-xs animate-shake">
-                      <AlertCircle className="h-5 w-5 text-rose-600 shrink-0 mt-0.5" />
-                      <span>{loginError}</span>
-                    </div>
-                  )}
-
-                  {/* Form */}
-                  <form onSubmit={handleLogin} className="space-y-4">
-                    <div>
-                      <label className="text-xs font-extrabold text-slate-700 tracking-wider flex items-center gap-1.5 mb-1.5">
-                        <Mail className="h-3.5 w-3.5 text-[#120c7a]" />
-                        Registered Email Address
-                      </label>
-                      <div className="relative">
-                        <input
-                          type="email"
-                          autoComplete="username email"
-                          placeholder="professor@iitm.ac.in / name@institution.edu"
-                          value={loginEmail}
-                          onChange={(e) => setLoginEmail(e.target.value)}
-                          className="w-full bg-[#f8fafc] border border-slate-200 rounded-xl px-4 py-3 text-sm text-slate-900 font-semibold placeholder-slate-400 focus:bg-white focus:outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/15 transition-all shadow-inner"
-                          required
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="text-xs font-extrabold text-slate-700 tracking-wider flex items-center gap-1.5 mb-1.5">
-                        <Lock className="h-3.5 w-3.5 text-[#120c7a]" />
-                        Secure Access Password
-                      </label>
-                      <div className="relative">
-                        <input
-                          type="password"
-                          autoComplete="current-password"
-                          placeholder="Enter password sent in official invitation"
-                          value={loginPassword}
-                          onChange={(e) => setLoginPassword(e.target.value)}
-                          className="w-full bg-[#f8fafc] border border-slate-200 rounded-xl px-4 py-3 text-sm text-slate-900 font-semibold placeholder-slate-400 focus:bg-white focus:outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/15 transition-all shadow-inner"
-                          required
-                        />
-                      </div>
-                    </div>
-
-                    <button
-                      type="submit"
-                      disabled={authenticating}
-                      className="w-full bg-[#120c7a] hover:bg-[#0e0a60] text-white font-black py-3.5 px-6 rounded-xl shadow-lg shadow-[#120c7a]/20 hover:shadow-[#120c7a]/30 transition-all duration-300 flex items-center justify-center gap-2 text-sm cursor-pointer disabled:opacity-50 mt-2"
-                    >
-                      {authenticating ? (
-                        <>
-                          <RefreshCw className="h-5 w-5 animate-spin text-amber-300" />
-                          <span>Verifying COE Credentials...</span>
-                        </>
-                      ) : (
-                        <>
-                          <ShieldCheck className="h-5 w-5 text-amber-300" />
-                          <span>Log In to Setter Workbench</span>
-                          <ChevronRight className="h-4 w-4 text-amber-300" />
-                        </>
-                      )}
-                    </button>
-                  </form>
-
-                  {/* Card Security Footer */}
-                  <div className="pt-4 border-t border-slate-100 text-center space-y-1">
-                    <p className="text-[11px] text-slate-500 font-semibold flex items-center justify-center gap-1">
-                      <Lock className="h-3 w-3 text-[#120c7a] inline" />
-                      Strictly Confidential • Authorized Personnel Only
-                    </p>
-                    <p className="text-[10px] text-slate-400 font-semibold">
-                      C.K. College of Engineering & Technology • COE
-                    </p>
-                  </div>
+                  <h2 className="text-2xl font-black text-slate-900 tracking-tight font-serif">
+                    QP Setter Sign In
+                  </h2>
+                  <p className="text-slate-500 text-xs font-semibold max-w-xs mx-auto">
+                    Sign in using the official credentials provided in your COE invitation.
+                  </p>
                 </div>
+
+                {/* Error Banner */}
+                {loginError && (
+                  <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold flex items-start gap-2.5 shadow-2xs">
+                    <AlertCircle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
+                    <span>{loginError}</span>
+                  </div>
+                )}
+
+                {/* Form */}
+                <form onSubmit={handleLogin} className="space-y-4">
+                  <div>
+                    <label className="text-xs font-extrabold text-slate-700 tracking-wider flex items-center gap-1.5 mb-1.5 uppercase">
+                      <Mail className="h-3.5 w-3.5 text-[#120c7a]" />
+                      REGISTERED EMAIL ADDRESS
+                    </label>
+                    <input
+                      type="email"
+                      autoComplete="username email"
+                      placeholder="professor@iitm.ac.in / name@institution.edu"
+                      value={loginEmail}
+                      onChange={(e) => setLoginEmail(e.target.value)}
+                      className="w-full bg-slate-50/80 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm text-slate-900 font-semibold placeholder-slate-400 focus:bg-white focus:outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/15 transition-all shadow-inner"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="text-xs font-extrabold text-slate-700 tracking-wider flex items-center gap-1.5 uppercase">
+                        <Lock className="h-3.5 w-3.5 text-[#120c7a]" />
+                        SECURE ACCESS PASSWORD
+                      </label>
+                      <span className="text-[10px] font-black text-[#120c7a] bg-blue-50 px-2 py-0.5 rounded-full border border-blue-200/80 uppercase">
+                        COE ISSUED
+                      </span>
+                    </div>
+                    <div className="relative">
+                      <input
+                        type={showPassword ? "text" : "password"}
+                        autoComplete="current-password"
+                        placeholder="Enter password sent in official invitation"
+                        value={loginPassword}
+                        onChange={(e) => setLoginPassword(e.target.value)}
+                        className="w-full bg-slate-50/80 border border-slate-200 rounded-xl px-3.5 py-2.5 pr-10 text-sm text-slate-900 font-semibold placeholder-slate-400 focus:bg-white focus:outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/15 transition-all shadow-inner"
+                        required
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors p-0.5 cursor-pointer"
+                        tabIndex={-1}
+                        aria-label={showPassword ? "Hide password" : "Show password"}
+                      >
+                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={authenticating}
+                    className="w-full bg-[#120c7a] hover:bg-[#0d0961] text-white font-black py-3 px-5 rounded-xl shadow-md hover:shadow-lg transition-all duration-300 flex items-center justify-center gap-2 text-sm cursor-pointer disabled:opacity-50 mt-2"
+                  >
+                    {authenticating ? (
+                      <>
+                        <RefreshCw className="h-4 w-4 animate-spin text-amber-300" />
+                        <span>Verifying COE Credentials...</span>
+                      </>
+                    ) : (
+                      <>
+                        <ShieldCheck className="h-4 w-4 text-amber-400" />
+                        <span>Log In to Setter Workbench</span>
+                        <ChevronRight className="h-4 w-4 text-amber-400" />
+                      </>
+                    )}
+                  </button>
+                </form>
+
+                {/* Card Security Footer */}
+                <div className="pt-3.5 border-t border-slate-100 text-center space-y-1">
+                  <p className="text-[11px] text-slate-500 font-semibold flex items-center justify-center gap-1.5">
+                    <Lock className="h-3 w-3 text-[#120c7a]" />
+                    Strictly Confidential · Authorized Personnel Only
+                  </p>
+                  <p className="text-[10px] text-slate-400 font-semibold">
+                    C.K. College of Engineering & Technology · COE Division
+                  </p>
+                </div>
+
               </div>
             </div>
 
           </div>
         </main>
 
-        {/* BOTTOM FOOTER (MATCHING IMAGE 2) */}
-        <footer className="relative z-20 border-t border-slate-200/80 bg-white/90 backdrop-blur-md px-6 py-3 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-600 font-semibold gap-2">
+        {/* SLIM INSTITUTIONAL FOOTER */}
+        <footer className="relative z-20 shrink-0 border-t border-slate-200/80 bg-white/90 backdrop-blur-md px-6 py-2.5 sm:py-3 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-600 font-semibold gap-2">
           <span>© 2026 C.K. College of Engineering & Technology. All rights reserved.</span>
-          <span>Designed for End Semester Examinations ({effectiveExamSession}) Autonomous Framing</span>
+          <span>Designed for End Semester Examinations ({effectiveExamSession || "Nov. / Dec. 2026"}) Autonomous Framing</span>
         </footer>
       </div>
     );
