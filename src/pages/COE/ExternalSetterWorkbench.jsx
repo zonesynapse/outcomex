@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { uploadFile } from "../../utils/fileUpload";
 import { getEmbeddableDocumentUrl } from "../../utils/documentEmbedUtils";
+import DocumentEmbedViewer from "../../components/DocumentEmbedViewer";
 import MathTemplateToolbar from "../../components/MathTemplateToolbar";
 import AppointmentOrderCopyModal from "../../components/AppointmentOrderCopyModal";
 
@@ -1658,13 +1659,13 @@ export default function ExternalSetterWorkbench() {
                       Expand Viewer
                     </button>
                   </div>
-                  <div className="border border-zinc-200 rounded-2xl overflow-hidden bg-zinc-100 shadow-inner h-[620px]">
-                    <iframe
-                      src={getEmbeddableDocumentUrl(assignment.syllabusUrl || assignment.syllabusFileUrl)}
-                      title="Uploaded Course Syllabus Document"
-                      className="w-full h-full border-none"
-                    />
-                  </div>
+                  <DocumentEmbedViewer
+                    docUrl={assignment.syllabusUrl || assignment.syllabusFileUrl}
+                    rawLink={assignment.syllabusRawLink}
+                    title={`${assignment?.subjectCode} - Course Syllabus`}
+                    fileName={assignment.syllabusFileName}
+                    minHeight="580px"
+                  />
                 </div>
               ) : syllabusData ? (
                 <div className="space-y-3 max-h-[75vh] overflow-y-auto pr-1">
@@ -2561,7 +2562,7 @@ export default function ExternalSetterWorkbench() {
       {/* ========================================================================= */}
       {showQbDrawer && (
         <div className="fixed inset-0 z-50 flex justify-end bg-zinc-900/60 backdrop-blur-xs">
-          <div className="w-full max-w-2xl bg-white border-l border-zinc-200 h-full p-6 shadow-2xl flex flex-col space-y-4 overflow-y-auto animate-in slide-in-from-right duration-300">
+          <div className="w-full max-w-3xl lg:max-w-4xl bg-white border-l border-zinc-200 h-full p-6 shadow-2xl flex flex-col space-y-4 overflow-y-auto animate-in slide-in-from-right duration-300">
 
             <div className="flex items-center justify-between pb-3.5 border-b border-zinc-100 shrink-0">
               <div className="flex items-center gap-2 text-amber-900 font-black text-sm">
@@ -2588,15 +2589,13 @@ export default function ExternalSetterWorkbench() {
 
             {/* Content Display: QB Document Viewer or Empty State */}
             {(assignment?.qbUrl || assignment?.qbFileUrl) ? (
-              <div className="flex-1 flex flex-col space-y-2 min-h-0">
-                <div className="flex-1 border border-zinc-200 rounded-2xl overflow-hidden bg-zinc-100 shadow-inner flex flex-col min-h-[500px]">
-                  <iframe
-                    src={getEmbeddableDocumentUrl(assignment.qbUrl || assignment.qbFileUrl)}
-                    title="Uploaded Question Bank Document"
-                    className="w-full h-full flex-1 border-none min-h-[550px]"
-                  />
-                </div>
-              </div>
+              <DocumentEmbedViewer
+                docUrl={assignment.qbUrl || assignment.qbFileUrl}
+                rawLink={assignment.qbRawLink}
+                title={`${assignment?.subjectCode} - Official Question Bank`}
+                fileName={assignment.qbFileName}
+                minHeight="680px"
+              />
             ) : (
               <div className="py-16 text-center text-zinc-500 text-xs font-semibold flex flex-col items-center justify-center gap-2">
                 <FileText className="h-10 w-10 text-zinc-300 stroke-1" />
@@ -2613,7 +2612,7 @@ export default function ExternalSetterWorkbench() {
       {/* ========================================================================= */}
       {showSyllabusDrawer && (
         <div className="fixed inset-0 z-50 flex justify-end bg-zinc-900/60 backdrop-blur-xs">
-          <div className="w-full max-w-2xl bg-white border-l border-zinc-200 h-full p-6 shadow-2xl flex flex-col space-y-4 overflow-y-auto animate-in slide-in-from-right duration-300">
+          <div className="w-full max-w-3xl lg:max-w-4xl bg-white border-l border-zinc-200 h-full p-6 shadow-2xl flex flex-col space-y-4 overflow-y-auto animate-in slide-in-from-right duration-300">
 
             <div className="flex items-center justify-between pb-3.5 border-b border-zinc-100 shrink-0">
               <div className="flex items-center gap-2 text-[#120c7a] font-black text-sm">
@@ -2640,15 +2639,13 @@ export default function ExternalSetterWorkbench() {
 
             {/* Content Display: PDF Viewer or Unit List */}
             {(assignment?.syllabusUrl || assignment?.syllabusFileUrl) ? (
-              <div className="flex-1 flex flex-col space-y-2 min-h-0">
-                <div className="flex-1 border border-zinc-200 rounded-2xl overflow-hidden bg-zinc-100 shadow-inner flex flex-col min-h-[500px]">
-                  <iframe
-                    src={getEmbeddableDocumentUrl(assignment.syllabusUrl || assignment.syllabusFileUrl)}
-                    title="Uploaded Course Syllabus Document"
-                    className="w-full h-full flex-1 border-none min-h-[550px]"
-                  />
-                </div>
-              </div>
+              <DocumentEmbedViewer
+                docUrl={assignment.syllabusUrl || assignment.syllabusFileUrl}
+                rawLink={assignment.syllabusRawLink}
+                title={`${assignment?.subjectCode || syllabusData?.subjectCode} - Course Syllabus`}
+                fileName={assignment.syllabusFileName}
+                minHeight="680px"
+              />
             ) : syllabusData ? (
               <div className="space-y-4 flex-1 overflow-y-auto pr-1">
                 {syllabusData.units?.map((u, idx) => (
