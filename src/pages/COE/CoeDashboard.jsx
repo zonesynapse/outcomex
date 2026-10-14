@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 import Layout from "../../components/Layout";
 import { uploadFile } from "../../utils/fileUpload";
+import { getEmbeddableDocumentUrl } from "../../utils/documentEmbedUtils";
+import AppointmentOrderCopyModal from "../../components/AppointmentOrderCopyModal";
 
 import { useDepartments } from "../../hooks/useDepartments";
 import { useRegulations } from "../../hooks/useRegulations";
@@ -939,17 +941,23 @@ export default function CoeDashboard() {
   const [orderSizeError, setOrderSizeError] = useState("");
   const [uploadingOrder, setUploadingOrder] = useState(false);
 
-  // Question Bank PDF Upload (<= 300 KB)
-  const [qbFile, setQbFile] = useState(null);
-  const [qbFileBase64, setQbFileBase64] = useState("");
-  const [qbFileSizeKb, setQbFileSizeKb] = useState(0);
-  const [qbSizeError, setQbSizeError] = useState("");
+  // Number of Question Paper Sets: 1 or 2
+  const [assNumSets, setAssNumSets] = useState(1);
+  // Submission Deadline Date (defaults to 10 days from today)
+  const [assDeadline, setAssDeadline] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 10);
+    return d.toISOString().split("T")[0];
+  });
+  const [previewOrderAssignment, setPreviewOrderAssignment] = useState(null);
+  const [creatingAssignment, setCreatingAssignment] = useState(false);
+  const [reviewActiveSet, setReviewActiveSet] = useState("setA");
 
-  // Syllabus PDF Upload (<= 100 KB)
-  const [syllabusFile, setSyllabusFile] = useState(null);
-  const [syllabusFileBase64, setSyllabusFileBase64] = useState("");
-  const [syllabusFileSizeKb, setSyllabusFileSizeKb] = useState(0);
-  const [syllabusSizeError, setSyllabusSizeError] = useState("");
+  // Question Bank OneDrive / Cloud Share Link
+  const [qbLink, setQbLink] = useState("");
+
+  // Syllabus OneDrive / Cloud Share Link
+  const [syllabusLink, setSyllabusLink] = useState("");
 
   // Link Generation Result
   const [generatedAssignment, setGeneratedAssignment] = useState(null);
@@ -974,135 +982,6 @@ export default function CoeDashboard() {
     return patterns.find(p => p.id === currentSubjectPatternId);
   }, [patterns, currentSubjectPatternId]);
 
-  const handleOrderFileChange = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    const sizeKb = (file.size / 1024).toFixed(1);
-    setOrderFileSizeKb(Number(sizeKb));
-
-    if (file.size > 30 * 1024) {
-      setOrderSizeError(`File size is ${sizeKb} KB. Required maximum size is 30 KB! Attempting auto-compression for image...`);
-
-      if (file.type.startsWith("image/")) {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          const img = new Image();
-          img.onload = () => {
-            const canvas = document.createElement("canvas");
-            let width = img.width;
-            let height = img.height;
-            const maxDim = 800;
-            if (width > maxDim || height > maxDim) {
-              if (width > height) {
-                height = Math.round((height * maxDim) / width);
-                width = maxDim;
-              } else {
-                width = Math.round((width * maxDim) / height);
-                height = maxDim;
-              }
-            }
-            canvas.width = width;
-            canvas.height = height;
-            const ctx = canvas.getContext("2d");
-            ctx.drawImage(img, 0, 0, width, height);
-
-            const compressedBase64 = canvas.toDataURL("image/jpeg", 0.4);
-            const compSizeKb = (compressedBase64.length * 0.75 / 1024).toFixed(1);
-            setOrderFileBase64(compressedBase64);
-            setOrderFile(file);
-            setOrderFileSizeKb(Number(compSizeKb));
-
-            if (Number(compSizeKb) <= 30) {
-              setOrderSizeError("");
-            } else {
-              setOrderSizeError(`Compressed size is ${compSizeKb} KB. Please select a smaller document (<= 30 KB).`);
-            }
-          };
-          img.src = event.target.result;
-        };
-        reader.readAsDataURL(file);
-      } else {
-        setOrderFile(null);
-        setOrderFileBase64("");
-      }
-    } else {
-      setOrderSizeError("");
-      setOrderFile(file);
-      const reader = new FileReader();
-      reader.onload = () => {
-        setOrderFileBase64(reader.result);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const handleQbFileChange = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
-    if (!isPdf) {
-      setQbSizeError("Only PDF format is supported! Please select a valid .pdf file.");
-      setQbFile(null);
-      setQbFileBase64("");
-      setQbFileSizeKb(0);
-      return;
-    }
-
-    const sizeKb = (file.size / 1024).toFixed(1);
-    if (file.size > 500 * 1024) {
-      setQbSizeError(`Question Bank PDF size is ${sizeKb} KB. Strict maximum limit is 300 KB!`);
-      setQbFile(null);
-      setQbFileBase64("");
-      setQbFileSizeKb(Number(sizeKb));
-      return;
-    }
-
-    setQbSizeError("");
-    setQbFile(file);
-    setQbFileSizeKb(Number(sizeKb));
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      setQbFileBase64(reader.result);
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleSyllabusFileChange = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
-    if (!isPdf) {
-      setSyllabusSizeError("Only PDF format is supported! Please select a valid .pdf file.");
-      setSyllabusFile(null);
-      setSyllabusFileBase64("");
-      setSyllabusFileSizeKb(0);
-      return;
-    }
-
-    const sizeKb = (file.size / 1024).toFixed(1);
-    if (file.size > 100 * 1024) {
-      setSyllabusSizeError(`Syllabus PDF size is ${sizeKb} KB. Strict maximum limit is 100 KB!`);
-      setSyllabusFile(null);
-      setSyllabusFileBase64("");
-      setSyllabusFileSizeKb(Number(sizeKb));
-      return;
-    }
-
-    setSyllabusSizeError("");
-    setSyllabusFile(file);
-    setSyllabusFileSizeKb(Number(sizeKb));
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      setSyllabusFileBase64(reader.result);
-    };
-    reader.readAsDataURL(file);
-  };
-
   const handleGenerateAssignmentLink = async () => {
     if (!assSubjectCode) {
       alert("Please select a Course / Subject.");
@@ -1116,22 +995,6 @@ export default function CoeDashboard() {
       alert("Please select an External Question Paper Setter.");
       return;
     }
-    if (!orderFileBase64) {
-      alert("Please upload the Appointment / Order Copy (<= 30 KB).");
-      return;
-    }
-    if (orderFileSizeKb > 30) {
-      alert(`Order Copy size is ${orderFileSizeKb} KB. Maximum allowed size is 30 KB.`);
-      return;
-    }
-    if (qbFileSizeKb > 300) {
-      alert(`Question Bank PDF size is ${qbFileSizeKb} KB. Maximum allowed limit is 300 KB.`);
-      return;
-    }
-    if (syllabusFileSizeKb > 100) {
-      alert(`Syllabus PDF size is ${syllabusFileSizeKb} KB. Maximum allowed limit is 100 KB.`);
-      return;
-    }
 
     const setterObj = setters.find(s => s.id === assSetterId);
     if (!setterObj) {
@@ -1139,70 +1002,86 @@ export default function CoeDashboard() {
       return;
     }
 
-    setUploadingOrder(true);
+    setCreatingAssignment(true);
     try {
       const assignmentId = `coe_assign_${Date.now()}`;
+      const numSetsToAssign = Number(assNumSets) || 1;
 
-      let orderUrl = orderFileBase64;
-      try {
-        if (orderFile && orderFile.size <= 30 * 1024) {
-          orderUrl = await uploadFile(`coe_orders/${assignmentId}_order.png`, orderFile);
-        }
-      } catch (e) {
-        console.warn("Storage upload fallback to Base64 for Order Copy:", e);
-      }
-
-      let qbUrl = qbFileBase64 || null;
-      try {
-        if (qbFile) {
-          qbUrl = await uploadFile(`coe_question_banks/${assignmentId}_qb.pdf`, qbFile, "application/pdf");
-        }
-      } catch (e) {
-        console.warn("Storage upload fallback to Base64 for Question Bank:", e);
-      }
-
-      let syllabusUrl = syllabusFileBase64 || null;
-      try {
-        if (syllabusFile) {
-          syllabusUrl = await uploadFile(`coe_syllabi/${assignmentId}_syllabus.pdf`, syllabusFile, "application/pdf");
-        }
-      } catch (e) {
-        console.warn("Storage upload fallback to Base64 for Syllabus:", e);
-      }
+      const processedQbUrl = qbLink.trim() ? getEmbeddableDocumentUrl(qbLink.trim()) : null;
+      const processedSyllabusUrl = syllabusLink.trim() ? getEmbeddableDocumentUrl(syllabusLink.trim()) : null;
 
       const baseUrl = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
         ? "https://zonesynapse-ckcet-obe.pages.dev"
         : window.location.origin;
       const generatedUrl = `${baseUrl}/coe-setter-login?assignmentId=${assignmentId}`;
 
+      const degreeToUse = selectedSubjectObj?.programme?.includes("M.E.") ? "M.E." : selectedSubjectObj?.programme?.includes("MBA") ? "MBA" : "B.E.";
+      const programmeToUse = selectedSubjectObj?.programme || (selectedProgramme !== "ALL" ? selectedProgramme : "B.E.");
+      const regulationToUse = autoRegulation || selectedSubjectObj?.regulation || "AU - R2021";
+      const semesterToUse = assignSemester !== "ALL" ? assignSemester : (selectedSubjectObj?.semester || "III");
+      const durationToUse = currentSubjectPatternObj?.duration || "3 Hrs";
+      const maxMarksToUse = currentSubjectPatternObj?.totalMarks || 100;
+
+      const orderCopyData = {
+        examSession: selectedExamSession,
+        setterName: setterObj.name,
+        setterCollege: setterObj.collegeName,
+        setterEmail: setterObj.email,
+        degree: degreeToUse,
+        programme: programmeToUse,
+        regulation: regulationToUse,
+        semester: semesterToUse,
+        duration: durationToUse,
+        maxMarks: maxMarksToUse,
+        subjectCode: assSubjectCode,
+        subjectTitle: selectedSubjectObj?.title || assSubjectCode,
+        numSets: numSetsToAssign,
+        submissionDeadline: assDeadline,
+        remuneration: numSetsToAssign === 2 ? 3000 : 2000,
+        coeName: "Dr. N. Kamalakannan",
+        coeTitle: "Controller of Examinations",
+        coeCollege: "C.K. College of Engineering & Technology",
+        coeLocation: "Cuddalore – 607 003",
+        coeContact: "94884 93434",
+        generatedAt: new Date().toISOString()
+      };
+
       const assignmentData = {
         id: assignmentId,
         examSession: selectedExamSession,
-        programme: selectedSubjectObj?.programme || (selectedProgramme !== "ALL" ? selectedProgramme : "B.E."),
+        programme: programmeToUse,
+        degree: degreeToUse,
         batch: assignBatch,
-        semester: assignSemester !== "ALL" ? assignSemester : (selectedSubjectObj?.semester || "III"),
-        regulation: autoRegulation || selectedSubjectObj?.regulation || "AU - R2021",
+        semester: semesterToUse,
+        regulation: regulationToUse,
         department: selectedSubjectObj?.department || "ECE",
         subjectCode: assSubjectCode,
         subjectTitle: selectedSubjectObj?.title || assSubjectCode,
+        duration: durationToUse,
+        maxMarks: maxMarksToUse,
         patternId: currentSubjectPatternId,
         setterId: setterObj.id,
         setterName: setterObj.name,
         setterCollege: setterObj.collegeName,
         setterEmail: setterObj.email,
-        orderCopyUrl: orderUrl,
-        orderFileSizeKb: orderFileSizeKb,
-        qbUrl: qbUrl || null,
-        qbFileName: qbFile ? qbFile.name : null,
-        qbFileSizeKb: qbFileSizeKb || 0,
-        syllabusUrl: syllabusUrl || null,
-        syllabusFileName: syllabusFile ? syllabusFile.name : null,
-        syllabusFileSizeKb: syllabusFileSizeKb || 0,
+        numSets: numSetsToAssign,
+        submissionDeadline: assDeadline,
+        orderCopyData: orderCopyData,
+        orderCopyUrl: null,
+        qbUrl: processedQbUrl || null,
+        qbRawLink: qbLink.trim() || null,
+        qbFileName: qbLink.trim() ? "Official Question Bank Document" : null,
+        qbFileSizeKb: 0,
+        syllabusUrl: processedSyllabusUrl || null,
+        syllabusRawLink: syllabusLink.trim() || null,
+        syllabusFileName: syllabusLink.trim() ? "Course Syllabus Reference" : null,
+        syllabusFileSizeKb: 0,
         accessLink: generatedUrl,
         status: "assigned",
         acceptanceStatus: null,
         signatureUrl: null,
         submittedPaper: null,
+        submittedPaperB: null,
         createdAt: serverTimestamp()
       };
 
@@ -1213,11 +1092,15 @@ export default function CoeDashboard() {
         setterPassword: setterObj.password
       });
 
+      // Clear links
+      setQbLink("");
+      setSyllabusLink("");
+
       alert("External Setter Assignment created and Link Generated successfully!");
     } catch (err) {
       alert("Failed to generate assignment link: " + err.message);
     } finally {
-      setUploadingOrder(false);
+      setCreatingAssignment(false);
     }
   };
 
@@ -2793,135 +2676,157 @@ export default function CoeDashboard() {
                   </select>
                 </div>
 
-                {/* Question Bank PDF File Upload (PDF Only, Max 300 KB) */}
+                {/* Question Bank Document Link (OneDrive / Cloud Share Link) */}
                 <div>
-                  <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center justify-between mb-1.5">
                     <label className={labelCls}>
-                      Upload Question Bank <span className="text-zinc-400 font-normal">(Optional)</span>
+                      Question Bank Document Link <span className="text-zinc-400 font-normal">(Optional)</span>
                     </label>
-                    <span className="text-[11px] font-extrabold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
-                      Supports PDF format only (Max 500 KB)
+                    <span className="text-[11px] font-extrabold text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-0.5 rounded-md">
+                      OneDrive / SharePoint "Anyone can view" Link
                     </span>
                   </div>
 
-                  <div className="border-2 border-dashed border-amber-200/90 rounded-2xl p-3 bg-amber-50/30 text-center hover:border-[#120c7a] transition-all">
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-amber-600">
+                      <LinkIcon className="h-4 w-4" />
+                    </div>
                     <input
-                      type="file"
-                      id="qb-pdf-upload"
-                      accept="application/pdf,.pdf"
-                      onChange={handleQbFileChange}
-                      className="hidden"
+                      type="url"
+                      placeholder="Paste OneDrive / SharePoint link (e.g. https://ckcet-my.sharepoint.com/... or 1drv.ms/...)"
+                      value={qbLink}
+                      onChange={(e) => setQbLink(e.target.value)}
+                      className="w-full bg-[#f8fafc] border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-xs text-slate-900 font-semibold placeholder-slate-400 focus:bg-white focus:outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/15 transition-all shadow-inner"
                     />
-                    <label htmlFor="qb-pdf-upload" className="cursor-pointer flex flex-col items-center justify-center gap-1">
-                      <FileText className="h-5 w-5 text-amber-700" />
-                      <span className="text-xs font-bold text-zinc-800">
-                        {qbFile ? qbFile.name : "Click to upload Question Bank (PDF format only)"}
-                      </span>
-                      <span className="text-[10px] font-semibold text-zinc-500">
-                        {qbFileSizeKb > 0 ? `Selected size: ${qbFileSizeKb} KB` : "Supports PDF format only (Max 300 KB)"}
-                      </span>
-                    </label>
                   </div>
-
-                  {qbSizeError && (
-                    <p className="text-[11px] text-rose-600 font-bold mt-1.5 flex items-center gap-1">
-                      <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                      {qbSizeError}
-                    </p>
-                  )}
+                  <p className="text-[11px] text-zinc-500 font-medium mt-1">
+                    Paste the OneDrive link. The external setter will see an in-app document preview without seeing the raw link.
+                  </p>
                 </div>
 
-                {/* Syllabus PDF File Upload (PDF Only, Max 100 KB) */}
+                {/* Syllabus Document Link (OneDrive / Cloud Share Link) */}
                 <div>
-                  <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center justify-between mb-1.5">
                     <label className={labelCls}>
-                      Upload Syllabus <span className="text-zinc-400 font-normal">(Optional)</span>
+                      Course Syllabus Document Link <span className="text-zinc-400 font-normal">(Optional)</span>
                     </label>
-                    <span className="text-[11px] font-extrabold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-md">
-                      Supports PDF format only (Max 100 KB)
+                    <span className="text-[11px] font-extrabold text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded-md">
+                      OneDrive / SharePoint "Anyone can view" Link
                     </span>
                   </div>
 
-                  <div className="border-2 border-dashed border-blue-200/90 rounded-2xl p-3 bg-blue-50/30 text-center hover:border-[#120c7a] transition-all">
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-[#120c7a]">
+                      <LinkIcon className="h-4 w-4" />
+                    </div>
                     <input
-                      type="file"
-                      id="syllabus-pdf-upload"
-                      accept="application/pdf,.pdf"
-                      onChange={handleSyllabusFileChange}
-                      className="hidden"
+                      type="url"
+                      placeholder="Paste OneDrive / SharePoint link (e.g. https://ckcet-my.sharepoint.com/... or 1drv.ms/...)"
+                      value={syllabusLink}
+                      onChange={(e) => setSyllabusLink(e.target.value)}
+                      className="w-full bg-[#f8fafc] border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-xs text-slate-900 font-semibold placeholder-slate-400 focus:bg-white focus:outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/15 transition-all shadow-inner"
                     />
-                    <label htmlFor="syllabus-pdf-upload" className="cursor-pointer flex flex-col items-center justify-center gap-1">
-                      <BookOpen className="h-5 w-5 text-[#120c7a]" />
-                      <span className="text-xs font-bold text-zinc-800">
-                        {syllabusFile ? syllabusFile.name : "Click to upload Course Syllabus (PDF format only)"}
-                      </span>
-                      <span className="text-[10px] font-semibold text-zinc-500">
-                        {syllabusFileSizeKb > 0 ? `Selected size: ${syllabusFileSizeKb} KB` : "Supports PDF format only (Max 100 KB)"}
-                      </span>
-                    </label>
                   </div>
-
-                  {syllabusSizeError && (
-                    <p className="text-[11px] text-rose-600 font-bold mt-1.5 flex items-center gap-1">
-                      <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                      {syllabusSizeError}
-                    </p>
-                  )}
+                  <p className="text-[11px] text-zinc-500 font-medium mt-1">
+                    Paste the OneDrive link for the syllabus. Automatically embeds as a clean document viewer for the setter.
+                  </p>
                 </div>
 
-                {/* Appointment / Order Copy File Upload (<= 30KB) */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
+                {/* Number of Question Paper Sets & Submission Deadline Configuration */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-4 rounded-2xl bg-amber-50/50 border border-amber-200/80">
+                  {/* Number of Sets Choice (1 Set vs 2 Sets) */}
+                  <div className="space-y-2">
                     <label className={labelCls}>
-                      Upload Appointment / Order Copy <span className="text-rose-500">*</span>
+                      No. of Question Paper Sets <span className="text-rose-500">*</span>
                     </label>
-                    <span className="text-[11px] font-extrabold text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
-                      Strict Max Size: 30 KB
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setAssNumSets(1)}
+                        className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${assNumSets === 1 ? "bg-white border-[#120c7a] ring-2 ring-[#120c7a]/20 shadow-xs" : "bg-white/60 border-zinc-200 hover:bg-white"}`}
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs font-black text-[#120c7a]">1 Set</span>
+                          <span className={`h-3 w-3 rounded-full border flex items-center justify-center ${assNumSets === 1 ? "bg-[#120c7a] border-[#120c7a]" : "border-zinc-300"}`}>
+                            {assNumSets === 1 && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-zinc-500 font-semibold">Single Paper (Set A)</p>
+                        <span className="inline-block mt-1 text-[10px] font-black text-emerald-800 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                          ₹2,000 Remun.
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setAssNumSets(2)}
+                        className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${assNumSets === 2 ? "bg-white border-[#120c7a] ring-2 ring-[#120c7a]/20 shadow-xs" : "bg-white/60 border-zinc-200 hover:bg-white"}`}
+                      >
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs font-black text-[#120c7a]">2 Sets</span>
+                          <span className={`h-3 w-3 rounded-full border flex items-center justify-center ${assNumSets === 2 ? "bg-[#120c7a] border-[#120c7a]" : "border-zinc-300"}`}>
+                            {assNumSets === 2 && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-zinc-500 font-semibold">Dual Papers (Set A & B)</p>
+                        <span className="inline-block mt-1 text-[10px] font-black text-indigo-800 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-200">
+                          ₹3,000 Remun.
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Submission Deadline Date Picker */}
+                  <div className="space-y-2">
+                    <label className={labelCls}>
+                      Last Date for Submission <span className="text-rose-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-zinc-400">
+                        <Calendar className="h-4 w-4" />
+                      </div>
+                      <input
+                        type="date"
+                        value={assDeadline}
+                        onChange={(e) => setAssDeadline(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-2.5 text-xs text-slate-900 font-semibold focus:outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/15 transition-all shadow-inner"
+                        required
+                      />
+                    </div>
+                    <p className="text-[10px] text-zinc-500 font-semibold">
+                      Specified in the appointment letter and agreement terms.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Automatic Appointment Order Generation Banner */}
+                <div className="p-3.5 rounded-2xl bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 text-xs text-[#120c7a] flex items-center gap-3 shadow-xs">
+                  <ShieldCheck className="h-6 w-6 text-blue-700 shrink-0" />
+                  <div className="flex-1">
+                    <span className="font-extrabold block">
+                      ✓ Official Appointment Order Copy will be Generated Automatically
+                    </span>
+                    <span className="text-[11px] text-slate-600 font-semibold">
+                      Includes CKCET Autonomous Letterhead, QP Details, Remuneration Terms ({assNumSets === 2 ? "Rs. 3,000/- for 2 Sets" : "Rs. 2,000/- for 1 Set"}), and COE Signature.
                     </span>
                   </div>
-
-                  <div className="border-2 border-dashed border-zinc-200 rounded-2xl p-4 bg-zinc-50 text-center hover:border-[#120c7a] transition-all">
-                    <input
-                      type="file"
-                      id="order-copy-upload"
-                      accept="image/*,application/pdf"
-                      onChange={handleOrderFileChange}
-                      className="hidden"
-                    />
-                    <label htmlFor="order-copy-upload" className="cursor-pointer flex flex-col items-center justify-center gap-1.5">
-                      <Upload className="h-6 w-6 text-[#120c7a]" />
-                      <span className="text-xs font-bold text-zinc-800">
-                        {orderFile ? orderFile.name : "Click to upload Order Copy (Image/PDF)"}
-                      </span>
-                      <span className="text-[10px] font-semibold text-zinc-500">
-                        {orderFileSizeKb > 0 ? `Selected size: ${orderFileSizeKb} KB` : "File must be under 30 KB"}
-                      </span>
-                    </label>
-                  </div>
-
-                  {orderSizeError && (
-                    <p className="text-[11px] text-rose-600 font-bold mt-1.5 flex items-center gap-1">
-                      <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                      {orderSizeError}
-                    </p>
-                  )}
                 </div>
 
                 <button
                   type="button"
                   onClick={handleGenerateAssignmentLink}
-                  disabled={uploadingOrder}
+                  disabled={creatingAssignment}
                   className="w-full bg-[#120c7a] hover:bg-[#0e0a60] text-white font-extrabold py-3.5 px-4 rounded-xl shadow-md transition-all flex items-center justify-center gap-2 text-xs cursor-pointer disabled:opacity-50"
                 >
-                  {uploadingOrder ? (
+                  {creatingAssignment ? (
                     <>
                       <RefreshCw className="h-4 w-4 animate-spin" />
-                      <span>Uploading & Generating Link...</span>
+                      <span>Generating Assignment & Link...</span>
                     </>
                   ) : (
                     <>
-                      <LinkIcon className="h-4 w-4" />
-                      <span>Generate External Setter Order & Access Link</span>
+                      <Sparkles className="h-4 w-4 text-amber-300" />
+                      <span>Generate Setter Appointment & Link</span>
                     </>
                   )}
                 </button>
@@ -3104,7 +3009,7 @@ The question paper shall be submitted only through the Digital QP Setting Portal
 
 If any of your relatives are appearing for the above examination, you are requested to kindly decline the assignment and inform the Controller of Examinations immediately.
 
-The remuneration for setting the question paper is Rs. 2,000/- per question paper.
+The remuneration for setting two Question Papers (Set A & Set B) is Rs. 3,000/-, while the remuneration for setting a single Question Paper (either Set A or Set B) is Rs. 2,000/-.
 
 The appointment, login credentials, question paper contents and all related information shall be treated as STRICTLY CONFIDENTIAL.
 
@@ -3126,7 +3031,8 @@ Contact: 94884 93434`}
                           onClick={() => {
                             const sessName = generatedAssignment?.examSession || selectedExamSession || "Nov./Dec. 2026";
                             const emailSubject = `End Semester Examinations – ${sessName} – Appointment of Question Paper Setter & Digital QP Setting Portal – Reg.`;
-                            const emailBody = `Dear Prof. ${generatedAssignment.setterName || "Faculty"},\nGood Morning!\n\nGreetings from C.K. College of Engineering & Technology, Cuddalore!\n\nSub: End Semester Examinations – ${sessName} – Appointment of Question Paper Setter & Digital QP Setting Portal – Reg.\n\nI am, by direction, to inform you that you have been appointed as a Question Paper Setter for the End Semester Theory Examinations to be held in ${sessName}, under the Autonomous Scheme of C.K. College of Engineering & Technology, for the subject mentioned below. You are requested to kindly set the question paper as per the prescribed format, syllabus, regulations and examination requirements.\n\nThe details of the question paper assignment are as follows:\n\nQUESTION PAPER DETAILS:\n• Department: ${formatDepartmentDisplay(generatedAssignment.department || "ECE")}\n• Programme: ${generatedAssignment.programme || "B.E."}\n• Regulations: ${generatedAssignment.regulation || "AU - R2021"}\n• Semester: ${generatedAssignment.semester || "III"}\n• Duration: ${generatedAssignment.duration || "3 Hours"}\n• Max. Marks: ${generatedAssignment.maxMarks || "100"}\n\nSUBJECT DETAILS:\n• Subject Code: ${generatedAssignment.subjectCode}\n• Subject Name: ${generatedAssignment.subjectTitle}\n• No. of Question Papers: ${generatedAssignment.noOfQuestionPapers || "1"}\n• Last Date for Submission: ${generatedAssignment.submissionDeadline || "10.10.2026"}\n\nNEXT-GENERATION DIGITAL QP SETTING PLATFORM:\nAs part of our continuous efforts to strengthen the confidentiality, quality and efficiency of the Autonomous Examination System, CKCET has introduced a secure Digital Question Paper Setting & Management Platform for the ${sessName} End Semester Examinations.\n\nYou are requested to use the portal for preparing and securely submitting the question paper within the stipulated deadline.\n\n• Portal Link: https://zonesynapse-ckcet-obe.pages.dev/coe-setter-login?assignmentId=${generatedAssignment.id}\n• User ID: ${generatedAssignment.setterEmail}\n• Password: ${generatedAssignment.setterPassword || "••••••••"}\n\nKEY FEATURES OF THE DIGITAL PLATFORM:\n• 🔐 Secure & Confidential – Ensures complete confidentiality of question papers.\n• ✍️ Easy & Guided Setting – Simple workflow with syllabus, pattern and instructions.\n• 🎯 Quality-Assured – Supports balanced and syllabus-aligned question papers.\n• 📤 Secure Digital Submission – Direct submission through the portal.\n• 📋 Trackable & Paperless – Enables acknowledgement and proper tracking.\n\nA copy of the syllabus, question paper pattern and necessary instructions will also be available through the portal for your reference.\n\nThe question paper shall be submitted only through the Digital QP Setting Portal on or before ${generatedAssignment.submissionDeadline || "10.10.2026"}.\n\nIf any of your relatives are appearing for the above examination, you are requested to kindly decline the assignment and inform the Controller of Examinations immediately.\n\nThe remuneration for setting the question paper is Rs. 2,000/- per question paper.\n\nThe appointment, login credentials, question paper contents and all related information shall be treated as STRICTLY CONFIDENTIAL.\n\nWe sincerely appreciate your valuable academic contribution and look forward to your cooperation and timely submission of the question paper through the new digital platform.\n\nWith regards,\n\nDr. N. Kamalakannan\nController of Examinations\nC.K. College of Engineering & Technology\nCuddalore – 607 003\nContact: 94884 93434`;
+                            const remunClause = "The remuneration for setting two Question Papers (Set A & Set B) is Rs. 3,000/-, while the remuneration for setting a single Question Paper (either Set A or Set B) is Rs. 2,000/-.";
+                            const emailBody = `Dear Prof. ${generatedAssignment.setterName || "Faculty"},\nGood Morning!\n\nGreetings from C.K. College of Engineering & Technology, Cuddalore!\n\nSub: End Semester Examinations – ${sessName} – Appointment of Question Paper Setter & Digital QP Setting Portal – Reg.\n\nI am, by direction, to inform you that you have been appointed as a Question Paper Setter for the End Semester Theory Examinations to be held in ${sessName}, under the Autonomous Scheme of C.K. College of Engineering & Technology, for the subject mentioned below. You are requested to kindly set the question paper as per the prescribed format, syllabus, regulations and examination requirements.\n\nThe details of the question paper assignment are as follows:\n\nQUESTION PAPER DETAILS:\n• Department: ${formatDepartmentDisplay(generatedAssignment.department || "ECE")}\n• Programme: ${generatedAssignment.programme || "B.E."}\n• Regulations: ${generatedAssignment.regulation || "AU - R2021"}\n• Semester: ${generatedAssignment.semester || "III"}\n• Duration: ${generatedAssignment.duration || "3 Hours"}\n• Max. Marks: ${generatedAssignment.maxMarks || "100"}\n\nSUBJECT DETAILS:\n• Subject Code: ${generatedAssignment.subjectCode}\n• Subject Name: ${generatedAssignment.subjectTitle}\n• No. of Question Papers: ${generatedAssignment.noOfQuestionPapers || "1"}\n• Last Date for Submission: ${generatedAssignment.submissionDeadline || "10.10.2026"}\n\nNEXT-GENERATION DIGITAL QP SETTING PLATFORM:\nAs part of our continuous efforts to strengthen the confidentiality, quality and efficiency of the Autonomous Examination System, CKCET has introduced a secure Digital Question Paper Setting & Management Platform for the ${sessName} End Semester Examinations.\n\nYou are requested to use the portal for preparing and securely submitting the question paper within the stipulated deadline.\n\n• Portal Link: https://zonesynapse-ckcet-obe.pages.dev/coe-setter-login?assignmentId=${generatedAssignment.id}\n• User ID: ${generatedAssignment.setterEmail}\n• Password: ${generatedAssignment.setterPassword || "••••••••"}\n\nKEY FEATURES OF THE DIGITAL PLATFORM:\n• 🔐 Secure & Confidential – Ensures complete confidentiality of question papers.\n• ✍️ Easy & Guided Setting – Simple workflow with syllabus, pattern and instructions.\n• 🎯 Quality-Assured – Supports balanced and syllabus-aligned question papers.\n• 📤 Secure Digital Submission – Direct submission through the portal.\n• 📋 Trackable & Paperless – Enables acknowledgement and proper tracking.\n\nA copy of the syllabus, question paper pattern and necessary instructions will also be available through the portal for your reference.\n\nThe question paper shall be submitted only through the Digital QP Setting Portal on or before ${generatedAssignment.submissionDeadline || "10.10.2026"}.\n\nIf any of your relatives are appearing for the above examination, you are requested to kindly decline the assignment and inform the Controller of Examinations immediately.\n\n${remunClause}\n\nThe appointment, login credentials, question paper contents and all related information shall be treated as STRICTLY CONFIDENTIAL.\n\nWe sincerely appreciate your valuable academic contribution and look forward to your cooperation and timely submission of the question paper through the new digital platform.\n\nWith regards,\n\nDr. N. Kamalakannan\nController of Examinations\nC.K. College of Engineering & Technology\nCuddalore – 607 003\nContact: 94884 93434`;
 
                             navigator.clipboard.writeText(`Subject: ${emailSubject}\n\n${emailBody}`);
                             alert("Official Email Draft copied to clipboard!");
@@ -3261,16 +3167,14 @@ Contact: 94884 93434`}
                               <Copy className="h-3.5 w-3.5" /> Link
                             </button>
 
-                            {ass.orderCopyUrl && (
-                              <a
-                                href={ass.orderCopyUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="px-2.5 py-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 text-zinc-700 border border-zinc-200 text-xs font-bold inline-flex items-center gap-1"
-                              >
-                                <Eye className="h-3.5 w-3.5" /> Order
-                              </a>
-                            )}
+                            <button
+                              type="button"
+                              onClick={() => setPreviewOrderAssignment(ass)}
+                              className="px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 text-xs font-bold inline-flex items-center gap-1 transition-all cursor-pointer"
+                              title="View Official Appointment Order Copy"
+                            >
+                              <FileText className="h-3.5 w-3.5 text-amber-700" /> Order
+                            </button>
 
                             {ass.status === "submitted" && (
                               <button
@@ -3629,28 +3533,55 @@ Contact: 94884 93434`}
                   </div>
                 )}
 
+                {/* Dual Paper Switcher for COE Review (Set A vs Set B) */}
+                {selectedReviewAssignment.submittedPaperB && (
+                  <div className="flex items-center gap-2 p-1.5 bg-zinc-100 rounded-2xl border border-zinc-200 w-fit">
+                    <button
+                      type="button"
+                      onClick={() => setReviewActiveSet("setA")}
+                      className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${reviewActiveSet === "setA" ? "bg-[#120c7a] text-white shadow-xs" : "text-zinc-600 hover:text-zinc-900"}`}
+                    >
+                      Question Paper: Set A
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setReviewActiveSet("setB")}
+                      className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${reviewActiveSet === "setB" ? "bg-[#120c7a] text-white shadow-xs" : "text-zinc-600 hover:text-zinc-900"}`}
+                    >
+                      Question Paper: Set B
+                    </button>
+                  </div>
+                )}
+
                 {/* Submitted Questions Content - Official ESE QP Table Template */}
-                {selectedReviewAssignment.submittedPaper ? (
-                  <div className="p-8 rounded-2xl bg-white text-zinc-900 border border-zinc-300 shadow-md font-serif space-y-6">
+                {((reviewActiveSet === "setB" && selectedReviewAssignment.submittedPaperB) ? selectedReviewAssignment.submittedPaperB : selectedReviewAssignment.submittedPaper) ? (
+                  (() => {
+                    const paperToReview = (reviewActiveSet === "setB" && selectedReviewAssignment.submittedPaperB)
+                      ? selectedReviewAssignment.submittedPaperB
+                      : selectedReviewAssignment.submittedPaper;
+                    const setLabel = selectedReviewAssignment.submittedPaperB ? (reviewActiveSet === "setB" ? " (SET B)" : " (SET A)") : "";
 
-                    {/* Header Block */}
-                    <div className="text-center border-b-2 border-black pb-4 space-y-1">
-                      <h1 className="text-2xl font-bold uppercase tracking-wide font-serif text-black">
-                        END SEMESTER EXAMINATION
-                      </h1>
-                      <h2 className="text-xl font-bold text-zinc-900 font-serif">
-                        {selectedReviewAssignment.subjectCode} - {selectedReviewAssignment.subjectTitle}
-                      </h2>
-                      <div className="flex justify-between text-xs mt-3 font-sans font-medium text-zinc-800 px-2">
-                        <span>Batch: {selectedReviewAssignment.batch || "2023-2027"}</span>
-                        <span>Regulation: R-{selectedReviewAssignment.regulation || "AU - R2021"}</span>
-                        <span>Max Marks: {selectedReviewAssignment.submittedPaper.maxMarks || 100}</span>
-                        <span>Duration: {selectedReviewAssignment.submittedPaper.duration || "3 Hours"}</span>
-                      </div>
-                    </div>
+                    return (
+                      <div className="p-8 rounded-2xl bg-white text-zinc-900 border border-zinc-300 shadow-md font-serif space-y-6">
 
-                    {/* Question Paper Sections & Tables */}
-                    {selectedReviewAssignment.submittedPaper.sections?.map((sec) => (
+                        {/* Header Block */}
+                        <div className="text-center border-b-2 border-black pb-4 space-y-1">
+                          <h1 className="text-2xl font-bold uppercase tracking-wide font-serif text-black">
+                            END SEMESTER EXAMINATION{setLabel}
+                          </h1>
+                          <h2 className="text-xl font-bold text-zinc-900 font-serif">
+                            {selectedReviewAssignment.subjectCode} - {selectedReviewAssignment.subjectTitle}
+                          </h2>
+                          <div className="flex justify-between text-xs mt-3 font-sans font-medium text-zinc-800 px-2">
+                            <span>Batch: {selectedReviewAssignment.batch || "2023-2027"}</span>
+                            <span>Regulation: R-{selectedReviewAssignment.regulation || "AU - R2021"}</span>
+                            <span>Max Marks: {paperToReview.maxMarks || 100}</span>
+                            <span>Duration: {paperToReview.duration || "3 Hours"}</span>
+                          </div>
+                        </div>
+
+                        {/* Question Paper Sections & Tables */}
+                        {paperToReview.sections?.map((sec) => (
                       <div key={sec.id || sec.name} className="space-y-2 my-6">
                         <div className="border-b-2 border-black pb-1">
                           <h3 className="font-bold text-base uppercase font-sans text-black tracking-wide">
@@ -3782,6 +3713,8 @@ Contact: 94884 93434`}
                       </div>
                     </div>
                   </div>
+                );
+              })()
                 ) : (
                   <div className="p-8 text-center text-zinc-500">
                     No structured paper data found for this assignment.
@@ -4118,6 +4051,14 @@ Contact: 94884 93434`}
 
             </div>
           </div>
+        )}
+
+        {/* OFFICIAL APPOINTMENT ORDER COPY PREVIEW MODAL */}
+        {previewOrderAssignment && (
+          <AppointmentOrderCopyModal
+            assignment={previewOrderAssignment}
+            onClose={() => setPreviewOrderAssignment(null)}
+          />
         )}
       </div>
     </Layout>

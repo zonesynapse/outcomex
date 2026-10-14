@@ -11,7 +11,9 @@ import {
   ClipboardCheck, Mail, Camera, ExternalLink, Split
 } from "lucide-react";
 import { uploadFile } from "../../utils/fileUpload";
+import { getEmbeddableDocumentUrl } from "../../utils/documentEmbedUtils";
 import MathTemplateToolbar from "../../components/MathTemplateToolbar";
+import AppointmentOrderCopyModal from "../../components/AppointmentOrderCopyModal";
 
 const ROMAN_LABELS = ["i)", "ii)", "iii)", "iv)", "v)", "vi)", "vii)", "viii)"];
 const getRomanLabel = (idx) => ROMAN_LABELS[idx] || `${idx + 1})`;
@@ -445,6 +447,9 @@ export default function ExternalSetterWorkbench() {
     return () => unsub();
   }, []);
 
+  // Dual Question Paper Sets State (Set A & Set B)
+  const [activeSet, setActiveSet] = useState("setA"); // "setA" | "setB"
+
   // Dynamic Question Paper Data (Loaded from pattern document in Firestore)
   const [qpData, setQpData] = useState({
     title: "",
@@ -452,6 +457,17 @@ export default function ExternalSetterWorkbench() {
     maxMarks: 100,
     sections: []
   });
+
+  const [qpDataB, setQpDataB] = useState({
+    title: "",
+    duration: "3 Hours",
+    maxMarks: 100,
+    sections: []
+  });
+
+  const isSetB = activeSet === "setB";
+  const currentQp = isSetB ? qpDataB : qpData;
+  const setCurrentQp = isSetB ? setQpDataB : setQpData;
 
   const [submittingToCoe, setSubmittingToCoe] = useState(false);
   const [submittedSuccess, setSubmittedSuccess] = useState(false);
@@ -479,46 +495,64 @@ export default function ExternalSetterWorkbench() {
         // If paper was already saved/submitted, use stored paper
         if (data.submittedPaper && data.submittedPaper.sections?.length > 0) {
           setQpData(data.submittedPaper);
-        } else if (data.patternId) {
+        }
+        if (data.submittedPaperB && data.submittedPaperB.sections?.length > 0) {
+          setQpDataB(data.submittedPaperB);
+        }
+
+        if ((!data.submittedPaper || !data.submittedPaper.sections?.length || !data.submittedPaperB) && data.patternId) {
           // Fetch assigned pattern document dynamically from coe_patterns
           try {
             const patSnap = await getDoc(doc(db, "coe_patterns", data.patternId));
             if (patSnap.exists()) {
               const patData = patSnap.data();
-              let currentQNo = 1;
 
-              const dynamicSections = (patData.sections || []).map((sec, secIdx) => {
-                const count = sec.count || 5;
-                const questions = Array.from({ length: count }, (_, i) => {
-                  const qNo = currentQNo++;
-                  const qObj = {
-                    qNo,
-                    text: "",
-                    marks: sec.marksPerQ || 2,
-                    blooms: `K${(i % 4) + 1}`,
-                    co: `CO${(i % 5) + 1}`,
-                    pi: `1.1.${(i % 3) + 1}`
+              const createSectionsForSet = () => {
+                let currentQNo = 1;
+                return (patData.sections || []).map((sec, secIdx) => {
+                  const count = sec.count || 5;
+                  const questions = Array.from({ length: count }, (_, i) => {
+                    const qNo = currentQNo++;
+                    const qObj = {
+                      qNo,
+                      text: "",
+                      marks: sec.marksPerQ || 2,
+                      blooms: `K${(i % 4) + 1}`,
+                      co: `CO${(i % 5) + 1}`,
+                      pi: `1.1.${(i % 3) + 1}`
+                    };
+                    if (sec.choiceType === "either_or") {
+                      qObj.optionB = "";
+                    }
+                    return qObj;
+                  });
+
+                  return {
+                    id: sec.id || `section_${secIdx}`,
+                    name: sec.name || `Section ${secIdx + 1}`,
+                    instructions: sec.instructions || `Answer ALL Questions in ${sec.name}`,
+                    questions
                   };
-                  if (sec.choiceType === "either_or") {
-                    qObj.optionB = "";
-                  }
-                  return qObj;
                 });
+              };
 
-                return {
-                  id: sec.id || `section_${secIdx}`,
-                  name: sec.name || `Section ${secIdx + 1}`,
-                  instructions: sec.instructions || `Answer ALL Questions in ${sec.name}`,
-                  questions
-                };
-              });
+              if (!data.submittedPaper || !data.submittedPaper.sections?.length) {
+                setQpData({
+                  title: patData.title || `ESE Question Paper - ${data.subjectCode} (Set A)`,
+                  duration: patData.duration || "3 Hours",
+                  maxMarks: patData.totalMarks || 100,
+                  sections: createSectionsForSet()
+                });
+              }
 
-              setQpData({
-                title: patData.title || `ESE Question Paper - ${data.subjectCode}`,
-                duration: patData.duration || "3 Hours",
-                maxMarks: patData.totalMarks || 100,
-                sections: dynamicSections
-              });
+              if (!data.submittedPaperB || !data.submittedPaperB.sections?.length) {
+                setQpDataB({
+                  title: patData.title || `ESE Question Paper - ${data.subjectCode} (Set B)`,
+                  duration: patData.duration || "3 Hours",
+                  maxMarks: patData.totalMarks || 100,
+                  sections: createSectionsForSet()
+                });
+              }
             }
           } catch (e) {
             console.error("Error fetching pattern document:", e);
@@ -804,9 +838,9 @@ export default function ExternalSetterWorkbench() {
     setShowClaimBillModal(true);
   };
 
-  // 6.1 Sub-part Split Question Handlers
+  // 6.1 Sub-part Split Question Handlers (Operates on Active Set: Set A or Set B)
   const handleToggleSplitQuestion = (secIdx, qIdx, isOptB, shouldSplit) => {
-    const updated = { ...qpData };
+    const updated = JSON.parse(JSON.stringify(currentQp));
     const q = updated.sections[secIdx].questions[qIdx];
     const totalMarks = q.marks || (isOptB ? 16 : 16);
 
@@ -823,11 +857,11 @@ export default function ExternalSetterWorkbench() {
         q.subPartsOptionB = createDefaultSubParts(2, totalMarks);
       }
     }
-    setQpData(updated);
+    setCurrentQp(updated);
   };
 
   const handleChangeSubCount = (secIdx, qIdx, isOptB, newCount) => {
-    const updated = { ...qpData };
+    const updated = JSON.parse(JSON.stringify(currentQp));
     const q = updated.sections[secIdx].questions[qIdx];
     const totalMarks = q.marks || 16;
     const partsKey = isOptB ? "subPartsOptionB" : "subParts";
@@ -835,11 +869,11 @@ export default function ExternalSetterWorkbench() {
 
     q[countKey] = newCount;
     q[partsKey] = createDefaultSubParts(newCount, totalMarks);
-    setQpData(updated);
+    setCurrentQp(updated);
   };
 
   const handleUpdateSubPartMark = (secIdx, qIdx, isOptB, subIdx, val) => {
-    const updated = { ...qpData };
+    const updated = JSON.parse(JSON.stringify(currentQp));
     const q = updated.sections[secIdx].questions[qIdx];
     const totalMarks = q.marks || 16;
     const partsKey = isOptB ? "subPartsOptionB" : "subParts";
@@ -862,11 +896,11 @@ export default function ExternalSetterWorkbench() {
     }
 
     q[partsKey] = parts;
-    setQpData(updated);
+    setCurrentQp(updated);
   };
 
   const handleUpdateSubPartText = (secIdx, qIdx, isOptB, subIdx, val) => {
-    const updated = { ...qpData };
+    const updated = JSON.parse(JSON.stringify(currentQp));
     const q = updated.sections[secIdx].questions[qIdx];
     const partsKey = isOptB ? "subPartsOptionB" : "subParts";
     const parts = [...(q[partsKey] || [])];
@@ -875,31 +909,39 @@ export default function ExternalSetterWorkbench() {
       parts[subIdx] = { ...parts[subIdx], text: val };
     }
     q[partsKey] = parts;
-    setQpData(updated);
+    setCurrentQp(updated);
   };
 
-  const validateAllSplitQuestions = () => {
-    for (let secIdx = 0; secIdx < (qpData.sections || []).length; secIdx++) {
-      const sec = qpData.sections[secIdx];
+  const validateSplitQuestionsForPaper = (paper, label = "Set A") => {
+    for (let secIdx = 0; secIdx < (paper?.sections || []).length; secIdx++) {
+      const sec = paper.sections[secIdx];
       for (let qIdx = 0; qIdx < (sec.questions || []).length; qIdx++) {
         const q = sec.questions[qIdx];
         const qNoLabel = `${q.qNo}${q.optionB !== undefined ? '(a)' : ''}`;
 
         if (q.isSplit) {
-          const msg = getSubPartsValidationMsg(q.subParts, q.marks || 16, qNoLabel);
+          const msg = getSubPartsValidationMsg(q.subParts, q.marks || 16, `${label} Q.${qNoLabel}`);
           if (msg) {
             alert(msg);
             return false;
           }
         }
         if (q.optionB !== undefined && q.isSplitOptionB) {
-          const msgOptB = getSubPartsValidationMsg(q.subPartsOptionB, q.marks || 16, `${q.qNo}(b)`);
+          const msgOptB = getSubPartsValidationMsg(q.subPartsOptionB, q.marks || 16, `${label} Q.${q.qNo}(b)`);
           if (msgOptB) {
             alert(msgOptB);
             return false;
           }
         }
       }
+    }
+    return true;
+  };
+
+  const validateAllSplitQuestions = () => {
+    if (!validateSplitQuestionsForPaper(qpData, "Set A")) return false;
+    if (Number(assignment?.numSets) === 2 && qpDataB?.sections?.length > 0) {
+      if (!validateSplitQuestionsForPaper(qpDataB, "Set B")) return false;
     }
     return true;
   };
@@ -914,28 +956,39 @@ export default function ExternalSetterWorkbench() {
     setClaimBillStep("verify");
   };
 
-  // 8. Final Submit to COE (Save Question Paper, Checklist & Claim Bill to Firestore)
+  // 8. Final Submit to COE (Save Question Paper(s), Checklist & Claim Bill to Firestore)
   const handleFinalSubmitToCoe = async () => {
     setSubmittingToCoe(true);
     try {
-      const sanitizedPaper = removeUndefinedFields(qpData);
+      const numSetsToSubmit = Number(assignment?.numSets) || 1;
+      const sanitizedPaperA = removeUndefinedFields(qpData);
+      const sanitizedPaperB = numSetsToSubmit === 2 && qpDataB ? removeUndefinedFields(qpDataB) : null;
       const sanitizedChecklist = removeUndefinedFields(checklistResponses);
+      const remuneration = numSetsToSubmit === 2 ? 3000 : 2000;
       const sanitizedClaimBill = removeUndefinedFields({
         ...claimBillData,
         subjectCode: assignment?.subjectCode || "",
         subjectTitle: assignment?.subjectTitle || "",
+        numSets: numSetsToSubmit,
+        remunerationAmount: remuneration,
         submissionDate: new Date().toLocaleDateString("en-IN")
       });
 
-      await updateDoc(doc(db, "coe_setter_assignments", assignment.id), {
+      const updatePayload = {
         status: "submitted",
-        submittedPaper: sanitizedPaper,
+        submittedPaper: sanitizedPaperA,
         checklistVerified: true,
         checklistResponses: sanitizedChecklist,
         examMonthYear: examMonthYear || "",
         claimBillData: sanitizedClaimBill,
         submittedAt: serverTimestamp()
-      });
+      };
+
+      if (sanitizedPaperB) {
+        updatePayload.submittedPaperB = sanitizedPaperB;
+      }
+
+      await updateDoc(doc(db, "coe_setter_assignments", assignment.id), updatePayload);
 
       setShowClaimBillModal(false);
       setSubmittedSuccess(true);
@@ -1342,11 +1395,23 @@ export default function ExternalSetterWorkbench() {
                 </span>
                 <span className="flex items-center gap-1.5">
                   <strong className="text-blue-200 font-semibold">Total Marks:</strong>
-                  <span className="text-amber-300 font-bold">{qpData.maxMarks} Marks</span>
+                  <span className="text-amber-300 font-bold">{currentQp.maxMarks} Marks</span>
                 </span>
                 <span className="flex items-center gap-1.5">
                   <strong className="text-blue-200 font-semibold">Duration:</strong>
-                  <span className="text-white font-bold">{qpData.duration}</span>
+                  <span className="text-white font-bold">{currentQp.duration}</span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <strong className="text-blue-200 font-semibold">Assigned Sets:</strong>
+                  <span className="text-emerald-300 font-bold">
+                    {Number(assignment.numSets) === 2 ? "2 Sets (Set A & B)" : "1 Set (Set A)"}
+                  </span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <strong className="text-blue-200 font-semibold">Remuneration:</strong>
+                  <span className="text-amber-300 font-bold">
+                    {Number(assignment.numSets) === 2 ? "₹3,000" : "₹2,000"}
+                  </span>
                 </span>
               </div>
             </div>
@@ -1410,8 +1475,14 @@ export default function ExternalSetterWorkbench() {
                   I, <strong className="text-zinc-900 font-semibold">{authenticatedSetter.name}</strong>,
                   working as Faculty at <strong className="text-zinc-900 font-semibold">{authenticatedSetter.collegeName || "Invited Institution"}</strong>,
                   hereby acknowledge receipt of the appointment order for setting the End Semester Examination ({effectiveExamSession}) Question Paper
+                  ({Number(assignment.numSets) === 2 ? "2 Sets - Set A & Set B" : "1 Set - Set A"})
                   for the course <strong className="text-zinc-900 font-semibold">{assignment.subjectCode} - {assignment.subjectTitle}</strong>
                   (Regulation R-{assignment.regulation}, Batch {assignment.batch}).
+                </p>
+                <p className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-950 font-sans font-semibold text-[11px]">
+                  Remuneration Rate: {Number(assignment.numSets) === 2
+                    ? "Rs. 3,000/- for setting two Question Papers (Set A & Set B)"
+                    : "Rs. 2,000/- for setting a single Question Paper (Set A)"}
                 </p>
                 <p className="text-[11px] text-zinc-500 font-sans italic border-l-2 border-[#120c7a] pl-3">
                   I undertake to maintain complete secrecy and confidentiality of the question paper framed by me in accordance with the regulations prescribed by the Controller of Examinations.
@@ -1578,20 +1649,19 @@ export default function ExternalSetterWorkbench() {
               {(assignment?.syllabusUrl || assignment?.syllabusFileUrl) ? (
                 <div className="space-y-3">
                   <div className="p-2.5 bg-blue-50 border border-blue-200/90 rounded-2xl text-[11px] font-bold text-[#120c7a] flex items-center justify-between">
-                    <span className="truncate max-w-[170px]">📄 {assignment.syllabusFileName || "Course Syllabus PDF"}</span>
-                    <a
-                      href={assignment.syllabusUrl || assignment.syllabusFileUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-[10px] text-blue-700 underline font-extrabold hover:text-blue-900 shrink-0"
+                    <span className="truncate max-w-[200px]">📄 {assignment.syllabusFileName || "Course Syllabus Document"}</span>
+                    <button
+                      type="button"
+                      onClick={() => setShowSyllabusDrawer(true)}
+                      className="text-[10px] text-blue-700 font-extrabold hover:text-blue-900 bg-white px-2 py-0.5 rounded-md border border-blue-200 shadow-2xs shrink-0 cursor-pointer"
                     >
-                      Fullscreen
-                    </a>
+                      Expand Viewer
+                    </button>
                   </div>
                   <div className="border border-zinc-200 rounded-2xl overflow-hidden bg-zinc-100 shadow-inner h-[620px]">
                     <iframe
-                      src={assignment.syllabusUrl || assignment.syllabusFileUrl}
-                      title="Uploaded Course Syllabus PDF"
+                      src={getEmbeddableDocumentUrl(assignment.syllabusUrl || assignment.syllabusFileUrl)}
+                      title="Uploaded Course Syllabus Document"
                       className="w-full h-full border-none"
                     />
                   </div>
@@ -1691,7 +1761,7 @@ export default function ExternalSetterWorkbench() {
                       ESE Question Paper Editor
                     </h2>
                     <p className="text-zinc-500 text-xs font-semibold mt-0.5">
-                      Structured text editor according to ESE Pattern ({qpData.maxMarks} Marks).
+                      Structured text editor according to ESE Pattern ({currentQp.maxMarks} Marks).
                     </p>
                   </div>
 
@@ -1704,9 +1774,37 @@ export default function ExternalSetterWorkbench() {
                   </button>
                 </div>
 
+                {/* Dual Paper Switcher for Editor (Set A vs Set B) */}
+                {Number(assignment?.numSets) === 2 && (
+                  <div className="flex flex-wrap items-center gap-2 p-2 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl border border-blue-200 shadow-2xs">
+                    <span className="text-xs font-black text-[#120c7a] px-2 flex items-center gap-1.5">
+                      <Layers className="h-4 w-4" /> Active Question Paper:
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setActiveSet("setA")}
+                      className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${activeSet === "setA" ? "bg-[#120c7a] text-white shadow-sm ring-2 ring-blue-400/30" : "bg-white text-zinc-700 hover:bg-zinc-100 border border-zinc-200"}`}
+                    >
+                      <span>Paper Set A (Paper 1)</span>
+                      {activeSet === "setA" && <span className="h-2 w-2 rounded-full bg-emerald-400" />}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveSet("setB")}
+                      className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${activeSet === "setB" ? "bg-[#120c7a] text-white shadow-sm ring-2 ring-blue-400/30" : "bg-white text-zinc-700 hover:bg-zinc-100 border border-zinc-200"}`}
+                    >
+                      <span>Paper Set B (Paper 2)</span>
+                      {activeSet === "setB" && <span className="h-2 w-2 rounded-full bg-emerald-400" />}
+                    </button>
+                    <span className="ml-auto text-[11px] font-bold text-indigo-900 bg-white px-2.5 py-1 rounded-lg border border-indigo-100">
+                      Currently Editing: <strong className="text-[#120c7a]">{activeSet === "setA" ? "Set A" : "Set B"}</strong>
+                    </span>
+                  </div>
+                )}
+
                 {/* Dynamic Sections & Question Inputs */}
                 <div className="space-y-8">
-                  {qpData.sections?.map((sec, secIdx) => (
+                  {currentQp.sections?.map((sec, secIdx) => (
                     <div key={sec.id || secIdx} className="p-5 rounded-3xl bg-zinc-50 border border-zinc-200 space-y-4">
                       <div className="flex items-center justify-between border-b border-zinc-200 pb-3">
                         <div>
@@ -1731,9 +1829,9 @@ export default function ExternalSetterWorkbench() {
                                 <select
                                   value={q.blooms}
                                   onChange={(e) => {
-                                    const updated = { ...qpData };
+                                    const updated = JSON.parse(JSON.stringify(currentQp));
                                     updated.sections[secIdx].questions[qIdx].blooms = e.target.value;
-                                    setQpData(updated);
+                                    setCurrentQp(updated);
                                   }}
                                   className="bg-amber-50 border border-amber-200 text-xs text-amber-800 font-extrabold rounded-lg px-2.5 py-1"
                                 >
@@ -1748,9 +1846,9 @@ export default function ExternalSetterWorkbench() {
                                 <select
                                   value={q.co}
                                   onChange={(e) => {
-                                    const updated = { ...qpData };
+                                    const updated = JSON.parse(JSON.stringify(currentQp));
                                     updated.sections[secIdx].questions[qIdx].co = e.target.value;
-                                    setQpData(updated);
+                                    setCurrentQp(updated);
                                   }}
                                   className="bg-blue-50 border border-blue-200 text-xs text-[#120c7a] font-extrabold rounded-lg px-2.5 py-1"
                                 >
@@ -1766,9 +1864,9 @@ export default function ExternalSetterWorkbench() {
                                   type="number"
                                   value={q.marks}
                                   onChange={(e) => {
-                                    const updated = { ...qpData };
+                                    const updated = JSON.parse(JSON.stringify(currentQp));
                                     updated.sections[secIdx].questions[qIdx].marks = Number(e.target.value);
-                                    setQpData(updated);
+                                    setCurrentQp(updated);
                                   }}
                                   className="w-16 bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 font-extrabold rounded-lg px-2 py-1 text-center"
                                   placeholder="Marks"
@@ -1779,12 +1877,12 @@ export default function ExternalSetterWorkbench() {
                             {/* Question Text Area with CKEditor */}
                             <div className="space-y-3">
                               <QuestionCKEditor
-                                id={`sec_${secIdx}_q_${qIdx}_main`}
+                                id={`sec_${activeSet}_${secIdx}_q_${qIdx}_main`}
                                 value={q.text || ""}
                                 onChange={(val) => {
-                                  const updated = { ...qpData };
+                                  const updated = JSON.parse(JSON.stringify(currentQp));
                                   updated.sections[secIdx].questions[qIdx].text = val;
-                                  setQpData(updated);
+                                  setCurrentQp(updated);
                                 }}
                                 placeholder={`Enter text for Question ${q.qNo}${q.optionB !== undefined ? '(a)' : ''}...`}
                               />
@@ -1883,12 +1981,12 @@ export default function ExternalSetterWorkbench() {
                                   OR Choice - Option (b) Question Text:
                                 </span>
                                 <QuestionCKEditor
-                                  id={`sec_${secIdx}_q_${qIdx}_optB`}
+                                  id={`sec_${activeSet}_${secIdx}_q_${qIdx}_optB`}
                                   value={q.optionB || ""}
                                   onChange={(val) => {
-                                    const updated = { ...qpData };
+                                    const updated = JSON.parse(JSON.stringify(currentQp));
                                     updated.sections[secIdx].questions[qIdx].optionB = val;
-                                    setQpData(updated);
+                                    setCurrentQp(updated);
                                   }}
                                   placeholder={`Enter Option (b) text for Question ${q.qNo}...`}
                                 />
@@ -2137,20 +2235,47 @@ export default function ExternalSetterWorkbench() {
               </div>
             )}
 
+            {/* Dual Paper Switcher for Preview (Set A vs Set B) */}
+            {Number(assignment?.numSets) === 2 && (
+              <div className="flex items-center justify-center gap-3 print:hidden">
+                <div className="p-1.5 bg-zinc-100 rounded-2xl border border-zinc-200 flex items-center gap-2">
+                  <span className="text-xs font-black text-[#120c7a] px-2 flex items-center gap-1.5">
+                    <Layers className="h-4 w-4" /> Preview Paper:
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setActiveSet("setA")}
+                    className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${activeSet === "setA" ? "bg-[#120c7a] text-white shadow-xs" : "bg-white text-zinc-700 hover:bg-zinc-200/60"}`}
+                  >
+                    Question Paper Set A
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveSet("setB")}
+                    className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${activeSet === "setB" ? "bg-[#120c7a] text-white shadow-xs" : "bg-white text-zinc-700 hover:bg-zinc-200/60"}`}
+                  >
+                    Question Paper Set B
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Official Print/Preview Layout Document */}
             <div className="bg-white text-zinc-900 rounded-2xl p-8 sm:p-12 shadow-md font-serif space-y-6 w-full max-w-7xl mx-auto border border-zinc-300">
               <div className="text-center border-b pb-4">
-                <h1 className="text-xl font-bold uppercase tracking-wider text-[#120c7a]">End Semester Examination – {effectiveExamSession}</h1>
+                <h1 className="text-xl font-bold uppercase tracking-wider text-[#120c7a]">
+                  End Semester Examination – {effectiveExamSession} {Number(assignment.numSets) === 2 ? (activeSet === "setB" ? "(SET B)" : "(SET A)") : ""}
+                </h1>
                 <h2 className="text-base font-bold mt-1 text-zinc-800">{assignment.subjectCode} - {assignment.subjectTitle}</h2>
                 <div className="flex justify-between text-xs mt-3 font-sans font-medium text-zinc-700 px-4">
                   <span>Batch: {assignment.batch}</span>
                   <span>Regulation: R-{assignment.regulation}</span>
-                  <span>Max Marks: {qpData.maxMarks}</span>
-                  <span>Duration: {qpData.duration}</span>
+                  <span>Max Marks: {currentQp.maxMarks}</span>
+                  <span>Duration: {currentQp.duration}</span>
                 </div>
               </div>
 
-              {qpData.sections?.map((sec) => (
+              {currentQp.sections?.map((sec) => (
                 <div key={sec.id} className="space-y-3 my-6">
                   <div className="border-b-2 border-black pb-1">
                     <h3 className="font-bold text-sm uppercase font-sans text-zinc-900">{sec.name}</h3>
@@ -2337,205 +2462,13 @@ export default function ExternalSetterWorkbench() {
       </main>
 
       {/* ========================================================================= */}
-      {/* 4. IN-PAGE APPOINTMENT ORDER COPY WEB PREVIEW MODAL (NO NEW TAB!) */}
+      {/* 4. OFFICIAL APPOINTMENT ORDER COPY PREVIEW MODAL */}
       {/* ========================================================================= */}
       {showOrderModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/60 backdrop-blur-md p-4 sm:p-6 overflow-y-auto">
-
-          <div className="w-full max-w-4xl bg-white border border-zinc-200 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in duration-200">
-
-            {/* Modal Header (Crisp #120c7a Royal Blue) */}
-            <div className="bg-[#120c7a] text-white px-6 py-4 flex items-center justify-between gap-4 shrink-0">
-              <div className="flex items-center gap-3">
-                <div className="h-9 w-9 bg-white/10 rounded-xl flex items-center justify-center text-amber-300">
-                  <Landmark className="h-5 w-5" />
-                </div>
-                <div>
-                  <h3 className="font-black text-white text-sm sm:text-base leading-tight">
-                    Official Appointment Order Copy (Confidential)
-                  </h3>
-                  <p className="text-[11px] text-blue-200 font-mono">
-                    Ref: COE/ESE-QP/2026/ORD-{assignment?.id?.slice(0, 8).toUpperCase() || "78912"}
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => window.print()}
-                  className="px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-bold flex items-center gap-1.5 border border-white/20 transition-all cursor-pointer"
-                >
-                  <Printer className="h-3.5 w-3.5 text-amber-300" />
-                  <span className="hidden sm:inline">Print Document</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setShowOrderModal(false)}
-                  className="h-9 w-9 rounded-xl bg-white/10 hover:bg-rose-600 text-white flex items-center justify-center transition-all cursor-pointer"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-            </div>
-
-            {/* Modal Content Area (Renders File Image / PDF Iframe / Official Academic Template) */}
-            <div className="flex-1 overflow-y-auto p-6 bg-zinc-100 space-y-6">
-
-              {assignment?.orderCopyUrl ? (
-                /* If orderCopyUrl is provided in Firestore */
-                (assignment.orderCopyUrl.startsWith("data:application/pdf") || assignment.orderCopyUrl.includes(".pdf") || assignment.orderCopyUrl.includes("pdf")) ? (
-                  <div className="w-full space-y-3">
-                    <div className="flex justify-end">
-                      <a
-                        href={assignment.orderCopyUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="px-3.5 py-1.5 bg-[#120c7a] text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-xs"
-                      >
-                        <ExternalLink className="h-3.5 w-3.5" /> Open Document in New Tab
-                      </a>
-                    </div>
-                    <object
-                      data={assignment.orderCopyUrl}
-                      type="application/pdf"
-                      className="w-full h-[65vh] rounded-2xl border border-zinc-300 bg-white shadow-md"
-                    >
-                      <iframe
-                        src={assignment.orderCopyUrl}
-                        className="w-full h-full rounded-2xl border-none"
-                        title="Appointment Order Copy PDF"
-                      >
-                        <div className="p-6 text-center space-y-3 bg-white rounded-2xl border border-zinc-200">
-                          <p className="text-xs text-zinc-700 font-bold">Document preview restricted by browser settings.</p>
-                          <a
-                            href={assignment.orderCopyUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="px-4 py-2 bg-[#120c7a] text-white rounded-xl text-xs font-bold inline-block"
-                          >
-                            Click to View / Download Appointment Order Copy
-                          </a>
-                        </div>
-                      </iframe>
-                    </object>
-                  </div>
-                ) : (
-                  <div className="flex justify-center bg-white p-4 rounded-2xl border border-zinc-200 shadow-md">
-                    <img
-                      src={assignment.orderCopyUrl}
-                      alt="Appointment Order Copy"
-                      className="max-h-[70vh] object-contain rounded-xl"
-                    />
-                  </div>
-                )
-              ) : (
-                /* Official Masterpiece Academic Appointment Order Document Layout */
-                <div className="bg-white text-zinc-900 rounded-2xl p-8 sm:p-12 shadow-xl border border-zinc-300 font-serif max-w-3xl mx-auto space-y-6 relative overflow-hidden">
-
-                  {/* Document Header */}
-                  <div className="text-center border-b pb-6 space-y-1.5">
-                    <h2 className="text-xl font-black uppercase tracking-wider text-[#120c7a] font-sans">
-                      OFFICE OF THE CONTROLLER OF EXAMINATIONS
-                    </h2>
-                    <h3 className="text-xs font-bold uppercase tracking-widest text-zinc-600 font-sans">
-                      CONFIDENTIAL APPOINTMENT ORDER • END SEMESTER EXAMINATIONS – {effectiveExamSession.toUpperCase()}
-                    </h3>
-                    <div className="flex justify-between text-[11px] font-sans text-zinc-600 pt-3 border-t">
-                      <span><strong>Ref:</strong> COE/ESE-QP/2026/SEC-{assignment?.id?.slice(0, 6).toUpperCase() || "88412"}</span>
-                      <span><strong>Date:</strong> {new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</span>
-                    </div>
-                  </div>
-
-                  {/* Order Recipient Address */}
-                  <div className="text-xs space-y-1 font-sans text-zinc-800 border-l-2 border-[#120c7a] pl-4 py-1">
-                    <p className="font-bold text-zinc-900">TO:</p>
-                    <p className="font-bold text-[#120c7a] text-sm">{authenticatedSetter?.name || "Invited External Examiner"}</p>
-                    <p>{authenticatedSetter?.collegeName || "Department of Engineering, IIT / NIT / Autonomous University"}</p>
-                    <p>Email: {authenticatedSetter?.email || "external.setter@institution.edu"}</p>
-                  </div>
-
-                  {/* Body Text */}
-                  <div className="text-xs space-y-3 leading-relaxed text-zinc-800">
-                    <p>Sir / Madam,</p>
-                    <p>
-                      I am pleased to inform you that you have been appointed as the <strong>External Question Paper Setter</strong> for the
-                      End Semester Examinations ({effectiveExamSession}). The details of the subject assigned to you are given below:
-                    </p>
-                  </div>
-
-                  {/* Subject Details Table */}
-                  <div className="overflow-hidden border border-zinc-300 rounded-xl font-sans">
-                    <table className="w-full text-xs text-left">
-                      <thead className="bg-zinc-100 text-zinc-900 font-extrabold border-b">
-                        <tr>
-                          <th className="p-3 border-r">Course Code</th>
-                          <th className="p-3 border-r">Course Title</th>
-                          <th className="p-3 border-r">Regulation</th>
-                          <th className="p-3">Max Marks & Duration</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y text-zinc-800 font-medium">
-                        <tr>
-                          <td className="p-3 border-r font-bold font-mono text-[#120c7a]">{assignment?.subjectCode}</td>
-                          <td className="p-3 border-r font-bold">{assignment?.subjectTitle}</td>
-                          <td className="p-3 border-r">R-{assignment?.regulation} ({assignment?.batch})</td>
-                          <td className="p-3">{qpData.maxMarks} Marks ({qpData.duration})</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {/* Guidelines & Terms */}
-                  <div className="text-[11px] space-y-2 text-zinc-700 leading-relaxed font-sans bg-zinc-50 p-4 rounded-xl border border-zinc-200">
-                    <p className="font-extrabold text-zinc-900 uppercase tracking-wider text-[10px]">
-                      Important Guidelines for External Question Setter:
-                    </p>
-                    <ul className="list-disc pl-4 space-y-1">
-                      <li>Question paper must strictly adhere to the Bloom's Taxonomy (K1 to K6) and CO-PO mappings provided in the syllabus.</li>
-                      <li>Maintain strict confidentiality of the questions framed and ensure no copies are retained.</li>
-                      <li>Submit the completed question paper via the secure External Setter Workbench on or before the due date.</li>
-                      <li>Remuneration and honorarium will be credited directly to your bank account upon submission.</li>
-                    </ul>
-                  </div>
-
-                  {/* Document Footer Signatures */}
-                  <div className="pt-8 border-t border-zinc-200 flex items-end justify-between text-xs font-sans text-zinc-700">
-                    <div>
-                      <p className="text-[10px] text-zinc-500 uppercase font-bold">Verified By:</p>
-                      <p className="font-bold text-zinc-900">Board of Studies (BoS)</p>
-                    </div>
-                    <div className="text-right">
-                      <div className="h-10 border-b border-dashed border-zinc-400 mb-1 inline-block px-4">
-                        <span className="text-[10px] italic text-[#120c7a] font-bold block pt-4">Digitally Signed & Sealed</span>
-                      </div>
-                      <p className="font-extrabold text-zinc-900">Controller of Examinations</p>
-                      <p className="text-[10px] text-zinc-500">Autonomous Examination Wing</p>
-                    </div>
-                  </div>
-
-                </div>
-              )}
-            </div>
-
-            {/* Modal Footer Actions */}
-            <div className="bg-zinc-50 border-t border-zinc-200 px-6 py-4 flex items-center justify-between">
-              <span className="text-xs text-zinc-500 font-semibold">
-                Confidential Document • Web Preview Mode
-              </span>
-
-              <button
-                type="button"
-                onClick={() => setShowOrderModal(false)}
-                className="px-6 py-2.5 rounded-xl bg-[#120c7a] hover:bg-[#0e0a60] text-white font-extrabold text-xs shadow-md transition-all cursor-pointer"
-              >
-                Close Preview
-              </button>
-            </div>
-
-          </div>
-        </div>
+        <AppointmentOrderCopyModal
+          assignment={assignment}
+          onClose={() => setShowOrderModal(false)}
+        />
       )}
 
       {/* ========================================================================= */}
@@ -2633,20 +2566,9 @@ export default function ExternalSetterWorkbench() {
             <div className="flex items-center justify-between pb-3.5 border-b border-zinc-100 shrink-0">
               <div className="flex items-center gap-2 text-amber-900 font-black text-sm">
                 <FileText className="h-5 w-5 text-amber-700" />
-                <span>Question Bank Reference PDF</span>
+                <span>Question Bank Reference Document</span>
               </div>
               <div className="flex items-center gap-2">
-                {(assignment?.qbUrl || assignment?.qbFileUrl) && (
-                  <a
-                    href={assignment.qbUrl || assignment.qbFileUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="px-3 py-1.5 bg-amber-50 text-amber-900 border border-amber-200 hover:bg-amber-100 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs"
-                  >
-                    <ExternalLink className="h-3.5 w-3.5 text-amber-700" />
-                    Open PDF in New Tab
-                  </a>
-                )}
                 <button
                   onClick={() => setShowQbDrawer(false)}
                   className="h-8 w-8 rounded-xl bg-zinc-100 text-zinc-500 hover:text-zinc-900 flex items-center justify-center cursor-pointer"
@@ -2664,13 +2586,13 @@ export default function ExternalSetterWorkbench() {
               </span>
             </div>
 
-            {/* Content Display: QB PDF Viewer or Empty State */}
+            {/* Content Display: QB Document Viewer or Empty State */}
             {(assignment?.qbUrl || assignment?.qbFileUrl) ? (
               <div className="flex-1 flex flex-col space-y-2 min-h-0">
                 <div className="flex-1 border border-zinc-200 rounded-2xl overflow-hidden bg-zinc-100 shadow-inner flex flex-col min-h-[500px]">
                   <iframe
-                    src={assignment.qbUrl || assignment.qbFileUrl}
-                    title="Uploaded Question Bank PDF"
+                    src={getEmbeddableDocumentUrl(assignment.qbUrl || assignment.qbFileUrl)}
+                    title="Uploaded Question Bank Document"
                     className="w-full h-full flex-1 border-none min-h-[550px]"
                   />
                 </div>
@@ -2678,8 +2600,8 @@ export default function ExternalSetterWorkbench() {
             ) : (
               <div className="py-16 text-center text-zinc-500 text-xs font-semibold flex flex-col items-center justify-center gap-2">
                 <FileText className="h-10 w-10 text-zinc-300 stroke-1" />
-                <p>No Question Bank PDF uploaded for this assignment.</p>
-                <p className="text-[11px] text-zinc-400">COE Admin can upload the Question Bank PDF during assignment creation.</p>
+                <p>No Question Bank document linked for this assignment.</p>
+                <p className="text-[11px] text-zinc-400">COE Admin can link the Question Bank document during assignment creation.</p>
               </div>
             )}
           </div>
@@ -2699,17 +2621,6 @@ export default function ExternalSetterWorkbench() {
                 <span>Subject Syllabus & Outcomes Reference</span>
               </div>
               <div className="flex items-center gap-2">
-                {(assignment?.syllabusUrl || assignment?.syllabusFileUrl) && (
-                  <a
-                    href={assignment.syllabusUrl || assignment.syllabusFileUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="px-3 py-1.5 bg-blue-50 text-[#120c7a] border border-blue-200 hover:bg-blue-100 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs"
-                  >
-                    <ExternalLink className="h-3.5 w-3.5" />
-                    Open PDF in New Tab
-                  </a>
-                )}
                 <button
                   onClick={() => setShowSyllabusDrawer(false)}
                   className="h-8 w-8 rounded-xl bg-zinc-100 text-zinc-500 hover:text-zinc-900 flex items-center justify-center cursor-pointer"
@@ -2723,7 +2634,7 @@ export default function ExternalSetterWorkbench() {
             <div className="p-3 bg-blue-50 border border-blue-200/90 rounded-2xl text-xs font-bold text-[#120c7a] flex items-center justify-between shrink-0">
               <span>{assignment?.subjectCode || syllabusData?.subjectCode} - {assignment?.subjectTitle || syllabusData?.subjectTitle || "Course Syllabus"}</span>
               <span className="text-[10px] bg-blue-200/80 text-blue-900 font-extrabold px-2 py-0.5 rounded-md uppercase tracking-wider">
-                {(assignment?.syllabusUrl || assignment?.syllabusFileUrl) ? "Official PDF Document" : "Standard Syllabus"}
+                {(assignment?.syllabusUrl || assignment?.syllabusFileUrl) ? "Official Document" : "Standard Syllabus"}
               </span>
             </div>
 
@@ -2732,8 +2643,8 @@ export default function ExternalSetterWorkbench() {
               <div className="flex-1 flex flex-col space-y-2 min-h-0">
                 <div className="flex-1 border border-zinc-200 rounded-2xl overflow-hidden bg-zinc-100 shadow-inner flex flex-col min-h-[500px]">
                   <iframe
-                    src={assignment.syllabusUrl || assignment.syllabusFileUrl}
-                    title="Uploaded Course Syllabus PDF"
+                    src={getEmbeddableDocumentUrl(assignment.syllabusUrl || assignment.syllabusFileUrl)}
+                    title="Uploaded Course Syllabus Document"
                     className="w-full h-full flex-1 border-none min-h-[550px]"
                   />
                 </div>
@@ -3361,6 +3272,35 @@ export default function ExternalSetterWorkbench() {
                             <option value="Current (CA)">Current Account (CA)</option>
                           </select>
                         )}
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Table 3: Remuneration Claim Calculation */}
+              <div className="space-y-2 font-sans">
+                <h3 className="font-black text-xs text-[#120c7a] uppercase">III. Remuneration Claim Calculation</h3>
+                <table className="w-full border-collapse border border-zinc-900 text-left text-xs">
+                  <tbody>
+                    <tr>
+                      <td className="border border-zinc-900 p-2.5 font-bold w-2/5 bg-zinc-50">No. of Question Paper Sets:</td>
+                      <td className="border border-zinc-900 p-2.5 font-black text-[#120c7a]">
+                        {Number(assignment?.numSets) === 2 ? "2 Sets (Set A & Set B)" : "1 Set (Set A)"}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td className="border border-zinc-900 p-2.5 font-bold bg-zinc-50">Remuneration Rate:</td>
+                      <td className="border border-zinc-900 p-2.5 font-semibold text-zinc-700">
+                        {Number(assignment?.numSets) === 2
+                          ? "Rs. 3,000/- (for setting two Question Papers: Set A & Set B)"
+                          : "Rs. 2,000/- (for setting a single Question Paper: Set A)"}
+                      </td>
+                    </tr>
+                    <tr className="bg-amber-50">
+                      <td className="border border-zinc-900 p-2.5 font-black text-zinc-900">Total Remuneration Claim Payable:</td>
+                      <td className="border border-zinc-900 p-2.5 font-black text-emerald-800 text-sm">
+                        ₹{Number(assignment?.numSets) === 2 ? "3,000" : "2,000"} /-
                       </td>
                     </tr>
                   </tbody>

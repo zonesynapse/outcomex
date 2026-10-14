@@ -1,5 +1,54 @@
 ## Summary of Changes
 
+### 553. Automatic Official Appointment Order Copy Generation & 1-Set / 2-Set Question Paper Workflow (`src/pages/COE/CoeDashboard.jsx`, `src/pages/COE/ExternalSetterWorkbench.jsx`, `src/components/AppointmentOrderCopyModal.jsx`)
+- **Goal**:
+  1. Remove manual file upload for Appointment Order Copy (`orderFile` <= 30KB) in `CoeDashboard.jsx`.
+  2. Implement automated generation of the official CKCET Autonomous Appointment Order Copy based on the institutional letterhead template image provided by the user.
+  3. Allow COE in `CoeDashboard.jsx` to define either **1 Set** (Set A, ₹2,000 remuneration) or **2 Sets** (Set A & Set B, ₹3,000 remuneration) per external setter assignment.
+  4. Ensure both 1 Set and 2 Sets configurations are seamlessly supported across generated appointment letters, email dispatch drafts, external setter acceptance declarations, dual-paper workbench editor, print/preview layouts, remuneration claim bills, and COE scrutiny reviews.
+- **Key Enhancements**:
+  1. **Official Appointment Order Letterhead Modal (`src/components/AppointmentOrderCopyModal.jsx`)**:
+     - Exact replica of the user's template: CKCET header logo banner, Office of the Controller of Examinations, AICTE/Anna University/NAAC 'A' grade accreditation details.
+     - Addressed to `Dear Prof. {setterName}`, standard greetings, and official subject line.
+     - **Table 1 (Question Paper Details)**: Degree, Programme, Regulations, Semester, Duration, and Max Marks.
+     - **Table 2 (Subject Details)**: Subject Code, Subject Name, No. of Question Papers (1 Set vs 2 Sets), and Last Date for Submission.
+     - Official terms, relative non-appearance clause, remuneration rules (Rs. 3,000/- for 2 sets / Rs. 2,000/- for 1 set), confidentiality clause, and COE signature block (`Dr. N. Kamalakannan, Controller of Examinations`).
+     - In-modal print action (`window.print()`) and save-to-PDF support.
+  2. **COE Dashboard Set Selection & Auto Generation (`src/pages/COE/CoeDashboard.jsx`)**:
+     - Removed obsolete manual PDF/image upload box and size limit errors for order copies.
+     - Added dedicated **1 Set vs 2 Sets** interactive selector pills with real-time remuneration indicators (₹2,000 vs ₹3,000).
+     - Added Last Date for Submission date picker.
+     - Automatically generates structured `orderCopyData` and persists `numSets`, `submissionDeadline`, `remuneration`, and credentials in Firestore (`coe_setter_assignments`).
+     - Added "Order" action button in assignments table triggering `AppointmentOrderCopyModal`.
+     - In Tab 4 (Submitted Paper Review), added dual-paper tab switcher (`Set A` vs `Set B`) when `submittedPaperB` is present.
+  3. **External Setter Workbench Dual-Set Architecture (`src/pages/COE/ExternalSetterWorkbench.jsx`)**:
+     - Loaded both Set A (`qpData`) and Set B (`qpDataB`) dynamically from assigned pattern or stored submissions.
+     - Step 2 Acceptance: Displays exact assigned sets and remuneration rate.
+     - Step 3 Editor: Added dual-paper switcher banner (`[Paper Set A]` vs `[Paper Set B]`) allowing setters to edit both papers seamlessly with isolated question IDs in CKEditor.
+     - Step 3 Preview: Added Set Switcher tabs allowing previewing and printing Set A or Set B.
+     - Split Questions: Validates both Set A and Set B subparts against total marks.
+     - Submission: Saves both `submittedPaper` (Set A) and `submittedPaperB` (Set B) to Firestore.
+     - Remuneration Claim Bill: Added Table III detailing exact remuneration (₹3,000 for 2 Sets, ₹2,000 for 1 Set).
+- **Result**: Production build succeeds cleanly in 8.38s with 0 errors.
+
+### 552. Replace File Upload with OneDrive Share Link Paste & In-App Document Preview (`src/pages/COE/CoeDashboard.jsx`, `src/pages/COE/ExternalSetterWorkbench.jsx`, `src/utils/documentEmbedUtils.js`)
+- **Goal**:
+  1. In `CoeDashboard.jsx`, remove the restrictive file upload inputs (with 100KB/300KB/500KB limits) for Syllabus and Question Bank.
+  2. Replace them with clean, modern Link Paste inputs supporting OneDrive / SharePoint / Cloud "Anyone with link can view" sharing URLs.
+  3. In `ExternalSetterWorkbench.jsx`, ensure that external setters only view the document preview inside the embedded viewer/drawer, completely hiding the raw link URL from the user.
+- **Key Enhancements**:
+  1. **Embeddable Document URL Resolver (`src/utils/documentEmbedUtils.js`)**:
+     - Automatically transforms OneDrive for Business / SharePoint links (`action=embedview`), Personal OneDrive links (`1drv.ms` via Microsoft Graph shares content proxy), and Google Drive links into direct iframe-embeddable preview URLs.
+  2. **COE Assignment Creator UI (`src/pages/COE/CoeDashboard.jsx`)**:
+     - Removed strict PDF file upload boxes and size limit checks for Question Bank and Syllabus.
+     - Added dedicated Link Paste input boxes with `LinkIcon`, clear helper text, and real-time link processing.
+     - Automatically converts pasted links to embeddable preview URLs and saves both `qbUrl`, `qbRawLink`, `syllabusUrl`, and `syllabusRawLink`.
+  3. **External Setter Document Viewer (`src/pages/COE/ExternalSetterWorkbench.jsx`)**:
+     - Removed all external `target="_blank"` anchor tags that exposed the raw OneDrive link in new tabs.
+     - Ensured Syllabus (sidebar and drawer) and Question Bank (drawer) display directly inside the clean in-app iframe preview using `getEmbeddableDocumentUrl`.
+     - Replaced the sidebar "Fullscreen" link with an in-app "Expand Viewer" button opening the full-height Syllabus Drawer.
+- **Result**: Production build succeeds cleanly in 7.97s with 0 errors.
+
 ### 551. Fix Attitude Score Reflection & Multi-Institution Support in HR Portal (`hr-portal/src/pages/AppraisalReviews.jsx`, `hr-portal/src/pages/HRGrossAnalytics.jsx`, `hr-portal/src/pages/Dashboard.jsx`)
 - **Problem**:
   - In `hr-portal`, when attitude score was evaluated and saved for staff/faculty across `"ckcoe"`, `"ckspk"`, and `"ckspe"`, the attitude score and submission status were not reflecting in the Appraisal Reviews table, candidate badges, or in the 40% attitude component calculation in `hr-portal/src/pages/HRGrossAnalytics.jsx`.
