@@ -2700,7 +2700,7 @@ export default function CoeDashboard() {
                     />
                   </div>
                   <p className="text-[11px] text-zinc-500 font-medium mt-1">
-                    Paste the OneDrive link. The external setter will see an in-app document preview without seeing the raw link.
+                    Paste OneDrive / SharePoint link, or Google Drive ("Anyone with link") link for direct in-app preview.
                   </p>
                 </div>
 
@@ -2711,7 +2711,7 @@ export default function CoeDashboard() {
                       Course Syllabus Document Link <span className="text-zinc-400 font-normal">(Optional)</span>
                     </label>
                     <span className="text-[11px] font-extrabold text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-0.5 rounded-md">
-                      OneDrive / SharePoint "Anyone can view" Link
+                      OneDrive / SharePoint / Google Drive Link
                     </span>
                   </div>
 
@@ -2721,14 +2721,14 @@ export default function CoeDashboard() {
                     </div>
                     <input
                       type="url"
-                      placeholder="Paste OneDrive / SharePoint link (e.g. https://ckcet-my.sharepoint.com/... or 1drv.ms/...)"
+                      placeholder="Paste OneDrive / SharePoint / Google Drive link"
                       value={syllabusLink}
                       onChange={(e) => setSyllabusLink(e.target.value)}
                       className="w-full bg-[#f8fafc] border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-xs text-slate-900 font-semibold placeholder-slate-400 focus:bg-white focus:outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/15 transition-all shadow-inner"
                     />
                   </div>
                   <p className="text-[11px] text-zinc-500 font-medium mt-1">
-                    Paste the OneDrive link for the syllabus. Automatically embeds as a clean document viewer for the setter.
+                    Paste OneDrive / SharePoint or Google Drive ("Anyone can view") link. Embedded seamlessly for external setters.
                   </p>
                 </div>
 

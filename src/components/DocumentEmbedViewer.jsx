@@ -166,6 +166,25 @@ export default function DocumentEmbedViewer({
 
       {/* Embedded Iframe Container */}
       <div className="relative flex-1 border border-zinc-200 rounded-2xl overflow-hidden bg-zinc-100 shadow-inner flex flex-col" style={{ minHeight }}>
+        {isSharePointOrOneDrive && (
+          <div className="bg-gradient-to-r from-amber-50 to-orange-50 border-b border-amber-200 px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-xs text-amber-950 shrink-0 z-10 shadow-2xs">
+            <div className="flex items-center gap-2">
+              <span className="inline-flex h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+              <span className="font-bold text-[11px] sm:text-xs text-amber-900">
+                Microsoft sign-in prompt appearing? Click to view instantly without logging in:
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={handleOpenReaderWindow}
+              className="px-3 py-1 bg-[#120c7a] hover:bg-[#0e0a60] text-white rounded-lg font-black text-[11px] transition-all cursor-pointer shadow-xs active:scale-95 flex items-center gap-1"
+            >
+              <ExternalLink className="h-3 w-3 text-amber-300" />
+              <span>Open Document (No Login Required) ↗</span>
+            </button>
+          </div>
+        )}
+
         {isLoading && (
           <div className="absolute inset-0 bg-white/75 backdrop-blur-2xs flex flex-col items-center justify-center gap-2 z-10 pointer-events-none">
             <RefreshCw className="h-6 w-6 text-[#120c7a] animate-spin" />
