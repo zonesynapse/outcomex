@@ -35,8 +35,23 @@ import {
   Sliders,
   RotateCcw,
   BadgePercent,
-  ArrowRight
+  ArrowRight,
+  ArrowUpRight,
+  Lock
 } from "lucide-react";
+import {
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  BarChart,
+  Bar,
+  Cell,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+  LabelList
+} from "recharts";
 
 // Institutional Performance & Increment Criteria Matrix (from official rubrics)
 export const DEFAULT_INCREMENT_CRITERIA = {
@@ -100,6 +115,25 @@ export const DEFAULT_INCREMENT_CRITERIA = {
   promotionPct: 5 // Promotion - 5%
 };
 
+// Helper to format academic year e.g. "2021-22" -> "2022", "2022-23" -> "2023", "2024-25" -> "2025"
+export const formatAnalyticsYear = (yearStr) => {
+  if (!yearStr) return "";
+  const s = String(yearStr).trim();
+  const rangeMatch = s.match(/^(\d{4})\s*[-/]\s*(\d{2,4})$/);
+  if (rangeMatch) {
+    const startCentury = rangeMatch[1].slice(0, 2);
+    const end = rangeMatch[2];
+    return end.length === 2 ? `${startCentury}${end}` : end;
+  }
+  const generalMatch = s.match(/(\d{4})\s*[-/]\s*(\d{2,4})/);
+  if (generalMatch) {
+    const startCentury = generalMatch[1].slice(0, 2);
+    const end = generalMatch[2];
+    return end.length === 2 ? `${startCentury}${end}` : end;
+  }
+  return s;
+};
+
 export default function HRGrossAnalytics() {
   const [facultyAppraisals, setFacultyAppraisals] = useState([]);
   const [nonTeachingAppraisals, setNonTeachingAppraisals] = useState([]);
@@ -123,6 +157,8 @@ export default function HRGrossAnalytics() {
 
   // Modal States
   const [selectedCandidate, setSelectedCandidate] = useState(null);
+  const [selectedAnalyticsCandidate, setSelectedAnalyticsCandidate] = useState(null);
+  const [analyticsSalaryViewMode, setAnalyticsSalaryViewMode] = useState("PM");
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [criteriaModalOpen, setCriteriaModalOpen] = useState(false);
   const [editingCriteria, setEditingCriteria] = useState(DEFAULT_INCREMENT_CRITERIA);
@@ -130,6 +166,7 @@ export default function HRGrossAnalytics() {
   const [parsedPreviewList, setParsedPreviewList] = useState([]);
   const [uploadFileName, setUploadFileName] = useState("");
   const [uploadSaving, setUploadSaving] = useState(false);
+  const [uploadDetectedYears, setUploadDetectedYears] = useState([]);
 
   // Toast Notification State
   const [toast, setToast] = useState({ show: false, message: "", type: "success" });
@@ -244,6 +281,31 @@ export default function HRGrossAnalytics() {
     return () => unsubs.forEach((u) => u && u());
   }, []);
 
+  // Default salary years helper (generates past 3 academic years based on active academic year)
+  const getDefaultSalaryYears = (activeYear = "2024-2025") => {
+    const match = String(activeYear).match(/(20\d{2})/);
+    const startYear = match ? parseInt(match[1], 10) : new Date().getFullYear();
+    return [
+      `${startYear - 2}-${String(startYear - 1).slice(-2)}`,
+      `${startYear - 1}-${String(startYear).slice(-2)}`,
+      `${startYear}-${String(startYear + 1).slice(-2)}`
+    ];
+  };
+
+  // Discovered multi-year history keys across salariesMap
+  const discoveredSalaryYears = useMemo(() => {
+    const set = new Set();
+    Object.values(salariesMap).forEach((val) => {
+      if (val && typeof val === "object" && val.history) {
+        Object.keys(val.history).forEach((y) => set.add(y));
+      }
+    });
+    if (set.size >= 2) {
+      return Array.from(set).sort();
+    }
+    return getDefaultSalaryYears(selectedYear !== "All" ? selectedYear : "2024-2025");
+  }, [salariesMap, selectedYear]);
+
   // Helper: Find matching tier for a given score
   const getCandidateTier = (score, criteria) => {
     const tiers = criteria?.tiers || DEFAULT_INCREMENT_CRITERIA.tiers;
@@ -281,18 +343,31 @@ export default function HRGrossAnalytics() {
       );
       const facultyId = String(rawFacultyId || "").replace(/^['"`]+|['"`]+$/g, "").trim();
 
-      // Lookup Gross PM salary from salariesMap
+      // Lookup Gross PM salary from salariesMap (supports legacy number and new time-series object)
       const normId = normalizeId(facultyId);
       const normUid = normalizeId(app.uid);
       const normEmail = normalizeId(app.facultyEmail);
-      const grossPMSalary = (
+      const rawSalaryEntry = (
         salariesMap[normId] ??
         salariesMap[facultyId] ??
         salariesMap[normUid] ??
         salariesMap[normEmail] ??
         null
       );
-      const grossPM = grossPMSalary !== null && !isNaN(Number(grossPMSalary)) ? Number(grossPMSalary) : null;
+
+      let grossPM = null;
+      let salaryHistory = {};
+
+      if (rawSalaryEntry !== null && rawSalaryEntry !== undefined) {
+        if (typeof rawSalaryEntry === "object" && rawSalaryEntry !== null) {
+          salaryHistory = rawSalaryEntry.history || {};
+          const currentVal = rawSalaryEntry.current ?? (Object.values(salaryHistory).slice(-1)[0]);
+          grossPM = currentVal !== null && !isNaN(Number(currentVal)) ? Number(currentVal) : null;
+        } else if (!isNaN(Number(rawSalaryEntry))) {
+          grossPM = Number(rawSalaryEntry);
+          salaryHistory = { "Current": grossPM };
+        }
+      }
 
       // Promotion Status
       const isPromoted = Boolean(
@@ -344,31 +419,40 @@ export default function HRGrossAnalytics() {
       );
 
       // 1. Appraisal Review Form Mark (out of 100)
+      // The Principal's explicit Final Rating entered in AppraisalReviews.jsx takes highest priority
       let appraisalMark = 0;
-      if (app.collectionType === "non_teaching") {
-        appraisalMark = Number(
-          app.performanceEvaluation?.totalMarks ??
-          app.principalReview?.finalRating ??
-          0
-        );
+      const rawFinalRating = app.principalReview?.finalRating ?? app.principalReview?.rating ?? app.performanceEvaluation?.finalRating ?? app.finalRating;
+      const hasFinalRating = rawFinalRating !== undefined && rawFinalRating !== null && rawFinalRating !== "" && !isNaN(Number(rawFinalRating));
+
+      if (hasFinalRating) {
+        // Principal's entered Final Rating (e.g. 85 in AppraisalReviews.jsx)
+        appraisalMark = Number(rawFinalRating);
+      } else if (app.principalReview?.principalTotalScore !== undefined && app.principalReview?.principalTotalScore !== null && !isNaN(Number(app.principalReview.principalTotalScore))) {
+        appraisalMark = Number(app.principalReview.principalTotalScore);
+      } else if (app.collectionType === "non_teaching") {
+        appraisalMark = Number(app.performanceEvaluation?.totalMarks ?? app.totalScore ?? 0);
+      } else if (app.autoScore?.total !== undefined && !isNaN(Number(app.autoScore.total))) {
+        appraisalMark = Number(app.autoScore.total);
       } else {
-        if (app.principalReview?.principalTotalScore !== undefined && app.principalReview?.principalTotalScore !== null) {
-          appraisalMark = Number(app.principalReview.principalTotalScore) || 0;
-        } else if (app.principalReview?.finalRating !== undefined && !isNaN(Number(app.principalReview.finalRating))) {
-          appraisalMark = Number(app.principalReview.finalRating) || 0;
-        } else if (app.autoScore?.total !== undefined) {
-          appraisalMark = Number(app.autoScore.total) || 0;
-        }
+        appraisalMark = Number(app.totalScore || app.score || 0);
       }
 
-      // 2. Attitude Form Mark (Only if submitted to Principal)
+      // 2. Attitude Form Mark (Only if submitted/evaluated)
       const isAttitudeSubmitted = Boolean(
         app.attitudeSubmittedToPrincipal === true ||
-        (app.attitudeEvaluation?.submittedToPrincipal === true && app.attitudeEvaluation?.isDraft !== true)
+        (app.attitudeEvaluation?.submittedToPrincipal === true && app.attitudeEvaluation?.isDraft !== true) ||
+        (app.attitudeEvaluation?.totalScore !== undefined && Number(app.attitudeEvaluation?.totalScore) > 0 && app.attitudeEvaluation?.isDraft !== true && !app.attitudeDraft) ||
+        (app.attitudeForm?.totalScore !== undefined && Number(app.attitudeForm?.totalScore) > 0 && app.attitudeForm?.isDraft !== true && !app.attitudeDraft)
       );
       const attitudeObj = isAttitudeSubmitted ? (app.attitudeEvaluation || app.attitudeForm || {}) : {};
-      const attitudeTotalScore = Number(attitudeObj.totalScore) || 0;
-      const attitudeMaxScore = Number(attitudeObj.maxScore) || (attitudeObj.totalQuestions ? attitudeObj.totalQuestions * 5 : 80);
+      let attitudeTotalScore = Number(attitudeObj.totalScore) || 0;
+      if (attitudeTotalScore === 0 && attitudeObj.ratings) {
+        const ratingVals = Object.values(attitudeObj.ratings);
+        if (ratingVals.length > 0) {
+          attitudeTotalScore = ratingVals.reduce((sum, v) => sum + (Number(v) || 0), 0);
+        }
+      }
+      const attitudeMaxScore = Number(attitudeObj.maxScore) || (attitudeObj.totalQuestions ? attitudeObj.totalQuestions * 5 : (app.formType === "hod" ? 90 : 80));
       const attitudePercentage = attitudeMaxScore > 0 ? (attitudeTotalScore / attitudeMaxScore) * 100 : 0;
       const attitudeMarkNormalized = isAttitudeSubmitted 
         ? (attitudeObj.percentage !== undefined && !isNaN(Number(attitudeObj.percentage))
@@ -439,6 +523,7 @@ export default function HRGrossAnalytics() {
         dateOfJoining,
         grossPM, // Gross Per Month
         grossPA, // Gross Per Annum
+        salaryHistory, // Multi-year salary history dictionary
         academicYear: app.academicYear || "2024-2025",
         status: app.status || "Submitted",
         collectionType: app.collectionType,
@@ -601,6 +686,63 @@ export default function HRGrossAnalytics() {
     };
   }, [filteredRecords]);
 
+  // Dynamic Chart & Progression Analytics for selected candidate in analytics modal
+  const selectedCandidateAnalyticsData = useMemo(() => {
+    if (!selectedAnalyticsCandidate) return null;
+
+    const history = selectedAnalyticsCandidate.salaryHistory || {};
+    let historyEntries = Object.entries(history);
+
+    if (historyEntries.length === 0 && selectedAnalyticsCandidate.grossPM) {
+      historyEntries = [["Current", Number(selectedAnalyticsCandidate.grossPM)]];
+    }
+
+    // Sort years chronologically
+    historyEntries.sort((a, b) => a[0].localeCompare(b[0]));
+
+    const chartData = historyEntries.map(([yr, val], idx, arr) => {
+      const displayYear = formatAnalyticsYear(yr);
+      const numVal = Number(val) || 0;
+      const prevVal = idx > 0 ? Number(arr[idx - 1][1]) || 0 : null;
+      const incPM = prevVal !== null ? numVal - prevVal : 0;
+      const incPct = prevVal && prevVal > 0 ? ((incPM / prevVal) * 100).toFixed(1) : "0.0";
+      const incPctNum = Number(incPct) || 0;
+      return {
+        year: displayYear,
+        rawYear: yr,
+        salaryPM: numVal,
+        salaryPA: numVal * 12,
+        incrementPM: incPM,
+        incrementPA: incPM * 12,
+        growthPct: incPct,
+        growthPctNum: incPctNum,
+        growthPctFormatted: idx === 0 ? "Base" : `+${incPct}%`,
+        isBase: idx === 0,
+        isLatest: idx === arr.length - 1
+      };
+    });
+
+    const firstVal = chartData.length > 0 ? chartData[0].salaryPM : 0;
+    const lastVal = chartData.length > 0 ? chartData[chartData.length - 1].salaryPM : (selectedAnalyticsCandidate.grossPM || 0);
+    const totalGrowth = lastVal - firstVal;
+    const totalGrowthPct = firstVal > 0 ? ((totalGrowth / firstVal) * 100).toFixed(1) : "0.0";
+
+    const validIncrements = chartData.filter((d, i) => i > 0 && d.growthPctNum > 0);
+    const avgGrowthPct = validIncrements.length > 0
+      ? (validIncrements.reduce((acc, c) => acc + c.growthPctNum, 0) / validIncrements.length).toFixed(1)
+      : "0.0";
+
+    return {
+      chartData,
+      currentPM: lastVal,
+      currentPA: lastVal * 12,
+      totalGrowth,
+      totalGrowthPct,
+      avgGrowthPct,
+      hasMultiYear: chartData.length > 1
+    };
+  }, [selectedAnalyticsCandidate]);
+
   // Sort handler
   const handleSort = (field) => {
     if (sortField === field) {
@@ -660,13 +802,18 @@ export default function HRGrossAnalytics() {
     }
   };
 
-  // 1. Download Template (Excel .xlsx with "faculty id" and "gross PM" columns, ID prefixed with ')
+  // 1. Download Multi-Year Salary Template (Excel .xlsx with "faculty id" and dynamic past years columns, ID prefixed with ')
   const handleDownloadTemplate = () => {
     const seen = new Set();
     const rows = [];
 
-    // Header row
-    rows.push(["faculty id", "gross PM"]);
+    // Determine multi-year columns (defaults to past 3 years e.g. 2022-23, 2023-24, 2024-25)
+    const templateYears = discoveredSalaryYears.length >= 2
+      ? discoveredSalaryYears
+      : getDefaultSalaryYears(selectedYear !== "All" ? selectedYear : "2024-2025");
+
+    // Header row: "faculty id", "gross PM (2022-23)", "gross PM (2023-24)", "gross PM (2024-25)"
+    rows.push(["faculty id", ...templateYears.map((yr) => `gross PM (${yr})`)]);
 
     // Target faculty list
     const targetList = filteredRecords.length > 0 ? filteredRecords : allRecords;
@@ -676,30 +823,43 @@ export default function HRGrossAnalytics() {
       const cleanId = String(r.facultyId || "").replace(/^['"`]+|['"`]+$/g, "").trim();
       if (cleanId && !seen.has(cleanId)) {
         seen.add(cleanId);
-        const existingVal = r.grossPM !== null && r.grossPM !== undefined ? r.grossPM : "";
         // Prepend EXACTLY ONE single quote ' so Excel treats ID strictly as text (e.g. '1783)
         const textFormattedId = `'${cleanId}`;
-        rows.push([textFormattedId, existingVal]);
+        const row = [textFormattedId];
+
+        templateYears.forEach((yr, idx) => {
+          const histVal = r.salaryHistory?.[yr];
+          if (histVal !== undefined && histVal !== null && histVal > 0) {
+            row.push(histVal);
+          } else if (idx === templateYears.length - 1 && r.grossPM) {
+            // Fallback for latest year if they previously had single grossPM
+            row.push(r.grossPM);
+          } else {
+            row.push("");
+          }
+        });
+
+        rows.push(row);
       }
     });
 
     // Fallback sample rows with single quote '
     if (rows.length === 1) {
-      rows.push(["'1783", 55000]);
-      rows.push(["'1234", 58000]);
-      rows.push(["'1235", 52000]);
+      rows.push(["'1783", 45000, 50000, 55000]);
+      rows.push(["'1234", 48000, 52000, 58000]);
+      rows.push(["'1235", 42000, 46000, 52000]);
     }
 
     // Build Worksheet & Workbook
     const worksheet = XLSX.utils.aoa_to_sheet(rows);
-    worksheet["!cols"] = [{ wch: 22 }, { wch: 18 }];
+    worksheet["!cols"] = [{ wch: 20 }, ...templateYears.map(() => ({ wch: 22 }))];
 
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Gross_PM_Template");
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Multi_Year_Gross_Template");
 
     // Write as .xlsx file
-    XLSX.writeFile(workbook, `CKCET_Faculty_Gross_PM_Template_${new Date().toISOString().slice(0, 10)}.xlsx`);
-    showToast("Template Excel (.xlsx) downloaded! Fill 'gross PM' and upload.", "success");
+    XLSX.writeFile(workbook, `CKCET_Faculty_MultiYear_Gross_PM_Template_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    showToast(`Template Excel (.xlsx) with ${templateYears.length} years downloaded! Fill salaries and upload.`, "success");
   };
 
   // Export Full Salary Revision Matrix (.xlsx) with Columns M through U
@@ -798,30 +958,67 @@ export default function HRGrossAnalytics() {
         }
 
         // Parse Header Row
-        const headerRow = sheetRows[0].map((h) => String(h || "").trim().toLowerCase().replace(/^['"`]|['"`]$/g, ""));
-        const idIdx = headerRow.findIndex((h) => h.includes("faculty") || h.includes("id") || h.includes("emp"));
-        const salaryIdx = headerRow.findIndex((h) => h.includes("gross") || h.includes("pm") || h.includes("salary") || h.includes("amount"));
+        const rawHeaders = sheetRows[0].map((h) => String(h || "").trim());
+        const cleanedHeaders = rawHeaders.map((h) => h.toLowerCase().replace(/^['"`]|['"`]$/g, ""));
 
-        if (idIdx === -1 || salaryIdx === -1) {
-          showToast("Headers must include 'faculty id' and 'gross PM'.", "error");
+        // 1. Locate Faculty ID column
+        const idIdx = cleanedHeaders.findIndex((h) =>
+          h.includes("faculty") || h.includes("id") || h.includes("emp") || h.includes("staff")
+        );
+
+        if (idIdx === -1) {
+          showToast("Excel header must include a 'faculty id' column.", "error");
           return;
         }
 
-        // Map parsed rows
+        // 2. Discover all Multi-Year / Gross PM Salary Columns dynamically
+        const yearColumns = [];
+        cleanedHeaders.forEach((header, idx) => {
+          if (idx === idIdx) return;
+          // Match academic year patterns like 2022-23, 2022-2023, 2024
+          const yearMatch = rawHeaders[idx].match(/(20\d{2}\s*[-/]\s*\d{2,4}|20\d{2})/i);
+          if (yearMatch) {
+            const cleanYear = yearMatch[1].replace(/\s+/g, "");
+            yearColumns.push({ colIdx: idx, yearLabel: cleanYear, rawHeader: rawHeaders[idx] });
+          } else if (header.includes("gross") || header.includes("pm") || header.includes("salary") || header.includes("amount")) {
+            yearColumns.push({ colIdx: idx, yearLabel: "Current", rawHeader: rawHeaders[idx] });
+          }
+        });
+
+        if (yearColumns.length === 0) {
+          showToast("Headers must include 'gross PM (YYYY-YY)' or 'gross PM' salary columns.", "error");
+          return;
+        }
+
+        // Sort detected columns chronologically
+        yearColumns.sort((a, b) => a.yearLabel.localeCompare(b.yearLabel));
+        const detectedYearLabels = yearColumns.map((yc) => yc.yearLabel);
+        setUploadDetectedYears(detectedYearLabels);
+
+        // 3. Map parsed rows
         const parsed = [];
         for (let i = 1; i < sheetRows.length; i++) {
           const row = sheetRows[i];
           const rawId = String(row[idIdx] !== undefined ? row[idIdx] : "").trim();
-          const rawSalary = String(row[salaryIdx] !== undefined ? row[salaryIdx] : "").trim();
 
           if (rawId) {
-            // Strip any single quote(s) or double quotes from the beginning and end so ''1783, '1783, or 1783 all map to 1783
             const cleanedId = String(rawId).replace(/^['"`]+|['"`]+$/g, "").trim();
-            const cleanNumStr = rawSalary.replace(/[^0-9.]/g, "");
-            const parsedSalary = cleanNumStr ? parseFloat(cleanNumStr) : 0;
             const norm = normalizeId(cleanedId);
 
-            // Match against current records (checking normalized, cleaned, or raw)
+            const history = {};
+            let latestSalary = 0;
+
+            yearColumns.forEach((yc) => {
+              const cellVal = String(row[yc.colIdx] !== undefined ? row[yc.colIdx] : "").trim();
+              const cleanNumStr = cellVal.replace(/[^0-9.]/g, "");
+              const parsedVal = cleanNumStr ? parseFloat(cleanNumStr) : 0;
+              if (parsedVal > 0) {
+                history[yc.yearLabel] = parsedVal;
+                latestSalary = parsedVal;
+              }
+            });
+
+            // Match against current records
             const matched = allRecords.find((r) => {
               const rNorm = normalizeId(r.facultyId);
               return rNorm === norm || r.facultyId === cleanedId || r.facultyId === rawId;
@@ -833,7 +1030,8 @@ export default function HRGrossAnalytics() {
               normalizedId: norm,
               facultyName: matched ? matched.facultyName : "Unknown / Unmatched",
               department: matched ? matched.department : "-",
-              grossPM: parsedSalary,
+              history,
+              grossPM: latestSalary,
               isMatched: Boolean(matched)
             });
           }
@@ -856,7 +1054,7 @@ export default function HRGrossAnalytics() {
     e.target.value = "";
   };
 
-  // 3. Confirm and Save Salaries to Firestore
+  // 3. Confirm and Save Multi-Year Salaries to Firestore
   const handleConfirmSaveSalaries = async () => {
     if (parsedPreviewList.length === 0) return;
     setUploadSaving(true);
@@ -865,16 +1063,22 @@ export default function HRGrossAnalytics() {
       const updatedSalaries = { ...salariesMap };
 
       parsedPreviewList.forEach((item) => {
+        const payload = {
+          current: item.grossPM,
+          history: item.history || {},
+          updatedAt: new Date().toISOString()
+        };
         if (item.normalizedId) {
-          updatedSalaries[item.normalizedId] = item.grossPM;
+          updatedSalaries[item.normalizedId] = payload;
         }
         if (item.cleanedId) {
-          updatedSalaries[item.cleanedId] = item.grossPM;
+          updatedSalaries[item.cleanedId] = payload;
         }
       });
 
       await setDoc(doc(db, "appraisal_config", "gross_salaries"), {
         salaries: updatedSalaries,
+        historicalYears: uploadDetectedYears.length > 0 ? uploadDetectedYears : ["Current"],
         updatedAt: new Date().toISOString(),
         totalUpdated: parsedPreviewList.length
       }, { merge: true });
@@ -882,7 +1086,7 @@ export default function HRGrossAnalytics() {
       setSalariesMap(updatedSalaries);
       setUploadModalOpen(false);
       setParsedPreviewList([]);
-      showToast(`Successfully updated Gross PM for ${parsedPreviewList.length} faculty entries!`, "success");
+      showToast(`Successfully updated multi-year Gross PM for ${parsedPreviewList.length} faculty entries!`, "success");
     } catch (err) {
       console.error("Error saving salaries:", err);
       showToast("Failed to save salaries to database.", "error");
@@ -1429,7 +1633,7 @@ export default function HRGrossAnalytics() {
                   </th>
 
                   {/* 19. Action */}
-                  <th className="p-3.5 text-center">Action</th>
+                  <th className="p-3.5 text-center whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
@@ -1497,9 +1701,19 @@ export default function HRGrossAnalytics() {
                       {/* 5. Gross PM (Monthly Salary) */}
                       <td className="p-3.5 text-center border-r border-zinc-200 whitespace-nowrap">
                         {rec.grossPM !== null && rec.grossPM !== undefined ? (
-                          <span className="font-mono font-bold text-slate-800 text-xs whitespace-nowrap inline-block">
-                            ₹{Number(rec.grossPM).toLocaleString("en-IN")}
-                          </span>
+                          <div className="flex flex-col items-center">
+                            <span className="font-mono font-bold text-slate-800 text-xs whitespace-nowrap inline-block">
+                              ₹{Number(rec.grossPM).toLocaleString("en-IN")}
+                            </span>
+                            {rec.salaryHistory && Object.keys(rec.salaryHistory).length > 1 && (
+                              <span
+                                className="text-[9px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200/80 px-1.5 py-0.5 rounded-md mt-0.5 tracking-tight cursor-help"
+                                title={`Salary recorded for ${Object.keys(rec.salaryHistory).length} years: ${Object.keys(rec.salaryHistory).map(k => `${k}: ₹${Number(rec.salaryHistory[k]).toLocaleString("en-IN")}`).join(" | ")}`}
+                              >
+                                {Object.keys(rec.salaryHistory).length}Y History
+                              </span>
+                            )}
+                          </div>
                         ) : (
                           <span className="text-zinc-300 font-bold text-xs italic">-</span>
                         )}
@@ -1663,15 +1877,27 @@ export default function HRGrossAnalytics() {
                         )}
                       </td>
 
-                      {/* 19. Action Button */}
+                      {/* 19. Action Buttons: Analytics + Breakdown */}
                       <td className="p-3.5 text-center">
-                        <button
-                          onClick={() => setSelectedCandidate(rec)}
-                          className="px-3 py-1.5 bg-[#101b38] hover:bg-[#1c356e] text-white rounded-lg text-[10px] font-bold tracking-wide uppercase transition-all inline-flex items-center gap-1 cursor-pointer shadow-xs"
-                          title="View Complete Salary Revision Breakdown"
-                        >
-                          <Eye size={12} /> Breakdown
-                        </button>
+                        <div className="flex items-center justify-center gap-1.5 whitespace-nowrap">
+                          <button
+                            onClick={() => {
+                              setSelectedAnalyticsCandidate(rec);
+                              setAnalyticsSalaryViewMode("PM");
+                            }}
+                            className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold tracking-wide uppercase transition-all inline-flex items-center gap-1 cursor-pointer shadow-xs"
+                            title="View Personal Salary Progression & Dual Charts"
+                          >
+                            <TrendingUp size={12} /> Analytics
+                          </button>
+                          <button
+                            onClick={() => setSelectedCandidate(rec)}
+                            className="px-2.5 py-1.5 bg-[#101b38] hover:bg-[#1c356e] text-white rounded-lg text-[10px] font-bold tracking-wide uppercase transition-all inline-flex items-center gap-1 cursor-pointer shadow-xs"
+                            title="View Complete Salary Revision Breakdown"
+                          >
+                            <Eye size={12} /> Breakdown
+                          </button>
+                        </div>
                       </td>
 
                     </tr>
@@ -1826,19 +2052,29 @@ export default function HRGrossAnalytics() {
         {/* Upload Gross PM Confirmation & Preview Modal */}
         {uploadModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fadeIn">
-            <div className="bg-white rounded-3xl w-full max-w-2xl border border-zinc-200 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="bg-white rounded-3xl w-full max-w-4xl border border-zinc-200 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
 
               {/* Modal Header */}
               <div className="bg-gradient-to-r from-emerald-700 to-teal-800 p-6 text-white flex items-center justify-between">
                 <div>
                   <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-white/10 text-emerald-200 text-[10px] font-black uppercase tracking-wider mb-1">
-                    <FileSpreadsheet size={12} /> Excel Salary Import Preview
+                    <FileSpreadsheet size={12} /> Excel Multi-Year Salary Import Preview
                   </div>
                   <h3 className="text-lg font-black flex items-center gap-2">
-                    Import Gross PM Salaries
+                    Import Multi-Year Gross Salaries
                   </h3>
-                  <div className="text-xs text-emerald-100 mt-1">
-                    File: <strong className="font-mono text-white">{uploadFileName}</strong> • {parsedPreviewList.length} rows parsed
+                  <div className="text-xs text-emerald-100 mt-1 flex items-center gap-2 flex-wrap">
+                    <span>File: <strong className="font-mono text-white">{uploadFileName}</strong></span>
+                    <span>•</span>
+                    <span>{parsedPreviewList.length} rows parsed</span>
+                    {uploadDetectedYears.length > 0 && (
+                      <>
+                        <span>•</span>
+                        <span className="bg-emerald-600/60 px-2 py-0.5 rounded-md font-bold text-white text-[11px]">
+                          {uploadDetectedYears.length} Years: {uploadDetectedYears.join(", ")}
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
                 <button
@@ -1868,7 +2104,12 @@ export default function HRGrossAnalytics() {
                         <th className="p-3">Faculty ID</th>
                         <th className="p-3">Faculty Name</th>
                         <th className="p-3">Department</th>
-                        <th className="p-3 text-right">Gross PM (₹)</th>
+                        {uploadDetectedYears.map((yr) => (
+                          <th key={yr} className="p-3 text-right">
+                            {yr} (₹)
+                          </th>
+                        ))}
+                        <th className="p-3 text-right font-black text-emerald-800">Active Gross PM</th>
                         <th className="p-3 text-center">Status</th>
                       </tr>
                     </thead>
@@ -1885,8 +2126,13 @@ export default function HRGrossAnalytics() {
                           </td>
                           <td className="p-3 font-semibold text-slate-700">{item.facultyName}</td>
                           <td className="p-3 text-zinc-500">{item.department}</td>
+                          {uploadDetectedYears.map((yr) => (
+                            <td key={yr} className="p-3 text-right font-mono text-zinc-600">
+                              {item.history?.[yr] ? `₹${Number(item.history[yr]).toLocaleString("en-IN")}` : "—"}
+                            </td>
+                          ))}
                           <td className="p-3 text-right font-black font-mono text-emerald-800">
-                            ₹{Number(item.grossPM).toLocaleString("en-IN")}
+                            {item.grossPM > 0 ? `₹${Number(item.grossPM).toLocaleString("en-IN")}` : "—"}
                           </td>
                           <td className="p-3 text-center">
                             {item.isMatched ? (
@@ -1906,7 +2152,7 @@ export default function HRGrossAnalytics() {
                 </div>
 
                 <p className="text-[11px] text-zinc-500 leading-relaxed italic">
-                  * Clicking "Save & Apply Salaries" will attach these monthly gross salary amounts to the corresponding faculty members and immediately compute their increment amounts based on the criteria matrix.
+                  * Clicking "Save & Apply Salaries" will attach these multi-year salaries to the corresponding faculty members and immediately compute current increment amounts using the latest active year.
                 </p>
               </div>
 
@@ -1988,6 +2234,40 @@ export default function HRGrossAnalytics() {
                     </span>
                   </div>
                 </div>
+
+                {/* Multi-Year Salary Progression History */}
+                {selectedCandidate.salaryHistory && Object.keys(selectedCandidate.salaryHistory).length > 0 && (
+                  <div className="bg-gradient-to-br from-indigo-50/60 to-slate-50 border border-indigo-100 rounded-2xl p-4 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-black uppercase text-indigo-900 tracking-wider flex items-center gap-1.5">
+                        <TrendingUp size={14} className="text-indigo-600" /> Multi-Year Salary History
+                      </span>
+                      <span className="text-[10px] bg-indigo-100/80 text-indigo-800 font-bold px-2 py-0.5 rounded-full">
+                        {Object.keys(selectedCandidate.salaryHistory).length} Years on Record
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+                      {Object.entries(selectedCandidate.salaryHistory).map(([yr, val], idx, arr) => {
+                        const prevVal = idx > 0 ? arr[idx - 1][1] : null;
+                        const diff = prevVal ? val - prevVal : null;
+                        const diffPct = prevVal && prevVal > 0 ? ((diff / prevVal) * 100).toFixed(1) : null;
+                        return (
+                          <div key={yr} className="bg-white p-3 rounded-xl border border-indigo-100/80 shadow-xs flex flex-col justify-between">
+                            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">{formatAnalyticsYear(yr)}</span>
+                            <div className="text-xs font-black font-mono text-slate-800 mt-1">
+                              ₹{Number(val).toLocaleString("en-IN")} <span className="text-[9px] font-bold text-zinc-400">PM</span>
+                            </div>
+                            {diff !== null && (
+                              <div className={`text-[9px] font-bold mt-1 ${diff >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                                {diff >= 0 ? `+₹${diff.toLocaleString("en-IN")}` : `-₹${Math.abs(diff).toLocaleString("en-IN")}`} ({diffPct}%)
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 {/* Mathematical Formula Callout */}
                 <div className="bg-amber-50/60 border border-amber-200 rounded-2xl p-4 space-y-2">
@@ -2218,6 +2498,443 @@ export default function HRGrossAnalytics() {
                   className="px-5 py-2.5 rounded-xl bg-[#101b38] hover:bg-[#162752] text-white text-xs font-bold transition-all cursor-pointer shadow-sm"
                 >
                   Close Scorecard
+                </button>
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {/* Candidate Compensation Progression & Analytics Modal */}
+        {selectedAnalyticsCandidate && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 overflow-y-auto animate-fadeIn">
+            <div className="bg-white rounded-3xl w-full max-w-5xl border border-zinc-200 shadow-2xl overflow-hidden flex flex-col my-6 max-h-[92vh]">
+
+              {/* Modal Header */}
+              <div className="bg-gradient-to-r from-[#101b38] to-[#1c356e] p-6 text-white flex items-center justify-between gap-4 flex-wrap">
+                <div>
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-black uppercase tracking-wider mb-1">
+                    <TrendingUp size={12} /> Compensation Analytics & Progression
+                  </div>
+                  <h3 className="text-xl font-black">{selectedAnalyticsCandidate.facultyName}</h3>
+                  <div className="flex items-center gap-2 mt-1 text-xs text-zinc-300 flex-wrap">
+                    <span className="bg-white/10 px-2 py-0.5 rounded font-mono font-bold text-white">
+                      ID: {selectedAnalyticsCandidate.facultyId}
+                    </span>
+                    <span>•</span>
+                    <span>{selectedAnalyticsCandidate.designation}</span>
+                    <span>•</span>
+                    <span className="text-amber-300 font-semibold">{selectedAnalyticsCandidate.department}</span>
+                    {selectedAnalyticsCandidate.dateOfJoining && (
+                      <>
+                        <span>•</span>
+                        <span>Joined: {selectedAnalyticsCandidate.dateOfJoining}</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  {/* View Mode Switcher: Monthly (PM) vs Annual (PA) */}
+                  <div className="flex items-center bg-white/10 p-1 rounded-xl border border-white/15">
+                    <button
+                      onClick={() => setAnalyticsSalaryViewMode("PM")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        analyticsSalaryViewMode === "PM"
+                          ? "bg-white text-slate-900 shadow-sm"
+                          : "text-zinc-200 hover:text-white"
+                      }`}
+                    >
+                      Monthly (PM)
+                    </button>
+                    <button
+                      onClick={() => setAnalyticsSalaryViewMode("PA")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        analyticsSalaryViewMode === "PA"
+                          ? "bg-white text-slate-900 shadow-sm"
+                          : "text-zinc-200 hover:text-white"
+                      }`}
+                    >
+                      Annual (PA)
+                    </button>
+                  </div>
+
+                  <button
+                    onClick={() => setSelectedAnalyticsCandidate(null)}
+                    className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors cursor-pointer"
+                    title="Close"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Modal Body */}
+              <div className="p-6 overflow-y-auto space-y-6 flex-1">
+
+                {/* Appraisal Evaluation & Increment Proposal Ribbon */}
+                <div className="bg-gradient-to-r from-slate-900 via-[#101b38] to-[#1c356e] text-white p-4 sm:p-5 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-sm border border-slate-700/60">
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider block">Institutional Performance</span>
+                      <div className="text-2xl font-black text-amber-300">
+                        {selectedAnalyticsCandidate.grossMark} <span className="text-xs text-zinc-400">/ 100</span>
+                      </div>
+                    </div>
+                    <div className="h-8 w-px bg-white/15 hidden sm:block" />
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider block">Evaluated Tier</span>
+                      <span className={`inline-block mt-0.5 px-2.5 py-0.5 rounded-full text-[11px] font-black uppercase tracking-wider ${selectedAnalyticsCandidate.tierBadgeColor}`}>
+                        {selectedAnalyticsCandidate.tierCode} ({selectedAnalyticsCandidate.tierLabel})
+                      </span>
+                    </div>
+                    <div className="h-8 w-px bg-white/15 hidden sm:block" />
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider block">Proposed Increment</span>
+                      <span className="text-base font-black font-mono text-emerald-400">
+                        +{selectedAnalyticsCandidate.totalIncrementPct}%
+                      </span>
+                      {selectedAnalyticsCandidate.isPromoted && (
+                        <span className="text-[10px] text-amber-300 font-bold ml-1.5">(Promoted)</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {selectedAnalyticsCandidate.revisedGrossPM !== null && (
+                    <div className="bg-white/10 border border-white/15 px-4 py-2.5 rounded-xl text-right">
+                      <span className="text-[10px] uppercase font-bold text-zinc-300 tracking-wider block">
+                        Proposed Revised {analyticsSalaryViewMode === "PM" ? "Gross PM" : "Gross PA"}
+                      </span>
+                      <div className="text-lg font-black font-mono text-emerald-300">
+                        ₹{Number(analyticsSalaryViewMode === "PM" ? selectedAnalyticsCandidate.revisedGrossPM : selectedAnalyticsCandidate.revisedGrossPA).toLocaleString("en-IN")}
+                      </div>
+                      <span className="text-[10px] text-emerald-400 font-bold">
+                        +₹{Number(analyticsSalaryViewMode === "PM" ? selectedAnalyticsCandidate.totalIncrementAmount : selectedAnalyticsCandidate.totalIncrementAmountPA).toLocaleString("en-IN")} ({selectedAnalyticsCandidate.totalIncrementPct}%)
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* If data exists */}
+                {selectedCandidateAnalyticsData && selectedCandidateAnalyticsData.chartData.length > 0 ? (
+                  <>
+                    {/* KPI Metric Ribbon */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
+                      <div className="bg-zinc-50/80 p-4 rounded-2xl border border-zinc-200/80">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block">
+                          Current Gross (PM)
+                        </span>
+                        <p className="text-lg md:text-xl font-black font-mono text-slate-800 mt-1">
+                          ₹{Number(selectedCandidateAnalyticsData.currentPM).toLocaleString("en-IN")}
+                        </p>
+                        <span className="text-[10px] text-zinc-500 font-medium">Monthly baseline compensation</span>
+                      </div>
+
+                      <div className="bg-zinc-50/80 p-4 rounded-2xl border border-zinc-200/80">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block">
+                          Annualized Gross (PA)
+                        </span>
+                        <p className="text-lg md:text-xl font-black font-mono text-emerald-800 mt-1">
+                          ₹{Number(selectedCandidateAnalyticsData.currentPA).toLocaleString("en-IN")}
+                        </p>
+                        <span className="text-[10px] text-zinc-500 font-medium">Annual gross outlay</span>
+                      </div>
+
+                      <div className="bg-zinc-50/80 p-4 rounded-2xl border border-zinc-200/80">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block">
+                          Total Growth (Timeline)
+                        </span>
+                        <p className="text-lg md:text-xl font-black font-mono text-indigo-700 mt-1 flex items-center gap-1">
+                          {selectedCandidateAnalyticsData.totalGrowth >= 0 ? "+" : ""}₹{Number(analyticsSalaryViewMode === "PM" ? selectedCandidateAnalyticsData.totalGrowth : selectedCandidateAnalyticsData.totalGrowth * 12).toLocaleString("en-IN")}
+                          <ArrowUpRight size={16} className="text-indigo-600" />
+                        </p>
+                        <span className="text-[10px] text-zinc-500 font-medium">Over recorded timeline</span>
+                      </div>
+
+                      <div className="bg-zinc-50/80 p-4 rounded-2xl border border-zinc-200/80">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block">
+                          Overall Increment %
+                        </span>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-lg md:text-xl font-black font-mono text-purple-700">
+                            +{selectedCandidateAnalyticsData.totalGrowthPct}%
+                          </span>
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 font-bold">
+                            {selectedCandidateAnalyticsData.chartData.length} Years
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-zinc-500 font-medium">Cumulative growth</span>
+                      </div>
+                    </div>
+
+                    {/* Interactive Analytics Dual-Chart Grid: Left (Line Graph) + Right (Bar Chart) */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+                      {/* Left Card: Historical Compensation Line Graph */}
+                      <div className="bg-gradient-to-b from-zinc-50/60 to-white border border-zinc-200/70 rounded-2xl p-4 md:p-6 flex flex-col justify-between shadow-xs">
+                        <div>
+                          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                            <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
+                              <TrendingUp size={16} className="text-emerald-600" />
+                              Historical Compensation ({analyticsSalaryViewMode === "PM" ? "Gross Per Month" : "Gross Per Annum"})
+                            </div>
+                            <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">
+                              <span className="w-5 h-0.5 bg-emerald-600 inline-block rounded-full" />
+                              <span className="w-2 h-2 rounded-full bg-emerald-600 inline-block -ml-2" />
+                              <span>Salary Trajectory</span>
+                            </div>
+                          </div>
+
+                          <div className="w-full h-64 md:h-72">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <AreaChart
+                                data={selectedCandidateAnalyticsData.chartData}
+                                margin={{ top: 20, right: 20, left: -5, bottom: 20 }}
+                              >
+                                <defs>
+                                  <linearGradient id="hrSalaryLineGrad" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="5%" stopColor="#059669" stopOpacity={0.25} />
+                                    <stop offset="95%" stopColor="#059669" stopOpacity={0.0} />
+                                  </linearGradient>
+                                </defs>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e4e4e7" />
+                                <XAxis
+                                  dataKey="year"
+                                  tickLine={false}
+                                  axisLine={{ stroke: "#e4e4e7" }}
+                                  tick={{ fill: "#52525b", fontSize: 11, fontWeight: 600 }}
+                                />
+                                <YAxis
+                                  tickLine={false}
+                                  axisLine={{ stroke: "#e4e4e7" }}
+                                  tick={{ fill: "#71717a", fontSize: 10 }}
+                                  tickFormatter={(val) => `₹${(val / 1000).toFixed(0)}k`}
+                                  domain={['auto', 'auto']}
+                                />
+                                <Tooltip
+                                  content={({ active, payload }) => {
+                                    if (!active || !payload || !payload.length) return null;
+                                    const d = payload[0].payload;
+                                    const displayVal = analyticsSalaryViewMode === "PM" ? d.salaryPM : d.salaryPA;
+                                    return (
+                                      <div className="bg-slate-900 text-white text-xs p-3 rounded-xl shadow-xl border border-slate-700 space-y-1">
+                                        <div className="font-bold text-amber-300 text-[11px] uppercase tracking-wider">{d.year}</div>
+                                        <div className="text-sm font-black font-mono">
+                                          ₹{Number(displayVal).toLocaleString("en-IN")} {analyticsSalaryViewMode === "PM" ? "PM" : "PA"}
+                                        </div>
+                                        {d.incrementPM > 0 && (
+                                          <div className="text-[10px] text-emerald-400 font-semibold pt-1 border-t border-slate-800">
+                                            YoY Increment: +₹{Number(analyticsSalaryViewMode === "PM" ? d.incrementPM : d.incrementPA).toLocaleString("en-IN")} (+{d.growthPct}%)
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  }}
+                                />
+                                <Area
+                                  type="monotone"
+                                  dataKey={analyticsSalaryViewMode === "PM" ? "salaryPM" : "salaryPA"}
+                                  stroke="#059669"
+                                  strokeWidth={3.5}
+                                  fillOpacity={1}
+                                  fill="url(#hrSalaryLineGrad)"
+                                  dot={{ r: 5, fill: "#059669", stroke: "#ffffff", strokeWidth: 2.5 }}
+                                  activeDot={{ r: 8, fill: "#047857", stroke: "#ffffff", strokeWidth: 3 }}
+                                />
+                              </AreaChart>
+                            </ResponsiveContainer>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right Card: Year-by-Year Increment Growth Rate (%) Bar Chart */}
+                      <div className="bg-gradient-to-b from-zinc-50/60 to-white border border-zinc-200/70 rounded-2xl p-4 md:p-6 flex flex-col justify-between shadow-xs">
+                        <div>
+                          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                            <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
+                              <BarChart3 size={16} className="text-indigo-600" />
+                              Year-by-Year Increment Growth Rate (%)
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {Number(selectedCandidateAnalyticsData.avgGrowthPct) > 0 && (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                  Avg: +{selectedCandidateAnalyticsData.avgGrowthPct}%
+                                </span>
+                              )}
+                              <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">
+                                <span className="w-2.5 h-2.5 rounded-sm bg-indigo-600 inline-block" />
+                                <span>YoY % Growth</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="w-full h-64 md:h-72">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <BarChart
+                                data={selectedCandidateAnalyticsData.chartData}
+                                margin={{ top: 25, right: 20, left: -10, bottom: 20 }}
+                              >
+                                <defs>
+                                  <linearGradient id="hrIncrementBarGrad" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="0%" stopColor="#6366f1" stopOpacity={0.95} />
+                                    <stop offset="100%" stopColor="#4f46e5" stopOpacity={0.8} />
+                                  </linearGradient>
+                                  <linearGradient id="hrIncrementBarGradActive" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="0%" stopColor="#10b981" stopOpacity={0.95} />
+                                    <stop offset="100%" stopColor="#059669" stopOpacity={0.85} />
+                                  </linearGradient>
+                                </defs>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e4e4e7" />
+                                <XAxis
+                                  dataKey="year"
+                                  tickLine={false}
+                                  axisLine={{ stroke: "#e4e4e7" }}
+                                  tick={{ fill: "#52525b", fontSize: 11, fontWeight: 600 }}
+                                />
+                                <YAxis
+                                  tickLine={false}
+                                  axisLine={{ stroke: "#e4e4e7" }}
+                                  tick={{ fill: "#71717a", fontSize: 10 }}
+                                  tickFormatter={(val) => `${val}%`}
+                                  domain={[0, (dataMax) => Math.max(12, Math.ceil(dataMax + 2))]}
+                                />
+                                <Tooltip
+                                  content={({ active, payload }) => {
+                                    if (!active || !payload || !payload.length) return null;
+                                    const d = payload[0].payload;
+                                    return (
+                                      <div className="bg-slate-900 text-white text-xs p-3 rounded-xl shadow-xl border border-slate-700 space-y-1">
+                                        <div className="font-bold text-indigo-300 text-[11px] uppercase tracking-wider">{d.year}</div>
+                                        {d.isBase ? (
+                                          <div className="text-amber-300 font-bold text-xs">
+                                            Baseline Reference Year
+                                          </div>
+                                        ) : (
+                                          <div className="text-sm font-black font-mono text-emerald-400">
+                                            +{d.growthPct}% Increment
+                                          </div>
+                                        )}
+                                        <div className="text-[10px] text-zinc-300 pt-1 border-t border-slate-800">
+                                          {d.isBase ? (
+                                            <span>Base Gross: ₹{Number(analyticsSalaryViewMode === "PM" ? d.salaryPM : d.salaryPA).toLocaleString("en-IN")} {analyticsSalaryViewMode}</span>
+                                          ) : (
+                                            <span>
+                                              Added Outlay: +₹{Number(analyticsSalaryViewMode === "PM" ? d.incrementPM : d.incrementPA).toLocaleString("en-IN")} {analyticsSalaryViewMode}
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    );
+                                  }}
+                                />
+                                <Bar
+                                  dataKey="growthPctNum"
+                                  radius={[6, 6, 0, 0]}
+                                  maxBarSize={44}
+                                >
+                                  <LabelList
+                                    dataKey="growthPctFormatted"
+                                    position="top"
+                                    fill="#4338ca"
+                                    fontSize={11}
+                                    fontWeight={700}
+                                    formatter={(val) => val === "Base" ? "—" : val}
+                                  />
+                                  {selectedCandidateAnalyticsData.chartData.map((entry, index) => (
+                                    <Cell
+                                      key={`hr-increment-bar-${index}`}
+                                      fill={
+                                        entry.isBase
+                                          ? "#e2e8f0"
+                                          : index === selectedCandidateAnalyticsData.chartData.length - 1
+                                          ? "url(#hrIncrementBarGradActive)"
+                                          : "url(#hrIncrementBarGrad)"
+                                      }
+                                    />
+                                  ))}
+                                </Bar>
+                              </BarChart>
+                            </ResponsiveContainer>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Year-by-Year Progression Timeline Cards */}
+                    <div>
+                      <div className="text-xs font-bold text-slate-800 mb-2.5 flex items-center gap-1.5">
+                        <Calendar size={14} className="text-slate-500" />
+                        Multi-Year Historical Compensation Progression Cards
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                        {selectedCandidateAnalyticsData.chartData.map((item, idx) => (
+                          <div
+                            key={item.rawYear || item.year}
+                            className={`p-3.5 rounded-2xl border transition-all ${
+                              idx === selectedCandidateAnalyticsData.chartData.length - 1
+                                ? "bg-emerald-50/50 border-emerald-200"
+                                : "bg-zinc-50/70 border-zinc-200/80"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between text-zinc-500 text-[10px] font-bold uppercase tracking-wider mb-1">
+                              <span>{item.year}</span>
+                              {idx === selectedCandidateAnalyticsData.chartData.length - 1 && (
+                                <span className="bg-emerald-200 text-emerald-900 px-1.5 py-0.5 rounded text-[9px] font-black">
+                                  Active Year
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-sm font-black font-mono text-slate-800">
+                              ₹{Number(analyticsSalaryViewMode === "PM" ? item.salaryPM : item.salaryPA).toLocaleString("en-IN")}
+                              <span className="text-[10px] text-zinc-400 font-semibold ml-1">
+                                {analyticsSalaryViewMode === "PM" ? "PM" : "PA"}
+                              </span>
+                            </div>
+                            {idx > 0 && item.incrementPM > 0 && (
+                              <div className="text-[10px] text-emerald-600 font-bold mt-1 flex items-center gap-1">
+                                <ArrowUpRight size={12} />
+                                +₹{Number(analyticsSalaryViewMode === "PM" ? item.incrementPM : item.incrementPA).toLocaleString("en-IN")} ({item.growthPct}%)
+                              </div>
+                            )}
+                            {idx === 0 && (
+                              <div className="text-[10px] text-zinc-400 font-medium mt-1">
+                                Baseline salary
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="p-8 text-center bg-zinc-50 rounded-2xl border border-dashed border-zinc-300">
+                    <AlertCircle size={36} className="mx-auto text-amber-500 mb-2" />
+                    <p className="text-sm font-bold text-slate-700">No Historical Salary Data Recorded</p>
+                    <p className="text-xs text-zinc-400 mt-1 max-w-md mx-auto">
+                      Salary figures have not yet been uploaded for this candidate ({selectedAnalyticsCandidate.facultyId}). Upload the multi-year Excel template above to visualize their progression timeline and increment graphs.
+                    </p>
+                  </div>
+                )}
+
+              </div>
+
+              {/* Modal Footer */}
+              <div className="bg-zinc-50 border-t border-zinc-200 px-6 py-4 flex items-center justify-between flex-wrap gap-2">
+                <button
+                  onClick={() => {
+                    const cand = selectedAnalyticsCandidate;
+                    setSelectedAnalyticsCandidate(null);
+                    setSelectedCandidate(cand);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-all cursor-pointer inline-flex items-center gap-1.5 border border-slate-300"
+                >
+                  <Eye size={13} /> View Full Scorecard Breakdown
+                </button>
+                <button
+                  onClick={() => setSelectedAnalyticsCandidate(null)}
+                  className="px-5 py-2.5 rounded-xl bg-[#101b38] hover:bg-[#162752] text-white text-xs font-bold transition-all cursor-pointer shadow-sm"
+                >
+                  Close Analytics
                 </button>
               </div>
 

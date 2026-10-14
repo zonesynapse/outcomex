@@ -14,6 +14,7 @@ import AppraisalReviews from "./pages/AppraisalReviews";
 import AppraisalSettings from "./pages/AppraisalSettings";
 import UserManagement from "./pages/UserManagement";
 import HRGrossAnalytics from "./pages/HRGrossAnalytics";
+import Dashboard from "./pages/Dashboard";
 
 function ProtectedRoute({ children }) {
   const [user, setUser] = useState(null);
@@ -79,22 +80,10 @@ function HomeRedirect() {
         const inst = String(institution).toUpperCase();
         const isCenterHead = r.includes("center head") || r.includes("centre head");
 
-        if (r.includes("principal") || r.includes("hr") || r.includes("admin")) {
-          setTargetPath("/reviews");
-        } else if (isCenterHead) {
-          setTargetPath("/coordinator-appraisal");
-        } else if (inst.includes("CKCOE") || inst.includes("ENGINEERING")) {
-          setTargetPath("/faculty-appraisal");
-        } else if (r.includes("coordinator") || r.includes("hod") || r.includes("head")) {
-          setTargetPath("/coordinator-appraisal");
-        } else if (r.includes("non-teaching")) {
-          setTargetPath("/non-teaching-appraisal");
-        } else {
-          setTargetPath("/teacher-appraisal");
-        }
+        setTargetPath("/dashboard");
       } catch (err) {
         console.error("HomeRedirect role check error:", err);
-        setTargetPath("/reviews");
+        setTargetPath("/dashboard");
       } finally {
         setLoading(false);
       }
@@ -114,7 +103,7 @@ function HomeRedirect() {
 
   if (!auth.currentUser) return <Navigate to="/auth" replace />;
 
-  return <Navigate to={targetPath || "/reviews"} replace />;
+  return <Navigate to={targetPath || "/dashboard"} replace />;
 }
 
 export default function App() {
@@ -128,6 +117,15 @@ export default function App() {
           element={
             <ProtectedRoute>
               <HomeRedirect />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/dashboard" 
+          element={
+            <ProtectedRoute>
+              <Dashboard />
             </ProtectedRoute>
           } 
         />

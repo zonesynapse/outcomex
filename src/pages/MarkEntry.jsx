@@ -136,6 +136,21 @@ const getBatchDurationYears = (b) => {
 // Shared normalizer for Firestore string comparisons (dept/programme/batch/section).
 const norm = (s) => String(s || '').trim().toLowerCase().replace(/[–—]/g, '-');
 
+const isFirestoreKey = (str) => {
+  if (!str) return false;
+  const s = String(str).trim();
+  return s.startsWith('-') || (/^[a-zA-Z0-9_-]{16,}$/.test(s) && !s.includes(' ') && !s.includes('IA') && !s.includes('CIA') && !s.includes('Exam') && !s.includes('Assignment'));
+};
+
+const stripSetSuffix = (s) => String(s || '').replace(/\s*\(?\s*set\s*[-_:.]?\s*([0-9]+|[a-z])\s*\)?\s*$/i, '').trim();
+
+const isExamNameMatch = (a, b) => {
+  if (!a || !b) return false;
+  const na = norm(stripSetSuffix(a));
+  const nb = norm(stripSetSuffix(b));
+  return na === nb;
+};
+
 const getNormalizedCourseType = (typeStr) => {
   if (!typeStr) return 'theory';
   const s = String(typeStr).trim().toLowerCase().replace(/[–—]/g, '-');
@@ -1857,8 +1872,18 @@ export default function MarkEntry() {
       const targetSemNum = String(deriveSemesterNumber(semester) || '').trim();
       const ayStartOf = (s) => String(s || '').match(/(19|20)\d{2}/)?.[0] || String(s || '').trim();
       const targetAyStart = ayStartOf(academicYear);
+      // Valid tokens that represent the target exam ONLY
+      const validQpPushKeys = (qpIds || []).filter(id => id && isFirestoreKey(id));
       const examTokens = new Set(
-        [exam, sanitizeKey(exam), qpName, ...(qpIds || [])]
+        [
+          exam,
+          sanitizeKey(exam),
+          stripSetSuffix(exam),
+          sanitizeKey(stripSetSuffix(exam)),
+          ...(isFirestoreKey(qpName) ? [qpName] : []),
+          ...(isExamNameMatch(qpName, exam) ? [qpName, sanitizeKey(qpName)] : []),
+          ...validQpPushKeys
+        ]
           .filter(Boolean)
           .map(t => String(t).trim().toLowerCase())
       );
@@ -1894,10 +1919,52 @@ export default function MarkEntry() {
         }
         // Mark-type gate
         if (m.mark_type && markType && String(m.mark_type).trim() !== String(markType).trim()) return;
-        // Exam gate — display name (exam_name covers both eras) or raw QP-ID token
-        const metaExam = String(m.exam || '').trim().toLowerCase();
-        const metaExamName = String(m.exam_name || m.examName || '').trim().toLowerCase();
-        if (!examTokens.has(metaExam) && !examTokens.has(metaExamName)) return;
+
+        // STRICT EXAM GATE — Never allow cross-exam contamination (e.g. IA 1 marks leaking into IA 2)
+        const metaExam = String(m.exam || '').trim();
+        const metaExamName = String(m.exam_name || m.examName || '').trim();
+        const metaQpName = String(m.qpaper_meta?.qpaper_name || '').trim();
+        const docId = String(d.id || '');
+
+        // 1. If metaExamName is an explicit, human-readable exam name, it MUST match the target exam!
+        if (metaExamName && !isFirestoreKey(metaExamName)) {
+          if (!isExamNameMatch(metaExamName, exam)) return;
+        }
+
+        // 2. If metaExam is an explicit, human-readable exam name, it MUST match the target exam!
+        if (metaExam && !isFirestoreKey(metaExam)) {
+          if (!isExamNameMatch(metaExam, exam)) return;
+        }
+
+        // 3. If docId explicitly contains a different known exam name in its key structure, REJECT!
+        const curExamSanitized = sanitizeKey(exam).toLowerCase();
+        const curExamClean = sanitizeKey(stripSetSuffix(exam)).toLowerCase();
+        const docIdLower = docId.toLowerCase();
+        const knownOtherExams = ['ia 1', 'ia 2', 'ia 3', 'ia1', 'ia2', 'ia3', 'model', 'model exam', 'assignment 1', 'assignment 2']
+          .filter(ke => {
+            const keSan = sanitizeKey(ke).toLowerCase();
+            return keSan !== curExamClean && keSan !== curExamSanitized;
+          });
+        const hasOtherExamInDocId = knownOtherExams.some(ke => {
+          const keSan = sanitizeKey(ke).toLowerCase();
+          return docIdLower.includes(`_${keSan}_`);
+        });
+        if (hasOtherExamInDocId) return;
+
+        // 4. Document must positively match the target exam or one of its authorized QP tokens
+        const metaExamLower = metaExam.toLowerCase();
+        const metaExamNameLower = metaExamName.toLowerCase();
+        const metaQpNameLower = metaQpName.toLowerCase();
+
+        const matchesTargetExam =
+          (metaExamName && isExamNameMatch(metaExamName, exam)) ||
+          (metaExam && isExamNameMatch(metaExam, exam)) ||
+          examTokens.has(metaExamLower) ||
+          examTokens.has(metaExamNameLower) ||
+          (metaQpName && examTokens.has(metaQpNameLower));
+
+        if (!matchesTargetExam) return;
+
         // Richest doc wins (most student entries)
         const count = data.students && typeof data.students === 'object' ? Object.keys(data.students).length : 0;
         if (count > bestCount) {
@@ -1923,6 +1990,7 @@ export default function MarkEntry() {
       }
 
       setLoading(true);
+      setMarksData({});
       try {
         // 1. Resilient Student Loading
         const progKey = formatProgrammeKey(programme);
@@ -2163,8 +2231,16 @@ export default function MarkEntry() {
               try {
                 const cachedSnap = await getDoc(doc(db, 'marks', cachedId));
                 if (cachedSnap.exists()) {
-                  savedMarks = cachedSnap.data() || {};
-                  activeMarksId = cachedId;
+                  const cData = cachedSnap.data() || {};
+                  const cMeta = cData._meta || {};
+                  const cExam = cMeta.exam_name || cMeta.examName || cMeta.exam;
+                  // If cached doc has an exam that does not match this exam, invalidate cache!
+                  if (cExam && !isFirestoreKey(cExam) && !isExamNameMatch(cExam, exam)) {
+                    delete marksResolveCache.current[resolveSig];
+                  } else {
+                    savedMarks = cData;
+                    activeMarksId = cachedId;
+                  }
                 } else {
                   delete marksResolveCache.current[resolveSig];
                 }
@@ -2173,21 +2249,49 @@ export default function MarkEntry() {
             if (Object.keys(savedMarks).length === 0) {
               const exactSnap = await getDoc(doc(db, 'marks', marksKey));
               if (exactSnap.exists()) {
-                savedMarks = exactSnap.data() || {};
-                activeMarksId = marksKey;
+                const eData = exactSnap.data() || {};
+                const eMeta = eData._meta || {};
+                const eExam = eMeta.exam_name || eMeta.examName || eMeta.exam;
+                if (!eExam || isFirestoreKey(eExam) || isExamNameMatch(eExam, exam)) {
+                  savedMarks = eData;
+                  activeMarksId = marksKey;
+                }
               }
             }
             if (Object.keys(savedMarks).length === 0) {
               const targetSubCode = parseSubjectCodeKey(subject);
+              const targetSemNum = String(deriveSemesterNumber(semester) || '').trim();
+
+              // Strictly scope QP push tokens to QPs that match the current subject AND current exam!
               const qpIdTokens = (allQPs || [])
                 .filter(qp => {
                   const c = parseSubjectCodeKey(qp.subject || qp.course || qp.subject_code || qp.courseCode);
-                  return c && targetSubCode && c === targetSubCode;
+                  if (!c || !targetSubCode || c !== targetSubCode) return false;
+                  if (qp.batch && !isBatchMatch(qp.batch, batch)) return false;
+                  const qpSem = String(deriveSemesterNumber(qp.semester) || '').trim();
+                  if (qpSem && targetSemNum && qpSem !== targetSemNum) return false;
+
+                  const rawQpName = qp.qpaper_name || qp.qpaperName || qp.id;
+                  const matchedCfg = (ciaConfigs || []).find(cfg => cfg.id === rawQpName || cfg.id === qp.id || cfg.examName === rawQpName || cfg.examName === qp.exam_name);
+                  const cleanQpName = qp.exam_name || qp.examName || matchedCfg?.examName || (!isFirestoreKey(rawQpName) ? rawQpName : '');
+                  const qpExam = cleanQpName || qp.qpaper_name || '';
+
+                  return isExamNameMatch(qpExam, exam) || isExamNameMatch(rawQpName, exam) || qp.id === exam;
                 })
-                .flatMap(qp => [qp.id, qp._id, qp.qpaper_name, qp.qpaperName, qp.exam_name, qp.examName, qp.exam]);
+                .flatMap(qp => [qp.id, qp._id, qp._compositeKey, qp.compositeKey])
+                .filter(id => id && isFirestoreKey(id));
+
+              let safeQpName = '';
+              if (qpMeta?.qpaper_name) {
+                const qpNameStr = String(qpMeta.qpaper_name).trim();
+                if (isFirestoreKey(qpNameStr) || isExamNameMatch(qpNameStr, exam)) {
+                  safeQpName = qpNameStr;
+                }
+              }
+
               const found = await findMarksDocByMeta({
                 batch, programme, department, subject, exam, academicYear, semester, markType, section,
-                qpName: qpMeta?.qpaper_name || '',
+                qpName: safeQpName,
                 qpIds: qpIdTokens,
               });
               if (found) {
@@ -2473,12 +2577,32 @@ export default function MarkEntry() {
   const handleSave = async () => {
     if (!batch || !programme || !department || !subject || !exam || !academicYear || !semester) return;
 
-    // Reuse the resolved doc ID when this selection was loaded from a legacy
-    // QP-ID exam-slot doc — otherwise re-saving forks a duplicate doc and splits data.
-    const marksDocId = resolvedMarksDocId || [batch, programme, department, subject, exam, academicYear, semester, markType]
+    const defaultMarksKey = [batch, programme, department, subject, exam, academicYear, semester, markType]
       .filter(Boolean)
       .map(sanitizeKey)
       .join('_') + (section ? `_${sanitizeKey(section)}` : '');
+
+    let marksDocId = defaultMarksKey;
+    if (resolvedMarksDocId) {
+      const curExamSanitized = sanitizeKey(exam).toLowerCase();
+      const curExamClean = sanitizeKey(stripSetSuffix(exam)).toLowerCase();
+      const resolvedSanitized = String(resolvedMarksDocId).toLowerCase();
+
+      const knownOtherExams = ['ia 1', 'ia 2', 'ia 3', 'ia1', 'ia2', 'ia3', 'model', 'assignment 1', 'assignment 2']
+        .filter(ke => {
+          const keSan = sanitizeKey(ke).toLowerCase();
+          return keSan !== curExamClean && keSan !== curExamSanitized;
+        });
+
+      const hasMismatchedExam = knownOtherExams.some(ke => {
+        const keSan = sanitizeKey(ke).toLowerCase();
+        return resolvedSanitized.includes(`_${keSan}_`);
+      });
+
+      if (!hasMismatchedExam) {
+        marksDocId = resolvedMarksDocId;
+      }
+    }
 
     const matchedAvail = availableExams.find(e => e.value === exam);
     const meta = {

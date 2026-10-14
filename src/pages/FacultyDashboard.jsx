@@ -6,8 +6,23 @@ import {
   BookOpen, Clock, Eye, Loader2, AlertCircle, Edit2, CheckCircle2,
   FileText, School, GraduationCap, Calendar, CalendarCheck2,
   Search, X, Sparkles, Plus, RefreshCw, Users, PenLine, Trash2, Layers,
-  Lock, Unlock
+  Lock, Unlock, TrendingUp, BarChart3, ArrowUpRight, ShieldCheck, Percent
 } from "lucide-react";
+import {
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  BarChart,
+  Bar,
+  Cell,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+  LabelList
+} from "recharts";
 
 import Layout from "../components/Layout";
 import { auth, db } from "../firebase";
@@ -33,6 +48,25 @@ const formatProgDisplay = (prog) => {
   if (prog === 'M_E') return 'M.E.';
   if (prog === 'M_Tech') return 'M.Tech.';
   return prog;
+};
+
+// Helper to format academic year e.g. "2021-22" -> "2022", "2022-23" -> "2023", "2024-25" -> "2025"
+export const formatAnalyticsYear = (yearStr) => {
+  if (!yearStr) return "";
+  const s = String(yearStr).trim();
+  const rangeMatch = s.match(/^(\d{4})\s*[-/]\s*(\d{2,4})$/);
+  if (rangeMatch) {
+    const startCentury = rangeMatch[1].slice(0, 2);
+    const end = rangeMatch[2];
+    return end.length === 2 ? `${startCentury}${end}` : end;
+  }
+  const generalMatch = s.match(/(\d{4})\s*[-/]\s*(\d{2,4})/);
+  if (generalMatch) {
+    const startCentury = generalMatch[1].slice(0, 2);
+    const end = generalMatch[2];
+    return end.length === 2 ? `${startCentury}${end}` : end;
+  }
+  return s;
 };
 
 const cleanDept = (dept) => {
@@ -817,6 +851,12 @@ export default function FacultyDashboard() {
   const [userAppraisal, setUserAppraisal] = useState(null);
   const [showAppraisalScorecardModal, setShowAppraisalScorecardModal] = useState(false);
 
+  // Personal Faculty Salary Progression States
+  const [userProfile, setUserProfile] = useState(null);
+  const [facultySalaryInfo, setFacultySalaryInfo] = useState(null);
+  const [salaryViewMode, setSalaryViewMode] = useState("PM"); // "PM" | "PA"
+  const [salaryLoading, setSalaryLoading] = useState(true);
+
   useEffect(() => {
     if (!currentUid) return;
     const q = query(
@@ -845,14 +885,136 @@ export default function FacultyDashboard() {
         onSnapshot(userRef, (snap) => {
           if (snap.exists()) {
             const d = snap.data();
+            setUserProfile(d);
             setFacultyName(d.facultyName || d.displayName || d.email || "Faculty");
             setFacultyDept(d.department || "");
           }
         });
+      } else {
+        setUserProfile(null);
+        setFacultySalaryInfo(null);
       }
     });
     return () => unsub();
   }, []);
+
+  // Real-time listener for gross salaries configuration, strictly matching the logged-in faculty
+  useEffect(() => {
+    if (!currentUid) {
+      setFacultySalaryInfo(null);
+      setSalaryLoading(false);
+      return;
+    }
+
+    const unsub = onSnapshot(doc(db, "appraisal_config", "gross_salaries"), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data() || {};
+        const salaries = data.salaries || {};
+
+        const normalizeId = (id) => String(id || "").replace(/^['"`]+|['"`]+$/g, "").trim().toUpperCase().replace(/\s+/g, "");
+
+        // Collect all possible candidate keys for the logged-in user
+        const candidateKeys = [
+          normalizeId(userProfile?.facultyId),
+          normalizeId(userProfile?.staffId),
+          normalizeId(userProfile?.employeeId),
+          normalizeId(userProfile?.facultyEmpId),
+          normalizeId(userProfile?.empId),
+          normalizeId(userAppraisal?.facultyId),
+          normalizeId(userAppraisal?.staffId),
+          normalizeId(userAppraisal?.formData?.facultyId),
+          normalizeId(currentUid),
+          normalizeId(auth.currentUser?.email),
+          String(userProfile?.facultyId || "").trim(),
+          String(userProfile?.staffId || "").trim(),
+          String(userProfile?.employeeId || "").trim(),
+          String(userAppraisal?.facultyId || "").trim()
+        ].filter(Boolean);
+
+        let matchedSalaryEntry = null;
+        for (const k of candidateKeys) {
+          if (salaries[k] !== undefined && salaries[k] !== null) {
+            matchedSalaryEntry = salaries[k];
+            break;
+          }
+        }
+
+        if (matchedSalaryEntry) {
+          let currentPM = 0;
+          let history = {};
+
+          if (typeof matchedSalaryEntry === "object" && matchedSalaryEntry !== null) {
+            history = matchedSalaryEntry.history || {};
+            currentPM = Number(matchedSalaryEntry.current) || (Object.values(history).slice(-1)[0]) || 0;
+          } else if (!isNaN(Number(matchedSalaryEntry))) {
+            currentPM = Number(matchedSalaryEntry);
+            history = { "Current": currentPM };
+          }
+
+          const historyEntries = Object.entries(history);
+          if (historyEntries.length === 0 && currentPM > 0) {
+            historyEntries.push(["Current", currentPM]);
+          }
+
+          // Sort years chronologically
+          historyEntries.sort((a, b) => a[0].localeCompare(b[0]));
+
+          const chartData = historyEntries.map(([yr, val], idx, arr) => {
+            const displayYear = formatAnalyticsYear(yr);
+            const numVal = Number(val) || 0;
+            const prevVal = idx > 0 ? Number(arr[idx - 1][1]) || 0 : null;
+            const incPM = prevVal !== null ? numVal - prevVal : 0;
+            const incPct = prevVal && prevVal > 0 ? ((incPM / prevVal) * 100).toFixed(1) : "0.0";
+            const incPctNum = Number(incPct) || 0;
+            return {
+              year: displayYear,
+              rawYear: yr,
+              salaryPM: numVal,
+              salaryPA: numVal * 12,
+              incrementPM: incPM,
+              incrementPA: incPM * 12,
+              growthPct: incPct,
+              growthPctNum: incPctNum,
+              growthPctFormatted: idx === 0 ? "Base" : `+${incPct}%`,
+              isBase: idx === 0,
+              isLatest: idx === arr.length - 1
+            };
+          });
+
+          const firstVal = chartData.length > 0 ? chartData[0].salaryPM : 0;
+          const lastVal = chartData.length > 0 ? chartData[chartData.length - 1].salaryPM : 0;
+          const totalGrowth = lastVal - firstVal;
+          const totalGrowthPct = firstVal > 0 ? ((totalGrowth / firstVal) * 100).toFixed(1) : "0.0";
+
+          const validIncrements = chartData.filter((d, i) => i > 0 && d.growthPctNum > 0);
+          const avgGrowthPct = validIncrements.length > 0
+            ? (validIncrements.reduce((acc, c) => acc + c.growthPctNum, 0) / validIncrements.length).toFixed(1)
+            : "0.0";
+
+          setFacultySalaryInfo({
+            currentPM,
+            currentPA: currentPM * 12,
+            history,
+            chartData,
+            totalGrowth,
+            totalGrowthPct,
+            avgGrowthPct,
+            hasMultiYear: chartData.length > 1
+          });
+        } else {
+          setFacultySalaryInfo(null);
+        }
+      } else {
+        setFacultySalaryInfo(null);
+      }
+      setSalaryLoading(false);
+    }, (err) => {
+      console.error("Error loading gross salaries for faculty:", err);
+      setSalaryLoading(false);
+    });
+
+    return () => unsub();
+  }, [currentUid, userProfile, userAppraisal]);
 
   useEffect(() => {
     if (!currentUid) {
@@ -2440,6 +2602,343 @@ export default function FacultyDashboard() {
                   View Scorecard Breakdown
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Personal Salary Progression & Visualization Widget */}
+        {facultySalaryInfo && (
+          <div className="bg-white rounded-3xl border border-zinc-200/90 shadow-md p-6 md:p-8 mb-8 relative overflow-hidden transition-all animate-fadeIn">
+            {/* Top gradient accent line */}
+            <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-emerald-500 via-teal-500 to-[#120c7a]" />
+
+            {/* Header Section */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-zinc-150">
+              <div className="flex items-center gap-3.5">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-700 border border-emerald-200/80 flex items-center justify-center shadow-xs shrink-0">
+                  <TrendingUp size={24} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h2 className="text-lg md:text-xl font-bold text-slate-900 tracking-tight">
+                      Salary Progression & Compensation Analytics
+                    </h2>
+                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-zinc-100 text-zinc-600 border border-zinc-200">
+                      <Lock size={10} /> Confidential • Personal Record
+                    </span>
+                  </div>
+                  <p className="text-xs text-zinc-500 mt-0.5">
+                    Multi-year historical salary progression and compensation trajectory on institutional record
+                  </p>
+                </div>
+              </div>
+
+              {/* View Mode Switcher */}
+              <div className="inline-flex items-center bg-zinc-100 p-1 rounded-xl border border-zinc-200 self-start sm:self-auto shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setSalaryViewMode("PM")}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    salaryViewMode === "PM"
+                      ? "bg-white text-emerald-700 shadow-xs"
+                      : "text-zinc-500 hover:text-zinc-800"
+                  }`}
+                >
+                  Monthly (PM)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSalaryViewMode("PA")}
+                  className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    salaryViewMode === "PA"
+                      ? "bg-white text-emerald-700 shadow-xs"
+                      : "text-zinc-500 hover:text-zinc-800"
+                  }`}
+                >
+                  Annual (PA)
+                </button>
+              </div>
+            </div>
+
+            {/* Metrics Ribbon */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 my-6">
+              <div className="bg-zinc-50/80 p-4 rounded-2xl border border-zinc-100">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block">
+                  Current Gross (PM)
+                </span>
+                <p className="text-lg md:text-xl font-black font-mono text-slate-900 mt-1">
+                  ₹{Number(facultySalaryInfo.currentPM).toLocaleString("en-IN")}
+                </p>
+                <span className="text-[10px] text-zinc-500 font-medium">Monthly baseline compensation</span>
+              </div>
+
+              <div className="bg-zinc-50/80 p-4 rounded-2xl border border-zinc-100">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block">
+                  Annualized Gross (PA)
+                </span>
+                <p className="text-lg md:text-xl font-black font-mono text-emerald-800 mt-1">
+                  ₹{Number(facultySalaryInfo.currentPA).toLocaleString("en-IN")}
+                </p>
+                <span className="text-[10px] text-zinc-500 font-medium">Annual gross outlay</span>
+              </div>
+
+              <div className="bg-zinc-50/80 p-4 rounded-2xl border border-zinc-100">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block">
+                  Total Growth (Timeline)
+                </span>
+                <p className="text-lg md:text-xl font-black font-mono text-indigo-700 mt-1 flex items-center gap-1">
+                  {facultySalaryInfo.totalGrowth >= 0 ? "+" : ""}₹{Number(facultySalaryInfo.totalGrowth).toLocaleString("en-IN")}
+                  <ArrowUpRight size={16} className="text-indigo-600" />
+                </p>
+                <span className="text-[10px] text-zinc-500 font-medium">Over recorded timeline</span>
+              </div>
+
+              <div className="bg-zinc-50/80 p-4 rounded-2xl border border-zinc-100">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block">
+                  Overall Increment %
+                </span>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-lg md:text-xl font-black font-mono text-purple-700">
+                    +{facultySalaryInfo.totalGrowthPct}%
+                  </span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 font-bold">
+                    {facultySalaryInfo.chartData.length} Years
+                  </span>
+                </div>
+                <span className="text-[10px] text-zinc-500 font-medium">Cumulative growth</span>
+              </div>
+            </div>
+
+            {/* Interactive Analytics Dual-Chart Grid: Left (Salary Line Graph) + Right (YoY Increment % Bar Chart) */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+              {/* Left Card: Historical Compensation Line Graph */}
+              <div className="bg-gradient-to-b from-zinc-50/60 to-white border border-zinc-200/70 rounded-2xl p-4 md:p-6 flex flex-col justify-between shadow-sm">
+                <div>
+                  <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                    <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
+                      <TrendingUp size={16} className="text-emerald-600" />
+                      Historical Compensation ({salaryViewMode === "PM" ? "Gross Per Month" : "Gross Per Annum"})
+                    </div>
+                    <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">
+                      <span className="w-5 h-0.5 bg-emerald-600 inline-block rounded-full" />
+                      <span className="w-2 h-2 rounded-full bg-emerald-600 inline-block -ml-2" />
+                      <span>Salary Trajectory</span>
+                    </div>
+                  </div>
+
+                  <div className="w-full h-64 md:h-72">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart
+                        data={facultySalaryInfo.chartData}
+                        margin={{ top: 20, right: 20, left: -5, bottom: 20 }}
+                      >
+                        <defs>
+                          <linearGradient id="salaryLineGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#059669" stopOpacity={0.25} />
+                            <stop offset="95%" stopColor="#059669" stopOpacity={0.0} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e4e4e7" />
+                        <XAxis
+                          dataKey="year"
+                          tickLine={false}
+                          axisLine={{ stroke: "#e4e4e7" }}
+                          tick={{ fill: "#52525b", fontSize: 11, fontWeight: 600 }}
+                        />
+                        <YAxis
+                          tickLine={false}
+                          axisLine={{ stroke: "#e4e4e7" }}
+                          tick={{ fill: "#71717a", fontSize: 10 }}
+                          tickFormatter={(val) => `₹${(val / 1000).toFixed(0)}k`}
+                          domain={['auto', 'auto']}
+                        />
+                        <Tooltip
+                          content={({ active, payload }) => {
+                            if (!active || !payload || !payload.length) return null;
+                            const d = payload[0].payload;
+                            const displayVal = salaryViewMode === "PM" ? d.salaryPM : d.salaryPA;
+                            return (
+                              <div className="bg-slate-900 text-white text-xs p-3 rounded-xl shadow-xl border border-slate-700 space-y-1">
+                                <div className="font-bold text-amber-300 text-[11px] uppercase tracking-wider">{d.year}</div>
+                                <div className="text-sm font-black font-mono">
+                                  ₹{Number(displayVal).toLocaleString("en-IN")} {salaryViewMode === "PM" ? "PM" : "PA"}
+                                </div>
+                                {d.incrementPM > 0 && (
+                                  <div className="text-[10px] text-emerald-400 font-semibold pt-1 border-t border-slate-800">
+                                    YoY Increment: +₹{Number(salaryViewMode === "PM" ? d.incrementPM : d.incrementPA).toLocaleString("en-IN")} (+{d.growthPct}%)
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          }}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey={salaryViewMode === "PM" ? "salaryPM" : "salaryPA"}
+                          stroke="#059669"
+                          strokeWidth={3.5}
+                          fillOpacity={1}
+                          fill="url(#salaryLineGrad)"
+                          dot={{ r: 5, fill: "#059669", stroke: "#ffffff", strokeWidth: 2.5 }}
+                          activeDot={{ r: 8, fill: "#047857", stroke: "#ffffff", strokeWidth: 3 }}
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Card: Year-by-Year Increment Growth Rate (%) Bar Chart */}
+              <div className="bg-gradient-to-b from-zinc-50/60 to-white border border-zinc-200/70 rounded-2xl p-4 md:p-6 flex flex-col justify-between shadow-sm">
+                <div>
+                  <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                    <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
+                      <BarChart3 size={16} className="text-indigo-600" />
+                      Year-by-Year Increment Growth Rate (%)
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {Number(facultySalaryInfo.avgGrowthPct) > 0 && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
+                          Avg: +{facultySalaryInfo.avgGrowthPct}%
+                        </span>
+                      )}
+                      <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">
+                        <span className="w-2.5 h-2.5 rounded-sm bg-indigo-600 inline-block" />
+                        <span>YoY % Growth</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="w-full h-64 md:h-72">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart
+                        data={facultySalaryInfo.chartData}
+                        margin={{ top: 25, right: 20, left: -10, bottom: 20 }}
+                      >
+                        <defs>
+                          <linearGradient id="incrementBarGrad" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#6366f1" stopOpacity={0.95} />
+                            <stop offset="100%" stopColor="#4f46e5" stopOpacity={0.8} />
+                          </linearGradient>
+                          <linearGradient id="incrementBarGradActive" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor="#10b981" stopOpacity={0.95} />
+                            <stop offset="100%" stopColor="#059669" stopOpacity={0.85} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e4e4e7" />
+                        <XAxis
+                          dataKey="year"
+                          tickLine={false}
+                          axisLine={{ stroke: "#e4e4e7" }}
+                          tick={{ fill: "#52525b", fontSize: 11, fontWeight: 600 }}
+                        />
+                        <YAxis
+                          tickLine={false}
+                          axisLine={{ stroke: "#e4e4e7" }}
+                          tick={{ fill: "#71717a", fontSize: 10 }}
+                          tickFormatter={(val) => `${val}%`}
+                          domain={[0, (dataMax) => Math.max(12, Math.ceil(dataMax + 2))]}
+                        />
+                        <Tooltip
+                          content={({ active, payload }) => {
+                            if (!active || !payload || !payload.length) return null;
+                            const d = payload[0].payload;
+                            return (
+                              <div className="bg-slate-900 text-white text-xs p-3 rounded-xl shadow-xl border border-slate-700 space-y-1">
+                                <div className="font-bold text-indigo-300 text-[11px] uppercase tracking-wider">{d.year}</div>
+                                {d.isBase ? (
+                                  <div className="text-amber-300 font-bold text-xs">
+                                    Baseline Reference Year
+                                  </div>
+                                ) : (
+                                  <div className="text-sm font-black font-mono text-emerald-400">
+                                    +{d.growthPct}% Increment
+                                  </div>
+                                )}
+                                <div className="text-[10px] text-zinc-300 pt-1 border-t border-slate-800">
+                                  {d.isBase ? (
+                                    <span>Base Gross: ₹{Number(salaryViewMode === "PM" ? d.salaryPM : d.salaryPA).toLocaleString("en-IN")} {salaryViewMode}</span>
+                                  ) : (
+                                    <span>
+                                      Added Outlay: +₹{Number(salaryViewMode === "PM" ? d.incrementPM : d.incrementPA).toLocaleString("en-IN")} {salaryViewMode}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          }}
+                        />
+                        <Bar
+                          dataKey="growthPctNum"
+                          radius={[6, 6, 0, 0]}
+                          maxBarSize={44}
+                        >
+                          <LabelList
+                            dataKey="growthPctFormatted"
+                            position="top"
+                            fill="#4338ca"
+                            fontSize={11}
+                            fontWeight={700}
+                            formatter={(val) => val === "Base" ? "—" : val}
+                          />
+                          {facultySalaryInfo.chartData.map((entry, index) => (
+                            <Cell
+                              key={`increment-bar-${index}`}
+                              fill={
+                                entry.isBase
+                                  ? "#e2e8f0"
+                                  : index === facultySalaryInfo.chartData.length - 1
+                                  ? "url(#incrementBarGradActive)"
+                                  : "url(#incrementBarGrad)"
+                              }
+                            />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Year-by-Year Progression Timeline Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+              {facultySalaryInfo.chartData.map((item, idx) => (
+                <div
+                  key={item.rawYear || item.year}
+                  className={`p-3.5 rounded-2xl border transition-all ${
+                    idx === facultySalaryInfo.chartData.length - 1
+                      ? "bg-emerald-50/50 border-emerald-200"
+                      : "bg-zinc-50/70 border-zinc-200/80"
+                  }`}
+                >
+                  <div className="flex items-center justify-between text-zinc-500 text-[10px] font-bold uppercase tracking-wider mb-1">
+                    <span>{item.year}</span>
+                    {idx === facultySalaryInfo.chartData.length - 1 && (
+                      <span className="bg-emerald-200 text-emerald-900 px-1.5 py-0.5 rounded text-[9px] font-black">
+                        Active Year
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-sm font-black font-mono text-slate-800">
+                    ₹{Number(salaryViewMode === "PM" ? item.salaryPM : item.salaryPA).toLocaleString("en-IN")}
+                    <span className="text-[10px] text-zinc-400 font-semibold ml-1">
+                      {salaryViewMode === "PM" ? "PM" : "PA"}
+                    </span>
+                  </div>
+                  {idx > 0 && item.incrementPM > 0 && (
+                    <div className="text-[10px] text-emerald-600 font-bold mt-1 flex items-center gap-1">
+                      <ArrowUpRight size={12} />
+                      +₹{Number(item.incrementPM).toLocaleString("en-IN")} ({item.growthPct}%)
+                    </div>
+                  )}
+                  {idx === 0 && (
+                    <div className="text-[10px] text-zinc-400 font-medium mt-1">
+                      Baseline salary
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
         )}

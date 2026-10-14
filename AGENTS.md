@@ -1,5 +1,245 @@
 ## Summary of Changes
 
+### 551. Fix Attitude Score Reflection & Multi-Institution Support in HR Portal (`hr-portal/src/pages/AppraisalReviews.jsx`, `hr-portal/src/pages/HRGrossAnalytics.jsx`, `hr-portal/src/pages/Dashboard.jsx`)
+- **Problem**:
+  - In `hr-portal`, when attitude score was evaluated and saved for staff/faculty across `"ckcoe"`, `"ckspk"`, and `"ckspe"`, the attitude score and submission status were not reflecting in the Appraisal Reviews table, candidate badges, or in the 40% attitude component calculation in `hr-portal/src/pages/HRGrossAnalytics.jsx`.
+- **Root Causes**:
+  1. **Attitude Submission Boolean Missing on Save**: In `hr-portal/src/pages/AppraisalReviews.jsx`, `handleSaveAttitudeForm` only stamped `submittedToPrincipal: true` when `options.submitToPrincipal === true`. For standard saves by Principal/HR or coordinators, it did not set `submittedToPrincipal: true` or `attitudeSubmittedToPrincipal: true`.
+  2. **Score Isolation Between Principal & Coordinator**: Principal evaluations were written to `principalTotalScore` while `totalScore` remained zero, causing views reading only `totalScore` or `ratings` to render zero marks.
+  3. **Strict Gate in `hr-portal/src/pages/HRGrossAnalytics.jsx`**: `isAttitudeSubmitted` checked only `app.attitudeSubmittedToPrincipal === true` or `app.attitudeEvaluation?.submittedToPrincipal === true`. School teachers and staff storing attitude data in `attitudeForm` or `principalMarks` were evaluated as false, entirely zeroing out Component 2 (the 40% attitude mark) for all candidates in CKCOE, CKSPK, and CKSPE.
+  4. **Academic Year Range Format**: Multi-year progression cards and charts in `hr-portal` displayed raw ranges (`2021-22`) instead of unified single ending years (`2022`).
+- **Key Enhancements**:
+  1. **Universal Attitude Resolution Engine (`getAttitudeScoreInfo`)**:
+     - Recognizes submitted/evaluated attitude forms across `attitudeSubmittedToPrincipal`, `attitudeForm.submittedToPrincipal`, `attitudeEvaluation.submittedToPrincipal`, `principalTotalScore`, `totalScore`, or populated ratings.
+     - Resolves both coordinator scores and Principal overrides (`totalScore`, `maxScore`, `average`, `hodScore`, `hodMax`, `principalScore`, `principalMax`).
+  2. **Bi-directional Firestore Synchronization (`handleSaveAttitudeForm`)**:
+     - Automatically stamps `collectionName` so updates target the exact Firestore collection (`teacher_appraisals`, `faculty_appraisals`, `non_teaching_appraisals`, `hod_appraisals`).
+     - Saves `attitudeSubmittedToPrincipal: true`, `submittedToPrincipal: true`, `attitudeForm`, `attitudeEvaluation`, and synchronizes Principal marks into `principalReview.attitudeMarks` and `principalReview.attitudeTotalScore`.
+  3. **Table & Detail View Reflection (`AppraisalReviews.jsx`)**:
+     - Table rows display exact attitude marks (`Attitude: X/Y` with `✓ To Principal` badge) for both HOD/Coordinator and Principal columns.
+     - Action button renders vibrant teal button with score badge (`Attitude Form [X/Y]`).
+     - Teacher detail banner and action buttons accurately reflect evaluated marks for coordinators and Principal.
+  4. **40% Attitude Weight Reflection in HR Gross Analytics (`HRGrossAnalytics.jsx`)**:
+     - Updated `isAttitudeSubmitted` to include `attitudeForm`, `attitudeEvaluation`, `principalMarks`, and evaluated ratings.
+     - Resolves `attitudeTotalScore` and `attitudeMaxScore` accurately, allowing Component 2 (40%) and Gross Mark to reflect immediately for CKCOE, CKSPK, and CKSPE.
+     - Prioritizes Principal's explicit `finalRating` for Component 1 (60%).
+  5. **Academic Year Formatting (`formatAnalyticsYear`)**:
+     - Integrated `formatAnalyticsYear` in `hr-portal/src/pages/HRGrossAnalytics.jsx` and `hr-portal/src/pages/Dashboard.jsx` (e.g., `2021-22` -> `2022`, `2024-25` -> `2025`).
+- **Result**: Production builds for both `hr-portal` (3.91s) and `outcomex` (7.83s) succeed cleanly with 0 errors.
+
+### 550. Format Academic Year to Single Ending Year in Compensation Analytics (`src/pages/HRGrossAnalytics.jsx`, `src/pages/FacultyDashboard.jsx`)
+- **Requirement**:
+  - In the Compensation Analytics modal and progression charts, whenever an academic year format such as `"2021-22"` is provided, display only the ending year `"2022"` (e.g. `2021-22` -> `2022`, `2022-23` -> `2023`, `2023-24` -> `2024`, `2024-25` -> `2025`).
+- **Key Enhancements**:
+  1. **`formatAnalyticsYear` Function**:
+     - Introduced `formatAnalyticsYear(yearStr)` matching academic year range patterns `(\d{4})[-/](\d{2,4})`.
+     - Intelligently extracts century prefix and two/four-digit suffix to output cleanly formatted 4-digit years (e.g., `2021-22` -> `2022`, `2024-25` -> `2025`).
+  2. **Analytics Modal Charts & Progression Cards (`HRGrossAnalytics.jsx`)**:
+     - `selectedCandidateAnalyticsData.chartData` transforms `yr` into `displayYear` (`year: displayYear`, `rawYear: yr`).
+     - Line graph (`AreaChart`) and YoY bar chart (`BarChart`) X-axes and hover tooltips now cleanly display `2022`, `2023`, `2024`, `2025`.
+     - Multi-year progression cards now render single year headers (`2022`, `2023`, `2024`, `2025`).
+     - Candidate Scorecard Breakdown Modal also formats the salary history pills via `formatAnalyticsYear(yr)`.
+  3. **Faculty Dashboard Progression Synchronization (`FacultyDashboard.jsx`)**:
+     - Applied `formatAnalyticsYear` to `facultySalaryInfo.chartData` so faculty viewing their personal compensation progression see the unified clean year labels.
+- **Result**: Production build succeeds cleanly in 7.76s with 0 errors.
+
+### 549. Fix `ReferenceError: allRows` & Attitude Form Status & Score Reflection (`src/pages/AppraisalReviews.jsx`, `src/pages/HRGrossAnalytics.jsx`)
+- **Root Cause**:
+  1. **Runtime Crash (`allRows`)**: In `src/pages/AppraisalReviews.jsx`, `allRows` was declared conditionally inside an `else if (app.autoScore?.breakdown)` block on line 715. On line 744, code evaluated `allRows.length > 0`. When reviewing appraisals having `hodScores`, the `else if` branch was bypassed, leaving `allRows` undefined and throwing `ReferenceError: Can't find variable: allRows`.
+  2. **Attitude Form Button & Score Missing**: The table row action button checked `(app.attitudeSubmittedToPrincipal === true || app.attitudeEvaluation?.submittedToPrincipal === true)`. If an evaluation (such as an HOD's 18/18 questions with 89/90 score) was saved without an explicit `submittedToPrincipal: true` boolean, the button fell back to solid purple (`bg-indigo-600`) without the score badge, even though the evaluation was completed.
+  3. **Misleading Pending Banner in Modal**: The attitude evaluation modal checked `(!attitudeAppraisal.attitudeSubmittedToPrincipal && !attitudeAppraisal.attitudeEvaluation?.submittedToPrincipal)` and unconditionally displayed `⚠️ Status: Pending evaluation by HOD (Not yet submitted to Principal)`. For HODs (who are evaluated by the Principal) and for forms already evaluated with completed ratings, this gave a false warning.
+  4. **40% Attitude Weight Reflection in HR Gross Analytics**: In `HRGrossAnalytics.jsx`, `isAttitudeSubmitted` was strictly checking the explicit boolean, causing valid evaluated attitude scores without the boolean to be excluded from the 40% component calculation.
+- **Key Enhancements**:
+  1. **Scope Lift for `allRows` (`AppraisalReviews.jsx`)**:
+     - Lifted `const bd = app.autoScore?.breakdown;` and `const allRows = bd ? [...(bd.part1Rows || []), ...(bd.part2Rows || [])] : [];` to the root criteria initialization block so `allRows` is always in scope.
+  2. **Comprehensive Attitude Status & Score Resolver (`getAttitudeScoreInfo`)**:
+     - Introduced `isAttitudeSubmittedToPrincipal`, `isAttitudeDraftStatus`, and `getAttitudeScoreInfo(app)`.
+     - Intelligently recognizes submitted/completed attitude forms across `attitudeSubmittedToPrincipal`, `attitudeEvaluation.submittedToPrincipal`, non-draft `totalScore > 0`, or populated `ratings`.
+     - Dynamically computes `totalScore` from individual question ratings if not yet summed.
+  3. **UI Enhancements in Table & Detail View**:
+     - Completed attitude forms immediately show a teal button with the score badge (e.g. `89/90`).
+     - Modal status banner displays a green completion banner (`✓ Status: Evaluated & Recorded by Principal` for HODs, `✓ Status: Evaluated & Submitted to Principal` for others) showing `Completed (89 / 90)`.
+     - Pending status banners correctly distinguish between HODs ("Pending evaluation by Principal") and staff/faculty ("Pending evaluation by HOD").
+  4. **Firestore Persistence Synchronization (`handleSaveAttitudeEvaluation`)**:
+     - Saving an attitude evaluation by Principal/HR or for HODs automatically writes `submittedToPrincipal: true`, `attitudeSubmittedToPrincipal: true`, and clears `attitudeDraft`.
+  5. **Attitude Score Ingestion in HR Gross Analytics (`HRGrossAnalytics.jsx`)**:
+     - Updated `isAttitudeSubmitted` to also accept completed, non-draft attitude forms with positive scores or populated ratings.
+- **Result**: Production build succeeds cleanly in 8.19s with 0 errors.
+
+### 548. Fix Appraisal Mark Reflection & Prioritize Principal's Final Rating (`src/pages/HRGrossAnalytics.jsx`, `src/pages/AppraisalReviews.jsx`)
+- **Root Cause**:
+  1. In `src/pages/HRGrossAnalytics.jsx`, the resolution of `appraisalMark` (Component 1 with 60% weight) for non-teaching candidates was defined as `app.performanceEvaluation?.totalMarks ?? app.principalReview?.finalRating ?? 0`.
+  2. Because `performanceEvaluation.totalMarks` is ALWAYS present on non-teaching forms (the raw rubric sum of the 10 category scores, e.g., `100`), the nullish coalescing operator `??` immediately picked `100` and NEVER reached `principalReview.finalRating` (where the Principal explicitly entered `85`).
+  3. Similarly for faculty and HOD candidates, `principalTotalScore` was checked before `finalRating`, bypassing manual overrides made in the "Final Rating" input box on `AppraisalReviews.jsx`.
+- **Key Enhancements**:
+  1. **Top Priority for Principal's Final Rating (`HRGrossAnalytics.jsx`)**:
+     - Extracts `rawFinalRating = app.principalReview?.finalRating ?? app.principalReview?.rating ?? app.performanceEvaluation?.finalRating ?? app.finalRating`.
+     - When `rawFinalRating` is a valid numeric score (e.g. `85`), it is immediately assigned as `appraisalMark`, perfectly reflecting whatever rating the Principal entered in `AppraisalReviews.jsx`.
+     - Falls back gracefully to `principalTotalScore`, `performanceEvaluation.totalMarks`, or `autoScore.total` only when `finalRating` is unset or blank.
+  2. **Bi-directional Synchronization on Save (`AppraisalReviews.jsx`)**:
+     - When the Principal saves updated marks or approves an appraisal, `finalRating` is synchronized across `principalReview.finalRating`, `principalReview.principalTotalScore`, and `performanceEvaluation.finalRating`.
+     - In initial state resolution, non-teaching appraisals pre-fill the Final Rating input field with `existingRating` or the evaluated marks.
+- **Result**: Production build succeeds cleanly in 7.93s with 0 errors.
+
+### 547. Per-Candidate Compensation Analytics Button & Dual-Chart Modal in HR Gross Analytics (`src/pages/HRGrossAnalytics.jsx`)
+- **Goal**:
+  1. Add an **"Analytics"** action button alongside the existing "Breakdown" button in the Action column of each candidate row in `HRGrossAnalytics.jsx`.
+  2. Clicking "Analytics" opens an executive modal displaying that specific candidate's personal salary progression and dual-chart analytics exactly as seen on `FacultyDashboard.jsx`:
+     - **Left Chart (AreaChart)**: Monotone historical salary trajectory curve with soft emerald gradient, data dots, and interactive tooltips.
+     - **Right Chart (BarChart)**: Year-by-Year YoY Increment Growth Rate (%) bar chart with `<LabelList>` top percentage labels, active year emerald gradient, and average increment badge (`Avg: +X.X%`).
+     - **Monthly (PM) / Annual (PA)** view mode switch.
+     - **4 KPI Metric Cards**: Current Gross, Annualized Gross, Total Timeline Growth amount, and Cumulative Growth %.
+     - **Year-by-Year Progression Timeline Cards**: Showing active year, baseline salary note, amount, and YoY increment amount and %.
+     - **Appraisal Performance & Increment Proposal Ribbon**: Highlighting institutional score (`/ 100`), evaluated tier, proposed increment %, and revised gross.
+- **Key Enhancements**:
+  1. **Dual Action Buttons in Table (`Actions` Column)**:
+     - Emerald `Analytics` button (`<TrendingUp size={12} /> Analytics`) for instantaneous visualization.
+     - Navy `Breakdown` button (`<Eye size={12} /> Breakdown`) for full scorecard breakdown.
+  2. **Candidate Time-Series Resolver (`selectedCandidateAnalyticsData`)**:
+     - Extracts and normalizes multi-year salary dictionary from `rec.salaryHistory`.
+     - Chronologically sorts academic years and computes YoY increment amounts, increment percentages, timeline total growth, and average increment %.
+     - Gracefully handles single-year or missing salary data with a clean empty-state card.
+  3. **Seamless Modal Navigation**:
+     - Includes a quick-action link in the modal footer to jump directly to the candidate's full scorecard breakdown modal.
+- **Result**: Production build succeeds cleanly in 7.99s with 0 errors.
+
+### 546. Personal Salary Progression & Compensation Analytics Dashboard in HR Portal (`hr-portal/src/pages/Dashboard.jsx`, `hr-portal/src/components/HRLayout.jsx`, `hr-portal/src/App.jsx`)
+- **Goal**:
+  1. Create a dedicated **Dashboard** page in the HR Portal (`hr-portal/src/pages/Dashboard.jsx`) replicating the personal multi-year salary progression and compensation analytics from `outcomex/src/pages/FacultyDashboard.jsx`.
+  2. Provide every logged-in user (School Teachers, College Faculty, Non-Teaching Staff, Coordinators, Principal, and HR) with their own confidential compensation progression analytics, interactive dual-charts, and appraisal tracking.
+  3. Integrate the Dashboard into the sidebar navigation (`hr-portal/src/components/HRLayout.jsx`) and set `/dashboard` as the default application route in `hr-portal/src/App.jsx`.
+- **Key Enhancements**:
+  1. **Dual-Chart Compensation Analytics Engine (`recharts`)**:
+     - **Left Chart (AreaChart)**: Smooth monotone historical salary trajectory with soft emerald gradient fill, formatted Y-axis (`₹k`), data points with white rings, and hover tooltips detailing exact PM/PA amounts and YoY increments.
+     - **Right Chart (BarChart)**: Year-by-Year YoY Increment Growth Rate (%) bar chart with `<LabelList>` top percentage badges, base year distinction, intermediate years indigo styling, latest active year emerald gradient, and average increment badge (`Avg: +X.X%`).
+     - **View Mode Switcher**: Interactive toggle between **Monthly (PM)** and **Annualized (PA)** compensation views.
+     - **KPI Metric Ribbon**: 4 metric cards displaying Current Gross (PM), Annualized Gross (PA), Total Growth (Timeline) with directional growth indicator, and Overall Increment % with total timeline years badge.
+     - **Progression Timeline Cards**: Year-by-year cards featuring active year badges, base year tags, compensation amounts, and YoY increment amounts and percentages.
+  2. **Multi-Key Employee ID Resolution**:
+     - Real-time Firestore subscription to `appraisal_config/gross_salaries`.
+     - Matches the logged-in user against candidate keys (`empId`, `employeeId`, `facultyId`, `staffId`, `teacherId`, `facultyEmpId`, Firestore UID, email, and appraisal submission records).
+     - Graceful pending compensation banner when salary data has not yet been uploaded for the user's ID.
+  3. **Appraisal Status & Scorecard Integration**:
+     - Real-time discovery of user's active appraisal (`teacher_appraisals`, `faculty_appraisals`, `non_teaching_appraisals`, `hod_appraisals`).
+     - Displays submission status banner, total secured score (e.g., `/ 100`), and quick-action link directly to the appraisal form.
+  4. **Navigation & Routing**:
+     - Added `Dashboard` (`/dashboard`) with `LayoutDashboard` icon at the top of the sidebar navigation in `HRLayout.jsx` for all user roles.
+     - Configured `/dashboard` route wrapped in `<ProtectedRoute>` and set `HomeRedirect` to direct logged-in users to `/dashboard`.
+- **Result**: Production build succeeds cleanly in 3.96s with 0 errors.
+
+### 545. Redesign OutcomeX Login & Registration Page to Match Campus Drone Hero Theme (`src/pages/Auth.jsx`)
+- **Goal**:
+  1. Transform `src/pages/Auth.jsx` to precisely match the user-provided reference aerial campus view layout with the centered split card.
+  2. Implement full-screen campus aerial photo background (`/ckcet_campus_hd.png` and `/ckcet_campus.png`).
+  3. Render the exact top header branding: ZoneSynapse 3D isometric cube logo + "ZoneSynapse" + vertical bar + "OUTCOMEX" + "Outcome-based Education & College ERP" on the left, and tagline "- A unified academic operations platform" on the right.
+  4. Incorporate the left dark navy hero panel with the cyan accent bar, "One Campus. One Connected Experience." headline, description, 3 OBE/NBA feature badges, and institutional footer.
+  5. Deliver the right auth panel with seamless switching between "Sign In" and "Create Account" (with Faculty & Student registration options).
+  6. Preserve 100% of the underlying authentication architecture: Firebase Auth persistence, email/password verification, role-based navigation, admin approval gates, and student index verification.
+- **Key Enhancements**:
+  1. **Aesthetic & Layout Fidelity**:
+     - Background uses cover photography of the CKCET campus with subtle dark vignette overlays for high text contrast.
+     - Top navigation bar styled with semi-transparent frosted glass (`backdrop-blur-sm bg-slate-900/40 border-b border-white/10`).
+     - Split card with rounded corners (`rounded-3xl shadow-2xl overflow-hidden border border-white/20 backdrop-blur-xl`).
+  2. **Auth Panel Features**:
+     - Mode toggle between Sign In and Registration.
+     - Clean modern inputs with focus ring transitions and lucide icons (`Mail`, `Lock`, `Eye`, `EyeOff`, `User`, `Hash`, `Building2`, etc.).
+     - Primary action button in deep royal navy (`bg-[#1a1772] hover:bg-[#151259]`) with smooth hover state and loading spinner.
+     - Security footnote with lock indicator and institutional contact helper.
+  3. **Preserved Logic & Security**:
+     - All user profile creation routines, faculty departments, and student registration queries preserved intact.
+- **Result**: Production build succeeds cleanly in 8.13s with 0 errors.
+
+### 544. Port All Advanced Features to HR Portal Gross Analytics (`hr-portal/src/pages/HRGrossAnalytics.jsx`)
+- **Goal**:
+  1. Port the entire set of advanced features, full-width UI, and multi-year time-series capabilities from `outcomex/src/pages/HRGrossAnalytics.jsx` to `hr-portal/src/pages/HRGrossAnalytics.jsx` per explicit user request.
+  2. Maintain strict Principal/HR access control, `teacher_appraisals` collection integration, robust employee ID resolution, and `<HRLayout>` framing.
+- **Key Enhancements**:
+  1. **Multi-Year Historical Salary Time-Series Architecture**:
+     - Dynamic discovery of historical academic years (`discoveredSalaryYears`, `getDefaultSalaryYears`).
+     - Multi-year salary template generator (`handleDownloadTemplate`) exporting all recorded years with single quote `'` text IDs.
+     - Dynamic multi-year parser (`handleFileUpload`) detecting $N$ historical academic year columns using regex (`/(20\d{2}\s*[-/]\s*\d{2,4}|20\d{2})/i`) and extracting `history: { [year]: value }`.
+     - Firestore synchronization (`handleConfirmSaveSalaries`) persisting `{ current: Number, history: Object, updatedAt: String }` and `historicalYears`.
+  2. **Full-Width UI & Analytics Matrix Enhancements**:
+     - Upload Confirmation Modal (`max-w-4xl`) rendering dynamic table columns for all detected academic years side-by-side with active Gross PM.
+     - Main table Gross PM column cell with `{N}Y History` track badge and hover tooltip detailing historical amounts.
+     - Candidate Scorecard Breakdown Modal with interactive "Multi-Year Salary History" progression card showing year-by-year cards with difference amount and percentage growth.
+     - Attitude form submission gate (`isAttitudeSubmitted`) ensuring draft attitude evaluations are excluded from the 40% gross score.
+  3. **HR Portal Security & Role Preservation**:
+     - Preserves `authChecking` and `isAuthorized` gate restricting access strictly to Principal, HR, and Admin users.
+     - Seamlessly includes school `teacher_appraisals` alongside college `faculty_appraisals`, `non_teaching_appraisals`, and `hod_appraisals`.
+- **Result**: Production builds for both `hr-portal` (3.22s) and `outcomex` (7.66s) succeed cleanly with 0 errors.
+
+### 543. Fix Cross-Exam Mark Leakage Between IA 1 and IA 2 (`src/pages/MarkEntry.jsx`)
+- **Goal**:
+  1. Fix critical issue where navigating from `FacultyDashboard.jsx` (or selecting "IA 2" in the Exam dropdown) to `MarkEntry.jsx` caused student marks entered for "IA 1" to incorrectly reflect/load into "IA 2" for certain subjects (e.g. `ME3592 - METROLOGY AND MEASUREMENTS`).
+  2. Guarantee complete isolation between exams so that an exam without saved marks never pulls, reflects, or overwrites marks from another exam.
+  3. Strictly preserve policy NOT to touch `hr-portal/` folder.
+- **Root Cause**:
+  1. When loading data for an exam (e.g. `IA 2`) whose exact document had not yet been created in Firestore, `loadData` fell back to `findMarksDocByMeta`.
+  2. To collect legacy push key tokens, `qpIdTokens` filtered `allQPs` only by subject code without filtering by the active exam, flattening all QP IDs and exam names (`"IA 1"`, `"IA 2"`) across the subject into `qpIdTokens`.
+  3. `findMarksDocByMeta` added `qpIdTokens` into `examTokens`, allowing existing `IA 1` marks documents to pass the exam check. Since `IA 1` had student mark entries while `IA 2` had none, `findMarksDocByMeta` selected the richest document (`IA 1`) and populated `IA 2` with `IA 1`'s marks.
+  4. In `handleSave`, `resolvedMarksDocId` would have caused saving under `IA 2` to overwrite the `IA 1` document.
+- **Key Enhancements**:
+  1. **Strict Exam Filtering for QP Tokens**:
+     - `qpIdTokens` now strictly filters `allQPs` by `isExamNameMatch(qpExam, exam)` and only extracts Firestore push keys (`isFirestoreKey`), ensuring question papers from other exams (like `IA 1`) are never included.
+  2. **Watertight Exam Gate in `findMarksDocByMeta`**:
+     - Explicit check: if `metaExamName` or `metaExam` is a human-readable exam name and does not match `exam` via `isExamNameMatch`, the document is rejected immediately.
+     - Document ID check: rejects candidate documents whose key contains any other known exam name (e.g. `_ia 1_` when targeting `IA 2`).
+     - Only allows matches where the document's exam metadata or push keys positively correspond to the target exam.
+  3. **Stale Cache & Overwrite Prevention**:
+     - `marksResolveCache` validates that cached documents match the active exam before using them, deleting invalid entries.
+     - `exactSnap` verifies exam match before setting `savedMarks`.
+     - `handleSave` sanitizes `resolvedMarksDocId` to guarantee it never saves to a doc ID containing a different exam.
+     - `loadData` immediately resets `marksData` to `{}` at the start of fetching to prevent any stale marks flash.
+- **Result**: Production build succeeds cleanly in 7.33s with 0 errors.
+
+### 542. Dual-Chart Salary Progression & YoY Increment % Analytics Engine (`src/pages/FacultyDashboard.jsx`)
+- **Goal**:
+  1. Visualize each faculty member's historical multi-year salary data in a responsive dual-chart grid:
+     - **Left Card**: Interactive Line Graph (`AreaChart`) tracking historical salary trajectory (Monthly PM / Annual PA).
+     - **Right Card**: Year-by-Year Increment Growth Rate (%) Bar Chart (`BarChart`) displaying individual annual increment percentage gains.
+  2. Enforce strict privacy/isolation so that each logged-in faculty member exclusively sees their own personal compensation record.
+  3. Support dual view modes (Monthly `PM` vs Annualized `PA`), Year-over-Year increment growth rates, average increment rate badge, and chronological timeline progression cards.
+  4. Strictly preserve policy NOT to touch `hr-portal/` folder.
+- **Key Enhancements**:
+  1. **Strict Real-time Faculty Salary Resolution**:
+     - Subscribes in real-time to `appraisal_config/gross_salaries`.
+     - Normalizes and matches exclusively against the logged-in user's identifiers (`facultyId`, `staffId`, `employeeId`, `facultyEmpId`, `uid`, `email`).
+     - Safely extracts both multi-year time-series dictionary (`history: { [year]: value }`) and latest active salary (`current`).
+     - Gracefully hides the widget if no salary record exists on file for that user, preventing data leakage or broken placeholders.
+  2. **Interactive Dual-Chart Grid Layout (`grid-cols-1 lg:grid-cols-2`)**:
+     - **Left (Line Graph)**: Smooth monotone AreaChart with soft emerald gradient fill, distinct dot markers (`dot` with white ring, `activeDot` hover pulse), and rich tooltip showing exact compensation and YoY gains.
+     - **Right (YoY Increment % Bar Chart)**: Recharts BarChart visualizing year-over-year percentage increments (`growthPctNum`), top percentage labels (`<LabelList>`), active year gradient highlight, baseline year distinction, and average increment badge (`Avg: +X.X%`).
+     - Interactive Toggle Switch between **"Monthly (PM)"** and **"Annual (PA)"** dynamically updating currency amounts across both charts.
+  3. **Compensation Analytics & Timeline Ribbon**:
+     - **KPI Grid**: Displays Current Gross PM, Annualized Gross PA, Total Timeline Growth amount, and Cumulative Growth %.
+     - **Chronological Timeline Cards**: Highlights the active year with an emerald badge, baseline year, and incremental growth badges.
+     - **Confidentiality Tag**: Features a lock icon and "Confidential • Personal Record" security label.
+- **Result**: Production build succeeds cleanly in 7.49s with 0 errors.
+
+### 541. Multi-Year Historical Salary Time-Series Architecture & Single Template Engine (`src/pages/HRGrossAnalytics.jsx`)
+- **Goal**:
+  1. Port multi-year (e.g. past 3 years) salary data into `HRGrossAnalytics.jsx` using a single Excel template, per client requirements.
+  2. Implement a generalized, non-hardcoded architecture capable of detecting and ingesting $N$ historical academic years dynamically without code alterations.
+  3. Support backward compatibility for legacy single-number salary entries in Firestore (`appraisal_config/gross_salaries`).
+  4. Provide multi-year tracking in the candidate scorecard breakdown modal and preview modal table.
+  5. Strictly preserve policy NOT to touch `hr-portal/` folder.
+- **Key Enhancements**:
+  1. **Dynamic Multi-Year Template Generator (`handleDownloadTemplate`)**:
+     - Discovers historical years from `salariesMap` or defaults dynamically to the past 3 academic years (e.g., `2022-23`, `2023-24`, `2024-25`) based on the active session.
+     - Generates single-template headers: `["faculty id", ...years.map(y => `gross PM (${y})`)]`.
+     - Automatically pre-fills all known historical salaries for each faculty while formatting IDs with single quote `'` prefix.
+  2. **Generalized Multi-Year Parser (`handleFileUpload`)**:
+     - Dynamically detects any number of year columns in the uploaded spreadsheet using academic year regex pattern matching (`/(20\d{2}\s*[-/]\s*\d{2,4}|20\d{2})/i`), falling back gracefully to single-column uploads.
+     - Extracts values into a time-series dictionary `history: { [year]: value }` and establishes the latest active year as the baseline `grossPM`.
+  3. **Backward-Compatible Firestore Schema (`handleConfirmSaveSalaries`)**:
+     - Persists `{ current: Number, history: Object, updatedAt: String }` under each normalized faculty ID in `appraisal_config/gross_salaries`, while seamlessly handling legacy numeric payloads.
+  4. **UI Integration**:
+     - **Upload Preview Modal**: Expands to `max-w-4xl` and dynamically renders table columns for each detected academic year, displaying exact salary amounts and active Gross PM side-by-side.
+     - **Main Table Gross PM Cell**: Features subtle `{N}Y History` track badge with hover tooltip showing all recorded years.
+     - **Candidate Scorecard Breakdown Modal**: Added a "Multi-Year Salary History" card displaying year-by-year salaries, annual outlay, and Year-over-Year increment amount & growth percentage.
+- **Result**: Production build succeeds cleanly in 8.29s with 0 errors.
+
 ### 540. Administration Non-Teaching Staff Direct Route to Coordinator Approved & HOD Exclusion (`src/pages/NonTeachingAppraisal.jsx`, `src/pages/HODDashboard.jsx`, `src/pages/PrincipalDashboard.jsx`, `src/pages/AppraisalReviews.jsx`)
 - **Goal**:
   1. Fix issue where central college "Administration" department staff (UG programme, Administration department) who submit non-teaching appraisals were mistakenly matching and showing on the MBA HOD dashboard (`HODDashboard.jsx`) due to substring matching (`"administration"` in `"businessadministration"`).

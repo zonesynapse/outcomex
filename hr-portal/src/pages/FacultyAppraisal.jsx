@@ -3,12 +3,12 @@ import { auth, db } from "../firebase";
 import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import evaluateAppraisal, { checkAppraisalPortalStatus, parseAppraisalDateTime, getSchoolBannerTitle, getSchoolShortName, normalizeInstitution } from "../utils/appraisalScore";
-import { saveFacultyAppraisal, loadFacultyAppraisalEvidences } from "../utils/appraisalStorage";
+import { saveFacultyAppraisal, loadFacultyAppraisalEvidences, findEvidenceInMap } from "../utils/appraisalStorage";
 import {
   User, Calendar, Briefcase, BookOpen, Award, CheckCircle2,
   Plus, Trash2, Save, Send, AlertTriangle, FileText, ChevronRight,
   ChevronLeft, Sparkles, HeartHandshake, Eye, Check, Loader2, RefreshCw, Users, Library,
-  UploadCloud, Paperclip, Edit2, X, AlertCircle
+  UploadCloud, Paperclip, Edit2, X, AlertCircle, ExternalLink, Download
 } from "lucide-react";
 import Layout from "../components/HRLayout";
 import { uploadFile, userStoragePath } from "../utils/fileUpload";
@@ -26,6 +26,7 @@ export default function FacultyAppraisal() {
   // Performance evaluation criteria (AppraisalSettings) + post-submit score popup
   const [evalCriteria, setEvalCriteria] = useState({ part1: [], part2: [] });
   const [scorePopup, setScorePopup] = useState(null);
+  const [viewingProof, setViewingProof] = useState(null);
 
   // Form State
   const [academicYear, setAcademicYear] = useState("2024-2025");
@@ -410,6 +411,134 @@ export default function FacultyAppraisal() {
     showToast("Evidence file removed.", "success");
   };
 
+  const handleViewProof = async (e, fileUrl, fileName = "Proof") => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (e && e.stopPropagation) e.stopPropagation();
+
+    let targetUrl = fileUrl;
+    if (typeof targetUrl === "object" && targetUrl?.fileUrl) {
+      targetUrl = targetUrl.fileUrl;
+    }
+
+    if (!targetUrl) {
+      showToast("No proof file attached to view.", "error");
+      return;
+    }
+
+    // Unresolved evidence reference lookup
+    if (typeof targetUrl === "string" && targetUrl.startsWith("__EVIDENCE_REF__:")) {
+      const refKey = targetUrl.replace("__EVIDENCE_REF__:", "");
+
+      // 1. Check in-memory appraisal state & formData
+      let foundUrl = findEvidenceInMap(existingAppraisal?.evidences, refKey)
+                  || findEvidenceInMap(existingAppraisal?.formData?.evidences, refKey)
+                  || findEvidenceInMap(existingAppraisal, refKey)
+                  || findEvidenceInMap(formData?.evidences, refKey);
+
+      // 2. On-demand query to Firestore evidence documents strictly for currentUser
+      if (!foundUrl && currentUser?.uid) {
+        const candidateIds = Array.from(new Set([
+          `appraisal_${currentUser.uid}_${academicYear}`,
+          existingAppraisal?.id,
+          `appraisal_${currentUser.uid}_2024-2025`,
+          `appraisal_${currentUser.uid}_2025-2026`,
+          `appraisal_${currentUser.uid}_2024-25`,
+          `appraisal_${currentUser.uid}_2025-26`,
+          `appraisal_${currentUser.uid}`,
+          currentUser.uid
+        ])).filter(Boolean);
+
+        for (const cId of candidateIds) {
+          try {
+            const snap = await getDoc(doc(db, "faculty_appraisals_evidences", cId));
+            if (snap.exists()) {
+              const data = snap.data();
+              foundUrl = findEvidenceInMap(data?.evidences || data, refKey);
+              if (foundUrl) {
+                try {
+                  localStorage.setItem(`evidences_${cId}`, JSON.stringify(data?.evidences || data));
+                } catch (e) {}
+                break;
+              }
+            }
+          } catch (e) {
+            console.warn("Could not query evidence doc:", e);
+          }
+        }
+      }
+
+      // 3. Fallback: check localStorage STRICTLY for currentUser candidate keys only (NEVER iterate other users' caches)
+      if (!foundUrl && currentUser?.uid) {
+        const localCandidateKeys = Array.from(new Set([
+          `evidences_appraisal_${currentUser.uid}_${academicYear}`,
+          `evidences_${currentUser.uid}`,
+          existingAppraisal?.id ? `evidences_${existingAppraisal.id}` : null,
+          `appraisal_evidences_appraisal_${currentUser.uid}_${academicYear}`,
+          `appraisal_evidences_${currentUser.uid}`
+        ])).filter(Boolean);
+
+        for (const lk of localCandidateKeys) {
+          try {
+            const raw = localStorage.getItem(lk);
+            if (raw) {
+              const map = JSON.parse(raw);
+              foundUrl = findEvidenceInMap(map?.evidences || map, refKey);
+              if (foundUrl) break;
+            }
+          } catch (e) {}
+        }
+      }
+
+      if (foundUrl) {
+        targetUrl = foundUrl;
+      } else {
+        showToast("Proof synchronization is pending. Please re-attach the document.", "error");
+        return;
+      }
+    }
+
+    // Determine MIME type
+    let mime = "";
+    if (typeof targetUrl === "string") {
+      if (targetUrl.startsWith("data:")) {
+        const match = targetUrl.match(/^data:([^;]+);/);
+        mime = match ? match[1] : "";
+      } else if (fileName) {
+        const ext = String(fileName).split(".").pop().toLowerCase();
+        if (ext === "pdf") mime = "application/pdf";
+        else if (["jpg", "jpeg", "png", "webp", "gif"].includes(ext)) mime = `image/${ext === "jpg" ? "jpeg" : ext}`;
+      }
+    }
+
+    // If Base64 Data URL, convert to Blob URL so preview & new tab work without browser security blocks
+    let safeUrl = targetUrl;
+    if (typeof targetUrl === "string" && targetUrl.startsWith("data:")) {
+      try {
+        const arr = targetUrl.split(",");
+        const mimeMatch = arr[0].match(/:(.*?);/);
+        const resolvedMime = mimeMatch ? mimeMatch[1] : (mime || "application/octet-stream");
+        mime = resolvedMime;
+        const bstr = atob(arr[1]);
+        let n = bstr.length;
+        const u8arr = new Uint8Array(n);
+        while (n--) {
+          u8arr[n] = bstr.charCodeAt(n);
+        }
+        const blob = new Blob([u8arr], { type: resolvedMime });
+        safeUrl = URL.createObjectURL(blob);
+      } catch (convErr) {
+        console.warn("Base64 to blob conversion failed, using raw data url:", convErr);
+      }
+    }
+
+    setViewingProof({
+      url: safeUrl,
+      rawUrl: targetUrl,
+      name: fileName || "Evidence Document",
+      mime: mime
+    });
+  };
+
   const renderRowEvidenceHeader = (sectionId, force = true) => {
     if (!force && !isSectionEvidenceRequired(sectionId)) return null;
     return <th className="border border-zinc-200 p-2 text-center w-28">Evidence</th>;
@@ -424,20 +553,21 @@ export default function FacultyAppraisal() {
       <td className="border border-zinc-200 p-1.5 text-center min-w-[120px]">
         {row.fileUrl ? (
           <div className="flex items-center justify-center gap-1.5">
-            <a
-              href={row.fileUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="text-[10px] font-extrabold text-blue-600 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded truncate max-w-[80px]"
+            <button
+              type="button"
+              onClick={(e) => handleViewProof(e, row.fileUrl, row.fileName || `Proof_${listKey}_${index + 1}`)}
+              className="text-[10px] font-extrabold text-blue-600 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded truncate max-w-[80px] hover:bg-blue-100 transition-colors flex items-center gap-1 cursor-pointer"
               title={row.fileName || "View Proof"}
             >
-              Proof
-            </a>
+              <Eye size={10} />
+              <span>Proof</span>
+            </button>
             {!isReadOnly && (
               <button
                 type="button"
                 onClick={() => handleRemoveRowFile(listKey, index)}
-                className="text-rose-500 hover:text-rose-700"
+                className="text-rose-500 hover:text-rose-700 cursor-pointer"
+                title="Remove attachment"
               >
                 <X size={10} />
               </button>
@@ -972,14 +1102,13 @@ export default function FacultyAppraisal() {
                                 {col.type === "file_only" ? (
                                   <div className="flex items-center justify-center">
                                     {val ? (
-                                      <a
-                                        href={typeof val === "string" ? val : val.fileUrl}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="px-2.5 py-1 bg-indigo-50 border border-indigo-150 text-[#120c7a] hover:bg-indigo-100 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all"
+                                      <button
+                                        type="button"
+                                        onClick={(e) => handleViewProof(e, typeof val === "string" ? val : val.fileUrl, (typeof val === "object" && val.fileName) || col.label || "Proof")}
+                                        className="px-2.5 py-1 bg-indigo-50 border border-indigo-150 text-[#120c7a] hover:bg-indigo-100 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer"
                                       >
-                                        <Paperclip size={11} /> ATTACHED
-                                      </a>
+                                        <Eye size={11} /> ATTACHED
+                                      </button>
                                     ) : !isReadOnly ? (
                                       <label className="px-2.5 py-1 bg-indigo-50 border border-indigo-150 text-[#120c7a] hover:bg-indigo-100 rounded-lg text-[10px] font-bold cursor-pointer flex items-center gap-1 transition-all">
                                         <UploadCloud size={11} /> ATTACH
@@ -1177,14 +1306,14 @@ export default function FacultyAppraisal() {
                         <div>
                           <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-0.5">Evidence File Proof</span>
                           {savedEntry.fileUrl ? (
-                            <a
-                              href={savedEntry.fileUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-xs font-bold text-blue-600 hover:underline truncate max-w-xs block"
+                            <button
+                              type="button"
+                              onClick={(e) => handleViewProof(e, savedEntry.fileUrl, savedEntry.fileName || field.title || "Proof")}
+                              className="text-xs font-bold text-blue-600 hover:underline truncate max-w-xs text-left cursor-pointer flex items-center gap-1"
                             >
-                              {savedEntry.fileName || "View Attachment"}
-                            </a>
+                              <Eye size={12} />
+                              <span>{savedEntry.fileName || "View Attachment"}</span>
+                            </button>
                           ) : (
                             <span className="text-xs font-bold text-zinc-400 italic">No File Uploaded</span>
                           )}
@@ -2581,8 +2710,16 @@ export default function FacultyAppraisal() {
                           <div className="flex-shrink-0 min-w-[80px] flex justify-center">
                             {row.fileUrl ? (
                               <div className="flex items-center gap-1 px-1.5 py-0.5 bg-blue-50 border border-blue-200 rounded">
-                                <a href={row.fileUrl} target="_blank" rel="noreferrer" className="text-[10px] font-extrabold text-blue-600 truncate max-w-[50px]" title={row.fileName || "View Proof"}>Proof</a>
-                                {!isReadOnly && <button type="button" onClick={() => handleRemoveRowFile("professionalMembership", idx)} className="text-rose-500 hover:text-rose-700"><X size={10} /></button>}
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleViewProof(e, row.fileUrl, row.fileName || `Membership_${idx + 1}`)}
+                                  className="text-[10px] font-extrabold text-blue-600 truncate max-w-[50px] hover:underline cursor-pointer flex items-center gap-0.5"
+                                  title={row.fileName || "View Proof"}
+                                >
+                                  <Eye size={9} />
+                                  <span>Proof</span>
+                                </button>
+                                {!isReadOnly && <button type="button" onClick={() => handleRemoveRowFile("professionalMembership", idx)} className="text-rose-500 hover:text-rose-700 cursor-pointer"><X size={10} /></button>}
                               </div>
                             ) : uploadingMap[`professionalMembership_${idx}`] ? (
                               <span className="text-[9px] text-zinc-400 font-bold uppercase animate-pulse">Uploading...</span>
@@ -3267,14 +3404,14 @@ export default function FacultyAppraisal() {
                             <div>
                               <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-0.5">Evidence File Proof</span>
                               {savedEntry.fileUrl ? (
-                                <a
-                                  href={savedEntry.fileUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="text-xs font-bold text-blue-600 hover:underline truncate max-w-xs block"
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleViewProof(e, savedEntry.fileUrl, savedEntry.fileName || field.title || "Proof")}
+                                  className="text-xs font-bold text-blue-600 hover:underline truncate max-w-xs text-left cursor-pointer flex items-center gap-1"
                                 >
-                                  {savedEntry.fileName || "View Attachment"}
-                                </a>
+                                  <Eye size={12} />
+                                  <span>{savedEntry.fileName || "View Attachment"}</span>
+                                </button>
                               ) : (
                                 <span className="text-xs font-bold text-zinc-400 italic">No File Uploaded</span>
                               )}
@@ -3461,6 +3598,117 @@ export default function FacultyAppraisal() {
                   className="px-5 py-2.5 bg-gradient-to-r from-indigo-700 to-violet-800 hover:from-indigo-800 hover:to-violet-900 text-white rounded-xl text-xs font-black transition-all shadow-lg shadow-indigo-200 flex items-center gap-1.5 cursor-pointer"
                 >
                   <Send size={14} /> Done
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Proof Preview Executive Modal */}
+        {viewingProof && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn"
+            onClick={() => setViewingProof(null)}
+          >
+            <div
+              className="bg-white rounded-3xl border border-slate-200 shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden animate-scaleUp"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="px-6 py-4 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white flex items-center justify-between border-b border-white/10 shrink-0">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center text-indigo-300 shrink-0">
+                    <FileText size={18} />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-bold truncate max-w-md text-white">
+                      {viewingProof.name}
+                    </h3>
+                    <span className="text-[10px] text-slate-300 font-semibold uppercase tracking-wider block">
+                      Institutional Evidence Verification
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (viewingProof.url) {
+                        window.open(viewingProof.url, "_blank", "noopener,noreferrer");
+                      }
+                    }}
+                    className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+                    title="Open in new window"
+                  >
+                    <ExternalLink size={13} />
+                    <span className="hidden sm:inline">Open New Tab</span>
+                  </button>
+                  <a
+                    href={viewingProof.url}
+                    download={viewingProof.name}
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+                    title="Download File"
+                  >
+                    <Download size={13} />
+                    <span className="hidden sm:inline">Download</span>
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => setViewingProof(null)}
+                    className="w-8 h-8 rounded-xl bg-white/10 hover:bg-rose-500 hover:text-white text-slate-300 transition-all flex items-center justify-center cursor-pointer ml-1"
+                    title="Close Preview"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Content Body */}
+              <div className="p-4 sm:p-6 overflow-y-auto flex-1 flex flex-col items-center justify-center bg-slate-50 min-h-[50vh]">
+                {viewingProof.mime === "application/pdf" || viewingProof.name?.toLowerCase().endsWith(".pdf") ? (
+                  <iframe
+                    src={viewingProof.url}
+                    className="w-full h-[70vh] rounded-2xl border border-slate-200 bg-white shadow-inner"
+                    title={viewingProof.name}
+                  />
+                ) : viewingProof.mime?.startsWith("image/") || /\.(jpg|jpeg|png|webp|gif|svg)$/i.test(viewingProof.name) ? (
+                  <div className="max-h-[70vh] flex items-center justify-center overflow-auto p-2">
+                    <img
+                      src={viewingProof.url}
+                      alt={viewingProof.name}
+                      className="max-h-[68vh] max-w-full rounded-2xl shadow-md object-contain border border-slate-200 bg-white"
+                    />
+                  </div>
+                ) : (
+                  <div className="text-center p-8 bg-white rounded-2xl border border-slate-200 shadow-sm max-w-md">
+                    <FileText size={48} className="mx-auto text-indigo-500 mb-3" />
+                    <h4 className="text-sm font-bold text-slate-800 mb-1">{viewingProof.name}</h4>
+                    <p className="text-xs text-slate-500 mb-4">
+                      This file format cannot be rendered directly in the embedded frame.
+                    </p>
+                    <a
+                      href={viewingProof.url}
+                      download={viewingProof.name}
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-md"
+                    >
+                      <Download size={14} /> Download Document
+                    </a>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="px-6 py-3 bg-white border-t border-slate-200 flex items-center justify-between text-xs text-slate-500 shrink-0">
+                <span className="font-semibold text-[11px]">
+                  Preview Mode • Secure Appraisal Document
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setViewingProof(null)}
+                  className="px-4 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-all cursor-pointer"
+                >
+                  Close Preview
                 </button>
               </div>
             </div>

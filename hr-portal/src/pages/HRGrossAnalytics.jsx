@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import HRLayout from "../components/HRLayout";
 import { auth, db } from "../firebase";
-import { collection, doc, onSnapshot, setDoc, getDoc } from "firebase/firestore";
+import { collection, doc, onSnapshot, setDoc, getDoc, deleteDoc } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import * as XLSX from "xlsx";
 import {
@@ -36,8 +36,11 @@ import {
   Sliders,
   RotateCcw,
   BadgePercent,
-  ArrowRight
+  ArrowRight,
+  Building2,
+  Trash2
 } from "lucide-react";
+import { isSameInstitution, normalizeInstitution, getSchoolShortName } from "../utils/appraisalScore";
 
 // Institutional Performance & Increment Criteria Matrix (from official rubrics)
 export const DEFAULT_INCREMENT_CRITERIA = {
@@ -101,48 +104,125 @@ export const DEFAULT_INCREMENT_CRITERIA = {
   promotionPct: 5 // Promotion - 5%
 };
 
+// Helper to format academic year e.g. "2021-22" -> "2022", "2022-23" -> "2023", "2024-25" -> "2025"
+export const formatAnalyticsYear = (yearStr) => {
+  if (!yearStr) return "";
+  const s = String(yearStr).trim();
+  const rangeMatch = s.match(/^(\d{4})\s*[-/]\s*(\d{2,4})$/);
+  if (rangeMatch) {
+    const startCentury = rangeMatch[1].slice(0, 2);
+    const end = rangeMatch[2];
+    return end.length === 2 ? `${startCentury}${end}` : end;
+  }
+  const generalMatch = s.match(/(\d{4})\s*[-/]\s*(\d{2,4})/);
+  if (generalMatch) {
+    const startCentury = generalMatch[1].slice(0, 2);
+    const end = generalMatch[2];
+    return end.length === 2 ? `${startCentury}${end}` : end;
+  }
+  return s;
+};
+
 export default function HRGrossAnalytics() {
   const [facultyAppraisals, setFacultyAppraisals] = useState([]);
   const [teacherAppraisals, setTeacherAppraisals] = useState([]);
   const [nonTeachingAppraisals, setNonTeachingAppraisals] = useState([]);
   const [hodAppraisals, setHodAppraisals] = useState([]);
   const [usersMap, setUsersMap] = useState({});
-  const [salariesMap, setSalariesMap] = useState({});
   const [promotionsMap, setPromotionsMap] = useState({});
   const [salaryAdjustmentsMap, setSalaryAdjustmentsMap] = useState({});
   const [adjustmentInputs, setAdjustmentInputs] = useState({});
   const [criteriaConfig, setCriteriaConfig] = useState(DEFAULT_INCREMENT_CRITERIA);
   const [loading, setLoading] = useState(true);
 
-  // Principal / HR Role Verification
+  // Institution-segregated salaries store (gross_salaries_ckcoe, gross_salaries_ckspk, gross_salaries_ckspe, gross_salaries_ckcet)
+  const [instSalaries, setInstSalaries] = useState({
+    ckcoe: {},
+    ckspk: {},
+    ckspe: {},
+    ckcet: {},
+    legacy: {}
+  });
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deletingSalaries, setDeletingSalaries] = useState(false);
+
+  // Principal / HR Role & Institution Verification
+  const [currentUser, setCurrentUser] = useState(auth.currentUser || null);
   const [authChecking, setAuthChecking] = useState(true);
   const [isAuthorized, setIsAuthorized] = useState(false);
+  const [userProfile, setUserProfile] = useState(null);
+  const [userRole, setUserRole] = useState("");
+  const [userInstitution, setUserInstitution] = useState("");
+  const [userDepartment, setUserDepartment] = useState("");
+  const [selectedInstFilter, setSelectedInstFilter] = useState("All");
+
+  // Normalized active institution code ('ckcoe', 'ckspk', 'ckspe', 'ckcet')
+  const activeInstCode = useMemo(() => {
+    const raw = userInstitution || (selectedInstFilter !== "All" ? selectedInstFilter : "");
+    return normalizeInstitution(raw).toLowerCase();
+  }, [userInstitution, selectedInstFilter]);
+
+  // Reactive resolution of salaries strictly prioritizing the active institution's dedicated document node
+  const salariesMap = useMemo(() => {
+    if (activeInstCode && activeInstCode !== "all") {
+      const dedicated = instSalaries[activeInstCode];
+      // If dedicated document has data or was fetched, use it
+      if (dedicated && Object.keys(dedicated).length > 0) {
+        return dedicated;
+      }
+      // If dedicated node is empty/not uploaded yet, fallback to legacy
+      return instSalaries.legacy || {};
+    }
+
+    // Super Admin viewing "All": merge all institution nodes
+    return {
+      ...(instSalaries.legacy || {}),
+      ...(instSalaries.ckcet || {}),
+      ...(instSalaries.ckcoe || {}),
+      ...(instSalaries.ckspe || {}),
+      ...(instSalaries.ckspk || {})
+    };
+  }, [activeInstCode, instSalaries]);
 
   useEffect(() => {
-    const unsubAuth = onAuthStateChanged(auth, async (currentUser) => {
-      if (!currentUser) {
+    const unsubAuth = onAuthStateChanged(auth, async (user) => {
+      setCurrentUser(user);
+      if (!user) {
         setIsAuthorized(false);
         setAuthChecking(false);
         return;
       }
       try {
-        let userRole = "";
-        let userDesignation = "";
-        const uDoc = await getDoc(doc(db, "users", currentUser.uid));
+        let role = "";
+        let designation = "";
+        let inst = "";
+        let dept = "";
+        let profileData = null;
+
+        // Try Firestore users collection first
+        const uDoc = await getDoc(doc(db, "users", user.uid));
         if (uDoc.exists()) {
-          const d = uDoc.data();
-          userRole = d.role || "";
-          userDesignation = d.designation || "";
-        } else {
-          const localStr = localStorage.getItem(`user_profile_${currentUser.uid}`);
-          if (localStr) {
-            const p = JSON.parse(localStr);
-            userRole = p.role || "";
-            userDesignation = p.designation || "";
-          }
+          profileData = uDoc.data();
         }
-        const r = (String(userRole) + " " + String(userDesignation)).toLowerCase();
-        const allowed = r.includes("principal") || r.includes("hr") || r.includes("admin");
+
+        // Check localStorage fallback / enrichment
+        let localProfile = null;
+        try {
+          const localStr = localStorage.getItem(`user_profile_${user.uid}`);
+          if (localStr) localProfile = JSON.parse(localStr);
+        } catch (e) {}
+
+        role = profileData?.role || localProfile?.role || "";
+        designation = profileData?.designation || localProfile?.designation || "";
+        inst = profileData?.institution || localProfile?.institution || "";
+        dept = profileData?.department || localProfile?.department || "";
+
+        setUserProfile(profileData || localProfile);
+        setUserRole(role);
+        setUserInstitution(inst);
+        setUserDepartment(dept);
+        const r = (String(role) + " " + String(designation)).toLowerCase();
+        const allowed = r.includes("principal") || r.includes("hr") || r.includes("admin") || user?.email === "obe@ckcet.edu.in";
         setIsAuthorized(allowed);
       } catch (e) {
         console.error("Auth check error in Gross Analytics:", e);
@@ -173,6 +253,7 @@ export default function HRGrossAnalytics() {
   const [parsedPreviewList, setParsedPreviewList] = useState([]);
   const [uploadFileName, setUploadFileName] = useState("");
   const [uploadSaving, setUploadSaving] = useState(false);
+  const [uploadDetectedYears, setUploadDetectedYears] = useState([]);
 
   // Toast Notification State
   const [toast, setToast] = useState({ show: false, message: "", type: "success" });
@@ -221,16 +302,30 @@ export default function HRGrossAnalytics() {
     }, (err) => console.error("Error loading users:", err));
     unsubs.push(unsubUsers);
 
-    // 2. Fetch Gross Salaries (Persisted from Excel/CSV Uploads)
-    const unsubSalaries = onSnapshot(doc(db, "appraisal_config", "gross_salaries"), (snap) => {
+    // 2. Fetch Gross Salaries from Dedicated Institution Nodes (ckcoe, ckspk, ckspe, ckcet)
+    const instNodes = ["ckcoe", "ckspk", "ckspe", "ckcet"];
+    instNodes.forEach((code) => {
+      const unsubInstSal = onSnapshot(doc(db, "appraisal_config", `gross_salaries_${code}`), (snap) => {
+        if (snap.exists()) {
+          const data = snap.data();
+          setInstSalaries((prev) => ({ ...prev, [code]: data.salaries || {} }));
+        } else {
+          setInstSalaries((prev) => ({ ...prev, [code]: {} }));
+        }
+      }, (err) => console.error(`Error loading ${code} salaries:`, err));
+      unsubs.push(unsubInstSal);
+    });
+
+    // Legacy fallback listener (appraisal_config/gross_salaries)
+    const unsubLegacy = onSnapshot(doc(db, "appraisal_config", "gross_salaries"), (snap) => {
       if (snap.exists()) {
         const data = snap.data();
-        setSalariesMap(data.salaries || {});
+        setInstSalaries((prev) => ({ ...prev, legacy: data.salaries || {} }));
       } else {
-        setSalariesMap({});
+        setInstSalaries((prev) => ({ ...prev, legacy: {} }));
       }
-    }, (err) => console.error("Error loading salaries config:", err));
-    unsubs.push(unsubSalaries);
+    }, (err) => console.error("Error loading legacy salaries config:", err));
+    unsubs.push(unsubLegacy);
 
     // 3. Fetch Increment Criteria Configuration
     const unsubCriteria = onSnapshot(doc(db, "appraisal_config", "increment_criteria"), (snap) => {
@@ -318,6 +413,31 @@ export default function HRGrossAnalytics() {
     return () => unsubs.forEach((u) => u && u());
   }, []);
 
+  // Default salary years helper (generates past 3 academic years based on active academic year)
+  const getDefaultSalaryYears = (activeYear = "2024-2025") => {
+    const match = String(activeYear).match(/(20\d{2})/);
+    const startYear = match ? parseInt(match[1], 10) : new Date().getFullYear();
+    return [
+      `${startYear - 2}-${String(startYear - 1).slice(-2)}`,
+      `${startYear - 1}-${String(startYear).slice(-2)}`,
+      `${startYear}-${String(startYear + 1).slice(-2)}`
+    ];
+  };
+
+  // Discovered multi-year history keys across salariesMap
+  const discoveredSalaryYears = useMemo(() => {
+    const set = new Set();
+    Object.values(salariesMap).forEach((val) => {
+      if (val && typeof val === "object" && val.history) {
+        Object.keys(val.history).forEach((y) => set.add(y));
+      }
+    });
+    if (set.size >= 2) {
+      return Array.from(set).sort();
+    }
+    return getDefaultSalaryYears(selectedYear !== "All" ? selectedYear : "2024-2025");
+  }, [salariesMap, selectedYear]);
+
   // Helper: Find matching tier for a given score
   const getCandidateTier = (score, criteria) => {
     const tiers = criteria?.tiers || DEFAULT_INCREMENT_CRITERIA.tiers;
@@ -334,7 +454,7 @@ export default function HRGrossAnalytics() {
   const allRecords = useMemo(() => {
     const rawList = [...facultyAppraisals, ...teacherAppraisals, ...nonTeachingAppraisals, ...hodAppraisals];
 
-    return rawList.map((app) => {
+    return rawList.map((app, appIdx) => {
       // Find matching user from usersMap
       const candidateUserKeys = [
         app.uid,
@@ -346,7 +466,10 @@ export default function HRGrossAnalytics() {
         app.facultyEmail ? app.facultyEmail.toLowerCase().trim() : null,
         app.staffEmail ? app.staffEmail.toLowerCase().trim() : null,
         app.email ? app.email.toLowerCase().trim() : null,
+        app.userEmail ? app.userEmail.toLowerCase().trim() : null,
         app.formData?.email ? app.formData.email.toLowerCase().trim() : null,
+        app.formData?.facultyEmail ? app.formData.facultyEmail.toLowerCase().trim() : null,
+        app.formData?.staffEmail ? app.formData.staffEmail.toLowerCase().trim() : null,
         app.empId,
         app.formData?.empId
       ].filter(Boolean);
@@ -388,7 +511,6 @@ export default function HRGrossAnalytics() {
         getValidEmpId(app.formData?.facultyId) ||
         getValidEmpId(app.formData?.staffId) ||
         getValidEmpId(app.staffId) ||
-        // Fallback: If no explicit empId found, use empId from matchedUser/app, else truncate UID
         (matchedUser.empId ? String(matchedUser.empId).trim() : null) ||
         (app.empId ? String(app.empId).trim() : null) ||
         (matchedUser.employeeId ? String(matchedUser.employeeId).trim() : null) ||
@@ -396,12 +518,12 @@ export default function HRGrossAnalytics() {
       );
       const facultyId = String(resolvedEmpId || "").replace(/^['"`]+|['"`]+$/g, "").trim();
 
-      // Lookup Gross PM salary from salariesMap
+      // Lookup Gross PM salary from salariesMap (supports legacy number and new time-series object)
       const normId = normalizeId(facultyId);
       const normUid = normalizeId(app.uid || app.staffId || matchedUser.id);
       const normEmail = normalizeId(app.facultyEmail || app.staffEmail || matchedUser.email);
       const normEmpId = normalizeId(matchedUser.empId);
-      const grossPMSalary = (
+      const rawSalaryEntry = (
         salariesMap[normId] ??
         salariesMap[facultyId] ??
         salariesMap[normEmpId] ??
@@ -409,7 +531,20 @@ export default function HRGrossAnalytics() {
         salariesMap[normEmail] ??
         null
       );
-      const grossPM = grossPMSalary !== null && !isNaN(Number(grossPMSalary)) ? Number(grossPMSalary) : null;
+
+      let grossPM = null;
+      let salaryHistory = {};
+
+      if (rawSalaryEntry !== null && rawSalaryEntry !== undefined) {
+        if (typeof rawSalaryEntry === "object" && rawSalaryEntry !== null) {
+          salaryHistory = rawSalaryEntry.history || {};
+          const currentVal = rawSalaryEntry.current ?? (Object.values(salaryHistory).slice(-1)[0]);
+          grossPM = currentVal !== null && !isNaN(Number(currentVal)) ? Number(currentVal) : null;
+        } else if (!isNaN(Number(rawSalaryEntry))) {
+          grossPM = Number(rawSalaryEntry);
+          salaryHistory = { "Current": grossPM };
+        }
+      }
 
       // Promotion Status
       const isPromoted = Boolean(
@@ -420,33 +555,46 @@ export default function HRGrossAnalytics() {
         app.recommendedPromotion
       );
 
-      // Faculty Name resolution (prioritizing official name from users collection)
+      // Faculty Name resolution
       const facultyName = (
-        matchedUser.name ||
-        matchedUser.displayName ||
-        matchedUser.facultyName ||
         app.facultyName ||
         app.formData?.name ||
         app.staffName ||
         app.hodName ||
+        matchedUser.displayName ||
+        matchedUser.facultyName ||
         "Faculty Member"
       );
 
       // Designation resolution
       const designation = (
-        matchedUser.designation ||
         app.designation ||
         app.formData?.designation ||
         app.staffDesignation ||
+        matchedUser.designation ||
         "Faculty"
       );
 
       // Department resolution
       const department = (
-        matchedUser.department ||
         app.department ||
         app.formData?.department ||
+        app.dept ||
+        app.formData?.dept ||
+        matchedUser.department ||
+        matchedUser.dept ||
         "General"
+      );
+
+      // Institution resolution (e.g. 'CKSPK (Matric)', 'CKSPE (CBSE)', 'CKCOE', 'CKCET')
+      const institution = (
+        app.institution ||
+        app.formData?.institution ||
+        app.school ||
+        app.formData?.school ||
+        matchedUser.institution ||
+        matchedUser.school ||
+        (app.collectionType === "teacher" ? "CKSPK (Matric)" : app.collectionType === "faculty" ? "CKCOE" : "")
       );
 
       // Date of Joining (DOJ) resolution
@@ -459,36 +607,66 @@ export default function HRGrossAnalytics() {
         app.doj ||
         matchedUser.dateOfJoining ||
         matchedUser.dojCollege ||
-        matchedUser.doj ||
         "-"
       );
 
       // 1. Appraisal Review Form Mark (out of 100)
+      // The Principal's explicit Final Rating entered in AppraisalReviews takes highest priority
       let appraisalMark = 0;
-      if (app.collectionType === "non_teaching") {
-        appraisalMark = Number(
-          app.performanceEvaluation?.totalMarks ??
-          app.principalReview?.finalRating ??
-          0
-        );
+      const rawFinalRating = app.principalReview?.finalRating ?? app.principalReview?.rating ?? app.performanceEvaluation?.finalRating ?? app.finalRating;
+      const hasFinalRating = rawFinalRating !== undefined && rawFinalRating !== null && rawFinalRating !== "" && !isNaN(Number(rawFinalRating));
+
+      if (hasFinalRating) {
+        // Principal's entered Final Rating (e.g. 85 in AppraisalReviews)
+        appraisalMark = Number(rawFinalRating);
+      } else if (app.principalReview?.principalTotalScore !== undefined && app.principalReview?.principalTotalScore !== null && !isNaN(Number(app.principalReview.principalTotalScore))) {
+        appraisalMark = Number(app.principalReview.principalTotalScore);
+      } else if (app.collectionType === "non_teaching") {
+        appraisalMark = Number(app.performanceEvaluation?.totalMarks ?? app.totalScore ?? 0);
+      } else if (app.autoScore?.total !== undefined && !isNaN(Number(app.autoScore.total))) {
+        appraisalMark = Number(app.autoScore.total);
       } else {
-        if (app.principalReview?.principalTotalScore !== undefined && app.principalReview?.principalTotalScore !== null) {
-          appraisalMark = Number(app.principalReview.principalTotalScore) || 0;
-        } else if (app.principalReview?.finalRating !== undefined && !isNaN(Number(app.principalReview.finalRating))) {
-          appraisalMark = Number(app.principalReview.finalRating) || 0;
-        } else if (app.autoScore?.total !== undefined) {
-          appraisalMark = Number(app.autoScore.total) || 0;
+        appraisalMark = Number(app.totalScore || app.score || 0);
+      }
+
+      // 2. Attitude Form Mark (Reflects across CKCOE, CKSPK, CKSPE once evaluated)
+      const attitudeObj = app.attitudeForm || app.attitudeEvaluation || {};
+      const isAttitudeSubmitted = Boolean(
+        app.attitudeSubmittedToPrincipal === true ||
+        attitudeObj.submittedToPrincipal === true ||
+        attitudeObj.principalEvaluated === true ||
+        (attitudeObj.principalTotalScore !== undefined && Number(attitudeObj.principalTotalScore) > 0) ||
+        (attitudeObj.totalScore !== undefined && Number(attitudeObj.totalScore) > 0 && !attitudeObj.isDraft && !app.attitudeDraft) ||
+        (app.principalReview?.attitudeTotalScore !== undefined && Number(app.principalReview?.attitudeTotalScore) > 0) ||
+        (attitudeObj.principalMarks && Object.keys(attitudeObj.principalMarks).length > 0) ||
+        (attitudeObj.ratings && Object.keys(attitudeObj.ratings).length > 0 && !attitudeObj.isDraft && !app.attitudeDraft)
+      );
+
+      let attitudeTotalScore = 0;
+      if (isAttitudeSubmitted) {
+        // Principal's evaluation takes priority if provided
+        if (attitudeObj.principalTotalScore !== undefined && Number(attitudeObj.principalTotalScore) > 0) {
+          attitudeTotalScore = Number(attitudeObj.principalTotalScore);
+        } else if (app.principalReview?.attitudeTotalScore !== undefined && Number(app.principalReview.attitudeTotalScore) > 0) {
+          attitudeTotalScore = Number(app.principalReview.attitudeTotalScore);
+        } else if (attitudeObj.principalMarks && Object.keys(attitudeObj.principalMarks).length > 0) {
+          attitudeTotalScore = Object.values(attitudeObj.principalMarks).reduce((s, v) => s + (Number(v) || 0), 0);
+        } else if (attitudeObj.totalScore !== undefined && Number(attitudeObj.totalScore) > 0) {
+          attitudeTotalScore = Number(attitudeObj.totalScore);
+        } else if (attitudeObj.ratings && Object.keys(attitudeObj.ratings).length > 0) {
+          attitudeTotalScore = Object.values(attitudeObj.ratings).reduce((s, v) => s + (Number(v) || 0), 0);
         }
       }
 
-      // 2. Attitude Form Mark
-      const attitudeObj = app.attitudeEvaluation || app.attitudeForm || {};
-      const attitudeTotalScore = Number(attitudeObj.totalScore) || 0;
-      const attitudeMaxScore = Number(attitudeObj.maxScore) || (attitudeObj.totalQuestions ? attitudeObj.totalQuestions * 5 : 80);
+      const rawMax = attitudeObj.principalMaxScore || attitudeObj.maxScore || (attitudeObj.totalQuestions ? attitudeObj.totalQuestions * 5 : null);
+      const questionCount = attitudeObj.principalMarks ? Object.keys(attitudeObj.principalMarks).length : (attitudeObj.ratings ? Object.keys(attitudeObj.ratings).length : 0);
+      const attitudeMaxScore = Number(rawMax) || (questionCount > 0 ? questionCount * 5 : (app.formType === "hod" ? 90 : (app.formType === "teacher" ? 90 : 80)));
       const attitudePercentage = attitudeMaxScore > 0 ? (attitudeTotalScore / attitudeMaxScore) * 100 : 0;
-      const attitudeMarkNormalized = attitudeObj.percentage !== undefined && !isNaN(Number(attitudeObj.percentage))
-        ? Number(attitudeObj.percentage)
-        : attitudePercentage;
+      const attitudeMarkNormalized = isAttitudeSubmitted 
+        ? (attitudeObj.percentage !== undefined && !isNaN(Number(attitudeObj.percentage)) && Number(attitudeObj.percentage) > 0
+            ? Number(attitudeObj.percentage)
+            : attitudePercentage)
+        : 0;
 
       // 3. Mark = (0.6 * appraisal review form mark) + (0.4 * attitude form mark)
       const weightedAppraisal = 0.6 * appraisalMark;
@@ -543,16 +721,19 @@ export default function HRGrossAnalytics() {
         : null;
 
       return {
-        id: app.id,
+        id: `${app.collectionType || "app"}_${app.id || appIdx}`,
+        appDocId: app.id,
         rawApp: app,
         facultyId,
         facultyName,
         email: app.facultyEmail || matchedUser.email || "",
         designation,
         department,
+        institution,
         dateOfJoining,
         grossPM, // Gross Per Month
         grossPA, // Gross Per Annum
+        salaryHistory, // Multi-year salary history dictionary
         academicYear: app.academicYear || "2024-2025",
         status: app.status || "Submitted",
         collectionType: app.collectionType,
@@ -592,15 +773,49 @@ export default function HRGrossAnalytics() {
     });
   }, [facultyAppraisals, teacherAppraisals, nonTeachingAppraisals, hodAppraisals, usersMap, salariesMap, criteriaConfig, promotionsMap, salaryAdjustmentsMap]);
 
-  // Filtered & Sorted Records
-  const filteredRecords = useMemo(() => {
+  const isSuperAdmin = (currentUser?.email === "obe@ckcet.edu.in" || userRole === "Admin" || userRole === "Super Admin") && (!userInstitution || userInstitution === "ALL");
+  const isDeptRole = (userRole || "").toLowerCase().includes("hod") || (userRole || "").toLowerCase().includes("coordinator");
+
+  // Strict Institution and Department Data Segregation:
+  // Restricts Principal/HR to only view records belonging to their assigned institution (e.g., CKSPK, CKSPE, CKCOE)
+  const scopedRecords = useMemo(() => {
     return allRecords.filter((rec) => {
+      // 1. Strict Institution Segregation:
+      if (isSuperAdmin) {
+        if (selectedInstFilter !== "All" && !isSameInstitution(selectedInstFilter, rec.institution)) {
+          return false;
+        }
+      } else {
+        // Strictly block cross-institution access (e.g. CKSPK vs CKSPE vs CKCOE)
+        if (!userInstitution) return false;
+        if (!isSameInstitution(userInstitution, rec.institution)) {
+          return false;
+        }
+      }
+
+      // 2. Department-level Segregation:
+      // If user has a department-specific role (HOD / Coordinator) or department-restricted access
+      if (isDeptRole && userDepartment) {
+        const normUserDept = (userDepartment || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        const normRecDept = (rec.department || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (normUserDept !== "" && normRecDept !== normUserDept) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, [allRecords, userInstitution, userDepartment, isSuperAdmin, selectedInstFilter, isDeptRole]);
+
+  // Filtered & Sorted Records (Strictly over scopedRecords)
+  const filteredRecords = useMemo(() => {
+    return scopedRecords.filter((rec) => {
       // Approval Filter: by default "Approved", showing only Principal approved
       if (approvalFilter === "Approved" && !rec.isPrincipalApproved) {
         return false;
       }
 
-      // Department Filter
+      // Department Filter (from dropdown)
       if (selectedDept !== "All" && rec.department !== selectedDept) {
         return false;
       }
@@ -654,18 +869,18 @@ export default function HRGrossAnalytics() {
       if (valA > valB) return sortDirection === "asc" ? 1 : -1;
       return 0;
     });
-  }, [allRecords, approvalFilter, selectedDept, selectedType, selectedYear, searchTerm, sortField, sortDirection]);
+  }, [scopedRecords, approvalFilter, selectedDept, selectedType, selectedYear, searchTerm, sortField, sortDirection]);
 
-  // Departments & Academic Years list
+  // Departments & Academic Years list strictly generated from scopedRecords
   const departmentsList = useMemo(() => {
-    const set = new Set(allRecords.map((r) => r.department).filter(Boolean));
+    const set = new Set(scopedRecords.map((r) => r.department).filter(Boolean));
     return ["All", ...Array.from(set).sort()];
-  }, [allRecords]);
+  }, [scopedRecords]);
 
   const academicYearsList = useMemo(() => {
-    const set = new Set(allRecords.map((r) => r.academicYear).filter(Boolean));
+    const set = new Set(scopedRecords.map((r) => r.academicYear).filter(Boolean));
     return ["All", ...Array.from(set).sort()];
-  }, [allRecords]);
+  }, [scopedRecords]);
 
   // Analytics Metrics
   const metrics = useMemo(() => {
@@ -774,46 +989,64 @@ export default function HRGrossAnalytics() {
     }
   };
 
-  // 1. Download Template (Excel .xlsx with "faculty id" and "gross PM" columns, ID prefixed with ')
+  // 1. Download Multi-Year Salary Template (Excel .xlsx with "faculty id" and dynamic past years columns, ID prefixed with ')
   const handleDownloadTemplate = () => {
     const seen = new Set();
     const rows = [];
 
-    // Header row
-    rows.push(["faculty id", "gross PM"]);
+    // Determine multi-year columns (defaults to past 3 years e.g. 2022-23, 2023-24, 2024-25)
+    const templateYears = discoveredSalaryYears.length >= 2
+      ? discoveredSalaryYears
+      : getDefaultSalaryYears(selectedYear !== "All" ? selectedYear : "2024-2025");
 
-    // Target faculty list
-    const targetList = filteredRecords.length > 0 ? filteredRecords : allRecords;
+    // Header row: "faculty id", "gross PM (2022-23)", "gross PM (2023-24)", "gross PM (2024-25)"
+    rows.push(["faculty id", ...templateYears.map((yr) => `gross PM (${yr})`)]);
+
+    // Target faculty list: strictly authorized institution's records only
+    const targetList = filteredRecords.length > 0 ? filteredRecords : scopedRecords;
 
     targetList.forEach((r) => {
       // Clean any existing quotes from facultyId first to prevent double quotes (e.g. 1783 instead of ''1783)
       const cleanId = String(r.facultyId || "").replace(/^['"`]+|['"`]+$/g, "").trim();
       if (cleanId && !seen.has(cleanId)) {
         seen.add(cleanId);
-        const existingVal = r.grossPM !== null && r.grossPM !== undefined ? r.grossPM : "";
         // Prepend EXACTLY ONE single quote ' so Excel treats ID strictly as text (e.g. '1783)
         const textFormattedId = `'${cleanId}`;
-        rows.push([textFormattedId, existingVal]);
+        const row = [textFormattedId];
+
+        templateYears.forEach((yr, idx) => {
+          const histVal = r.salaryHistory?.[yr];
+          if (histVal !== undefined && histVal !== null && histVal > 0) {
+            row.push(histVal);
+          } else if (idx === templateYears.length - 1 && r.grossPM) {
+            // Fallback for latest year if they previously had single grossPM
+            row.push(r.grossPM);
+          } else {
+            row.push("");
+          }
+        });
+
+        rows.push(row);
       }
     });
 
     // Fallback sample rows with single quote '
     if (rows.length === 1) {
-      rows.push(["'1783", 55000]);
-      rows.push(["'1234", 58000]);
-      rows.push(["'1235", 52000]);
+      rows.push(["'1783", 45000, 50000, 55000]);
+      rows.push(["'1234", 48000, 52000, 58000]);
+      rows.push(["'1235", 42000, 46000, 52000]);
     }
 
     // Build Worksheet & Workbook
     const worksheet = XLSX.utils.aoa_to_sheet(rows);
-    worksheet["!cols"] = [{ wch: 22 }, { wch: 18 }];
+    worksheet["!cols"] = [{ wch: 20 }, ...templateYears.map(() => ({ wch: 22 }))];
 
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Gross_PM_Template");
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Multi_Year_Gross_Template");
 
     // Write as .xlsx file
-    XLSX.writeFile(workbook, `CKCET_Faculty_Gross_PM_Template_${new Date().toISOString().slice(0, 10)}.xlsx`);
-    showToast("Template Excel (.xlsx) downloaded! Fill 'gross PM' and upload.", "success");
+    XLSX.writeFile(workbook, `CKCET_Faculty_MultiYear_Gross_PM_Template_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    showToast(`Template Excel (.xlsx) with ${templateYears.length} years downloaded! Fill salaries and upload.`, "success");
   };
 
   // Export Full Salary Revision Matrix (.xlsx) with Columns M through U
@@ -912,33 +1145,71 @@ export default function HRGrossAnalytics() {
         }
 
         // Parse Header Row
-        const headerRow = sheetRows[0].map((h) => String(h || "").trim().toLowerCase().replace(/^['"`]|['"`]$/g, ""));
-        const idIdx = headerRow.findIndex((h) => h.includes("faculty") || h.includes("id") || h.includes("emp"));
-        const salaryIdx = headerRow.findIndex((h) => h.includes("gross") || h.includes("pm") || h.includes("salary") || h.includes("amount"));
+        const rawHeaders = sheetRows[0].map((h) => String(h || "").trim());
+        const cleanedHeaders = rawHeaders.map((h) => h.toLowerCase().replace(/^['"`]|['"`]$/g, ""));
 
-        if (idIdx === -1 || salaryIdx === -1) {
-          showToast("Headers must include 'faculty id' and 'gross PM'.", "error");
+        // 1. Locate Faculty ID column
+        const idIdx = cleanedHeaders.findIndex((h) =>
+          h.includes("faculty") || h.includes("id") || h.includes("emp") || h.includes("staff")
+        );
+
+        if (idIdx === -1) {
+          showToast("Excel header must include a 'faculty id' column.", "error");
           return;
         }
 
-        // Map parsed rows
+        // 2. Discover all Multi-Year / Gross PM Salary Columns dynamically
+        const yearColumns = [];
+        cleanedHeaders.forEach((header, idx) => {
+          if (idx === idIdx) return;
+          // Match academic year patterns like 2022-23, 2022-2023, 2024
+          const yearMatch = rawHeaders[idx].match(/(20\d{2}\s*[-/]\s*\d{2,4}|20\d{2})/i);
+          if (yearMatch) {
+            const cleanYear = yearMatch[1].replace(/\s+/g, "");
+            yearColumns.push({ colIdx: idx, yearLabel: cleanYear, rawHeader: rawHeaders[idx] });
+          } else if (header.includes("gross") || header.includes("pm") || header.includes("salary") || header.includes("amount")) {
+            yearColumns.push({ colIdx: idx, yearLabel: "Current", rawHeader: rawHeaders[idx] });
+          }
+        });
+
+        if (yearColumns.length === 0) {
+          showToast("Headers must include 'gross PM (YYYY-YY)' or 'gross PM' salary columns.", "error");
+          return;
+        }
+
+        // Sort detected columns chronologically
+        yearColumns.sort((a, b) => a.yearLabel.localeCompare(b.yearLabel));
+        const detectedYearLabels = yearColumns.map((yc) => yc.yearLabel);
+        setUploadDetectedYears(detectedYearLabels);
+
+        // 3. Map parsed rows
         const parsed = [];
         for (let i = 1; i < sheetRows.length; i++) {
           const row = sheetRows[i];
           const rawId = String(row[idIdx] !== undefined ? row[idIdx] : "").trim();
-          const rawSalary = String(row[salaryIdx] !== undefined ? row[salaryIdx] : "").trim();
 
           if (rawId) {
-            // Strip any single quote(s) or double quotes from the beginning and end so ''1783, '1783, or 1783 all map to 1783
             const cleanedId = String(rawId).replace(/^['"`]+|['"`]+$/g, "").trim();
-            const cleanNumStr = rawSalary.replace(/[^0-9.]/g, "");
-            const parsedSalary = cleanNumStr ? parseFloat(cleanNumStr) : 0;
             const norm = normalizeId(cleanedId);
 
-            // Match against current records (checking normalized, cleaned, or raw)
-            const matched = allRecords.find((r) => {
+            const history = {};
+            let latestSalary = 0;
+
+            yearColumns.forEach((yc) => {
+              const cellVal = String(row[yc.colIdx] !== undefined ? row[yc.colIdx] : "").trim();
+              const cleanNumStr = cellVal.replace(/[^0-9.]/g, "");
+              const parsedVal = cleanNumStr ? parseFloat(cleanNumStr) : 0;
+              if (parsedVal > 0) {
+                history[yc.yearLabel] = parsedVal;
+                latestSalary = parsedVal;
+              }
+            });
+
+            // Match against current scoped records (strict institution segregation)
+            const matched = scopedRecords.find((r) => {
               const rNorm = normalizeId(r.facultyId);
-              return rNorm === norm || r.facultyId === cleanedId || r.facultyId === rawId;
+              const rEmpId = normalizeId(r.empId);
+              return rNorm === norm || r.facultyId === cleanedId || r.facultyId === rawId || rEmpId === norm;
             });
 
             parsed.push({
@@ -947,7 +1218,9 @@ export default function HRGrossAnalytics() {
               normalizedId: norm,
               facultyName: matched ? matched.facultyName : "Unknown / Unmatched",
               department: matched ? matched.department : "-",
-              grossPM: parsedSalary,
+              institution: matched?.institution || userInstitution || (selectedInstFilter !== "All" ? selectedInstFilter : ""),
+              history,
+              grossPM: latestSalary,
               isMatched: Boolean(matched)
             });
           }
@@ -970,38 +1243,96 @@ export default function HRGrossAnalytics() {
     e.target.value = "";
   };
 
-  // 3. Confirm and Save Salaries to Firestore
+  // 3. Confirm and Save Multi-Year Salaries to Dedicated Institution Firestore Nodes
   const handleConfirmSaveSalaries = async () => {
     if (parsedPreviewList.length === 0) return;
     setUploadSaving(true);
 
     try {
-      const updatedSalaries = { ...salariesMap };
+      // Group salaries by normalized institution code ('ckcoe', 'ckspk', 'ckspe', 'ckcet')
+      const salariesByInst = {};
+      const globalUpdatedSalaries = { ...(instSalaries.legacy || {}) };
 
       parsedPreviewList.forEach((item) => {
+        const itemInst = item.institution || userInstitution || (selectedInstFilter !== "All" ? selectedInstFilter : "");
+        const instCode = normalizeInstitution(itemInst).toLowerCase() || "ckspk";
+        if (!salariesByInst[instCode]) {
+          salariesByInst[instCode] = { ...(instSalaries[instCode] || {}) };
+        }
+
+        const payload = {
+          current: item.grossPM,
+          history: item.history || {},
+          updatedAt: new Date().toISOString()
+        };
+
         if (item.normalizedId) {
-          updatedSalaries[item.normalizedId] = item.grossPM;
+          salariesByInst[instCode][item.normalizedId] = payload;
+          globalUpdatedSalaries[item.normalizedId] = payload;
         }
         if (item.cleanedId) {
-          updatedSalaries[item.cleanedId] = item.grossPM;
+          salariesByInst[instCode][item.cleanedId] = payload;
+          globalUpdatedSalaries[item.cleanedId] = payload;
         }
       });
 
-      await setDoc(doc(db, "appraisal_config", "gross_salaries"), {
-        salaries: updatedSalaries,
-        updatedAt: new Date().toISOString(),
-        totalUpdated: parsedPreviewList.length
-      }, { merge: true });
+      // Save into dedicated institution document nodes:
+      // - appraisal_config/gross_salaries_ckcoe
+      // - appraisal_config/gross_salaries_ckspk
+      // - appraisal_config/gross_salaries_ckspe
+      // - appraisal_config/gross_salaries_ckcet
+      const savePromises = Object.entries(salariesByInst).map(async ([code, instSalariesData]) => {
+        const docId = `gross_salaries_${code}`;
+        return setDoc(doc(db, "appraisal_config", docId), {
+          institution: code.toUpperCase(),
+          salaries: instSalariesData,
+          historicalYears: uploadDetectedYears.length > 0 ? uploadDetectedYears : ["Current"],
+          updatedAt: new Date().toISOString(),
+          totalUpdated: Object.keys(instSalariesData).length
+        }, { merge: true });
+      });
 
-      setSalariesMap(updatedSalaries);
+      // Also maintain global doc for backward compatibility
+      savePromises.push(
+        setDoc(doc(db, "appraisal_config", "gross_salaries"), {
+          salaries: globalUpdatedSalaries,
+          historicalYears: uploadDetectedYears.length > 0 ? uploadDetectedYears : ["Current"],
+          updatedAt: new Date().toISOString(),
+          totalUpdated: parsedPreviewList.length
+        }, { merge: true })
+      );
+
+      await Promise.all(savePromises);
+
+      const targetNodes = Object.keys(salariesByInst).map((c) => `gross_salaries_${c}`).join(", ");
       setUploadModalOpen(false);
       setParsedPreviewList([]);
-      showToast(`Successfully updated Gross PM for ${parsedPreviewList.length} faculty entries!`, "success");
+      showToast(`Successfully saved salaries to institution node(s): ${targetNodes}!`, "success");
     } catch (err) {
       console.error("Error saving salaries:", err);
       showToast("Failed to save salaries to database.", "error");
     } finally {
       setUploadSaving(false);
+    }
+  };
+
+  // 4. Delete / Reset Salaries for Active Institution Node
+  const handleDeleteSchoolSalaries = async () => {
+    const code = activeInstCode;
+    if (!code || code === "all") {
+      showToast("Please select a specific school / institution to reset salaries.", "error");
+      return;
+    }
+    setDeletingSalaries(true);
+    try {
+      await deleteDoc(doc(db, "appraisal_config", `gross_salaries_${code}`));
+      showToast(`Successfully deleted salary node for ${code.toUpperCase()} (gross_salaries_${code})!`, "success");
+      setDeleteModalOpen(false);
+    } catch (e) {
+      console.error("Error deleting salaries node:", e);
+      showToast("Failed to delete salary node.", "error");
+    } finally {
+      setDeletingSalaries(false);
     }
   };
 
@@ -1068,7 +1399,7 @@ export default function HRGrossAnalytics() {
 
   return (
     <HRLayout>
-      <div className="w-full space-y-6 pb-12">
+      <div className="w-full space-y-6 pb-12 px-4 sm:px-6 lg:px-8">
 
         {/* Floating Toast Notification */}
         {toast.show && (
@@ -1322,11 +1653,58 @@ export default function HRGrossAnalytics() {
                 <Download size={14} className="text-amber-300" />
                 Export Matrix (.xlsx)
               </button>
+
+              {/* 5. Clear / Reset School Salaries Button */}
+              {activeInstCode && activeInstCode !== "all" && (
+                <button
+                  type="button"
+                  onClick={() => setDeleteModalOpen(true)}
+                  className="px-3.5 py-2.5 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 rounded-xl text-xs font-black flex items-center gap-1.5 shadow-xs transition-all cursor-pointer"
+                  title={`Delete all uploaded salaries from node appraisal_config/gross_salaries_${activeInstCode}`}
+                >
+                  <Trash2 size={14} className="text-rose-600" />
+                  Clear Salaries ({getSchoolShortName(userInstitution) || activeInstCode.toUpperCase()})
+                </button>
+              )}
             </div>
           </div>
 
           {/* Secondary Dropdown Filters */}
           <div className="flex items-center gap-3 flex-wrap pt-3 border-t border-zinc-100 text-xs">
+            {/* Institution Badge / Selector */}
+            {isSuperAdmin ? (
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-zinc-500 text-[11px] uppercase tracking-wider">Institution:</span>
+                <select
+                  value={selectedInstFilter}
+                  onChange={(e) => {
+                    setSelectedInstFilter(e.target.value);
+                    setSelectedDept("All");
+                  }}
+                  className="bg-zinc-50 border border-zinc-200 rounded-lg px-2.5 py-1.5 text-xs font-bold text-zinc-700 focus:outline-none focus:border-[#101b38]"
+                >
+                  <option value="All">All Institutions</option>
+                  <option value="CKSPK">CKSPK (Matric)</option>
+                  <option value="CKSPE">CKSPE (CBSE)</option>
+                  <option value="CKCOE">CKCOE (B.Ed)</option>
+                  <option value="CKCET">CKCET (Engineering)</option>
+                </select>
+              </div>
+            ) : userInstitution ? (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 border border-indigo-200 rounded-xl text-indigo-850 font-bold text-xs shadow-2xs" title="Strict Institutional Segregation Enforced">
+                <Building2 size={13} className="text-indigo-600" />
+                <span>{getSchoolShortName(userInstitution) || userInstitution}</span>
+                <span className="text-[9px] bg-indigo-200/70 text-indigo-900 px-1.5 py-0.5 rounded uppercase font-black tracking-wider">Active School</span>
+              </div>
+            ) : null}
+
+            {/* Department-Locked Badge for Department Roles */}
+            {isDeptRole && userDepartment && (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 font-bold text-xs">
+                <span>Dept: <strong>{userDepartment}</strong></span>
+              </div>
+            )}
+
             {/* Department Filter */}
             <div className="flex items-center gap-2">
               <span className="font-bold text-zinc-500 text-[11px] uppercase tracking-wider">Department:</span>
@@ -1625,14 +2003,27 @@ export default function HRGrossAnalytics() {
                           <div className="text-[10px] text-zinc-400 truncate max-w-[180px]">{rec.email}</div>
                         )}
                         <div className="text-[10px] text-indigo-600 font-bold uppercase tracking-wider mt-0.5">
-                          {rec.collectionType === "faculty" || rec.collectionType === "teacher" ? "Teaching Faculty" : rec.collectionType === "hod" ? "HOD" : "Non-Teaching Staff"}
+                          {rec.collectionType === "teacher"
+                            ? "School Teacher"
+                            : rec.collectionType === "faculty"
+                            ? "Teaching Faculty"
+                            : rec.collectionType === "hod"
+                            ? "HOD"
+                            : "Non-Teaching Staff"}
                         </div>
                       </td>
 
                       {/* 3. Designation & Department */}
                       <td className="p-3.5">
                         <div className="font-semibold text-slate-700 text-xs">{rec.designation}</div>
-                        <div className="text-[11px] font-bold text-[#101b38] mt-0.5">{rec.department}</div>
+                        <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                          <span className="text-[11px] font-bold text-[#101b38]">{rec.department}</span>
+                          {rec.institution && (
+                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200" title={rec.institution}>
+                              {getSchoolShortName(rec.institution)}
+                            </span>
+                          )}
+                        </div>
                       </td>
 
                       {/* 4. Date of Joining */}
@@ -1646,9 +2037,19 @@ export default function HRGrossAnalytics() {
                       {/* 5. Gross PM (Monthly Salary) */}
                       <td className="p-3.5 text-center border-r border-zinc-200 whitespace-nowrap">
                         {rec.grossPM !== null && rec.grossPM !== undefined ? (
-                          <span className="font-mono font-bold text-slate-800 text-xs whitespace-nowrap inline-block">
-                            ₹{Number(rec.grossPM).toLocaleString("en-IN")}
-                          </span>
+                          <div className="flex flex-col items-center">
+                            <span className="font-mono font-bold text-slate-800 text-xs whitespace-nowrap inline-block">
+                              ₹{Number(rec.grossPM).toLocaleString("en-IN")}
+                            </span>
+                            {rec.salaryHistory && Object.keys(rec.salaryHistory).length > 1 && (
+                              <span
+                                className="text-[9px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200/80 px-1.5 py-0.5 rounded-md mt-0.5 tracking-tight cursor-help"
+                                title={`Salary recorded for ${Object.keys(rec.salaryHistory).length} years: ${Object.keys(rec.salaryHistory).map(k => `${k}: ₹${Number(rec.salaryHistory[k]).toLocaleString("en-IN")}`).join(" | ")}`}
+                              >
+                                {Object.keys(rec.salaryHistory).length}Y History
+                              </span>
+                            )}
+                          </div>
                         ) : (
                           <span className="text-zinc-300 font-bold text-xs italic">-</span>
                         )}
@@ -1975,19 +2376,29 @@ export default function HRGrossAnalytics() {
         {/* Upload Gross PM Confirmation & Preview Modal */}
         {uploadModalOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fadeIn">
-            <div className="bg-white rounded-3xl w-full max-w-2xl border border-zinc-200 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="bg-white rounded-3xl w-full max-w-4xl border border-zinc-200 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
 
               {/* Modal Header */}
               <div className="bg-gradient-to-r from-emerald-700 to-teal-800 p-6 text-white flex items-center justify-between">
                 <div>
                   <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-white/10 text-emerald-200 text-[10px] font-black uppercase tracking-wider mb-1">
-                    <FileSpreadsheet size={12} /> Excel Salary Import Preview
+                    <FileSpreadsheet size={12} /> Excel Multi-Year Salary Import Preview
                   </div>
                   <h3 className="text-lg font-black flex items-center gap-2">
-                    Import Gross PM Salaries
+                    Import Multi-Year Gross Salaries
                   </h3>
-                  <div className="text-xs text-emerald-100 mt-1">
-                    File: <strong className="font-mono text-white">{uploadFileName}</strong> • {parsedPreviewList.length} rows parsed
+                  <div className="text-xs text-emerald-100 mt-1 flex items-center gap-2 flex-wrap">
+                    <span>File: <strong className="font-mono text-white">{uploadFileName}</strong></span>
+                    <span>•</span>
+                    <span>{parsedPreviewList.length} rows parsed</span>
+                    {uploadDetectedYears.length > 0 && (
+                      <>
+                        <span>•</span>
+                        <span className="bg-emerald-600/60 px-2 py-0.5 rounded-md font-bold text-white text-[11px]">
+                          {uploadDetectedYears.length} Years: {uploadDetectedYears.join(", ")}
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
                 <button
@@ -2000,6 +2411,18 @@ export default function HRGrossAnalytics() {
 
               {/* Modal Body */}
               <div className="p-6 overflow-y-auto space-y-4 text-xs">
+                {/* Target Institution Node Notice */}
+                <div className="flex items-center gap-2.5 px-3.5 py-2.5 bg-indigo-50 border border-indigo-200 rounded-2xl text-indigo-900 text-xs font-bold">
+                  <Building2 size={16} className="text-indigo-600 shrink-0" />
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span>Target Firestore Node:</span>
+                    <strong className="font-mono text-indigo-950 bg-white px-2 py-0.5 rounded-lg border border-indigo-200">
+                      appraisal_config/gross_salaries_{activeInstCode || "institution"}
+                    </strong>
+                    <span className="text-[10px] text-indigo-600 font-semibold">(Isolated School Node)</span>
+                  </div>
+                </div>
+
                 <div className="flex items-center justify-between bg-zinc-50 border border-zinc-200 p-3 rounded-2xl">
                   <div className="text-zinc-600 font-semibold">
                     Matched Faculty: <strong className="text-emerald-700">{parsedPreviewList.filter(p => p.isMatched).length}</strong>
@@ -2017,7 +2440,12 @@ export default function HRGrossAnalytics() {
                         <th className="p-3">Faculty ID</th>
                         <th className="p-3">Faculty Name</th>
                         <th className="p-3">Department</th>
-                        <th className="p-3 text-right">Gross PM (₹)</th>
+                        {uploadDetectedYears.map((yr) => (
+                          <th key={yr} className="p-3 text-right">
+                            {yr} (₹)
+                          </th>
+                        ))}
+                        <th className="p-3 text-right font-black text-emerald-800">Active Gross PM</th>
                         <th className="p-3 text-center">Status</th>
                       </tr>
                     </thead>
@@ -2034,8 +2462,13 @@ export default function HRGrossAnalytics() {
                           </td>
                           <td className="p-3 font-semibold text-slate-700">{item.facultyName}</td>
                           <td className="p-3 text-zinc-500">{item.department}</td>
+                          {uploadDetectedYears.map((yr) => (
+                            <td key={yr} className="p-3 text-right font-mono text-zinc-600">
+                              {item.history?.[yr] ? `₹${Number(item.history[yr]).toLocaleString("en-IN")}` : "—"}
+                            </td>
+                          ))}
                           <td className="p-3 text-right font-black font-mono text-emerald-800">
-                            ₹{Number(item.grossPM).toLocaleString("en-IN")}
+                            {item.grossPM > 0 ? `₹${Number(item.grossPM).toLocaleString("en-IN")}` : "—"}
                           </td>
                           <td className="p-3 text-center">
                             {item.isMatched ? (
@@ -2055,7 +2488,7 @@ export default function HRGrossAnalytics() {
                 </div>
 
                 <p className="text-[11px] text-zinc-500 leading-relaxed italic">
-                  * Clicking "Save & Apply Salaries" will attach these monthly gross salary amounts to the corresponding faculty members and immediately compute their increment amounts based on the criteria matrix.
+                  * Clicking "Save & Apply Salaries" will attach these multi-year salaries to the corresponding faculty members and immediately compute current increment amounts using the latest active year.
                 </p>
               </div>
 
@@ -2083,6 +2516,54 @@ export default function HRGrossAnalytics() {
           </div>
         )}
 
+        {/* Delete / Reset Salaries Confirmation Modal */}
+        {deleteModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fadeIn">
+            <div className="bg-white rounded-3xl w-full max-w-md border border-zinc-200 shadow-2xl overflow-hidden p-6 space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-700 flex items-center justify-center shrink-0">
+                  <Trash2 size={24} />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-900">
+                    Delete {getSchoolShortName(userInstitution) || activeInstCode.toUpperCase()} Salaries?
+                  </h3>
+                  <p className="text-xs text-zinc-500 mt-0.5">
+                    Target Node: <strong className="font-mono text-rose-700">appraisal_config/gross_salaries_{activeInstCode}</strong>
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 text-xs text-rose-900 space-y-1.5">
+                <p className="font-bold">This will completely remove all uploaded salary records for {getSchoolShortName(userInstitution) || activeInstCode.toUpperCase()}.</p>
+                <p className="text-[11px] text-rose-700 leading-relaxed">
+                  Appraisal forms, marks, and evaluations will remain 100% safe. Other institutions (CKCOE, CKSPK, CKSPE) will NOT be touched.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setDeleteModalOpen(false)}
+                  disabled={deletingSalaries}
+                  className="px-4 py-2.5 rounded-xl border border-zinc-300 bg-white hover:bg-zinc-50 text-xs font-bold text-zinc-700 transition-all cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeleteSchoolSalaries}
+                  disabled={deletingSalaries}
+                  className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold flex items-center gap-2 shadow-md shadow-rose-600/20 transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {deletingSalaries ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                  Confirm Delete Node
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Detailed Breakdown Modal with Salary Increment Engine */}
         {selectedCandidate && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 animate-fadeIn">
@@ -2095,12 +2576,18 @@ export default function HRGrossAnalytics() {
                     <ShieldCheck size={12} /> Gross Evaluation & Increment Card
                   </div>
                   <h3 className="text-lg font-black">{selectedCandidate.facultyName}</h3>
-                  <div className="text-xs text-zinc-300 flex items-center gap-3 mt-1">
+                  <div className="text-xs text-zinc-300 flex items-center gap-3 mt-1 flex-wrap">
                     <span>ID: <strong className="text-white font-mono">{selectedCandidate.facultyId}</strong></span>
                     <span>•</span>
                     <span>{selectedCandidate.designation}</span>
                     <span>•</span>
                     <span>{selectedCandidate.department}</span>
+                    {selectedCandidate.institution && (
+                      <>
+                        <span>•</span>
+                        <span className="text-amber-300 font-bold">{getSchoolShortName(selectedCandidate.institution)}</span>
+                      </>
+                    )}
                   </div>
                 </div>
                 <button
@@ -2137,6 +2624,40 @@ export default function HRGrossAnalytics() {
                     </span>
                   </div>
                 </div>
+
+                {/* Multi-Year Salary Progression History */}
+                {selectedCandidate.salaryHistory && Object.keys(selectedCandidate.salaryHistory).length > 0 && (
+                  <div className="bg-gradient-to-br from-indigo-50/60 to-slate-50 border border-indigo-100 rounded-2xl p-4 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-black uppercase text-indigo-900 tracking-wider flex items-center gap-1.5">
+                        <TrendingUp size={14} className="text-indigo-600" /> Multi-Year Salary History
+                      </span>
+                      <span className="text-[10px] bg-indigo-100/80 text-indigo-800 font-bold px-2 py-0.5 rounded-full">
+                        {Object.keys(selectedCandidate.salaryHistory).length} Years on Record
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+                      {Object.entries(selectedCandidate.salaryHistory).map(([yr, val], idx, arr) => {
+                        const prevVal = idx > 0 ? arr[idx - 1][1] : null;
+                        const diff = prevVal ? val - prevVal : null;
+                        const diffPct = prevVal && prevVal > 0 ? ((diff / prevVal) * 100).toFixed(1) : null;
+                        return (
+                          <div key={yr} className="bg-white p-3 rounded-xl border border-indigo-100/80 shadow-xs flex flex-col justify-between">
+                            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">{formatAnalyticsYear(yr)}</span>
+                            <div className="text-xs font-black font-mono text-slate-800 mt-1">
+                              ₹{Number(val).toLocaleString("en-IN")} <span className="text-[9px] font-bold text-zinc-400">PM</span>
+                            </div>
+                            {diff !== null && (
+                              <div className={`text-[9px] font-bold mt-1 ${diff >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                                {diff >= 0 ? `+₹${diff.toLocaleString("en-IN")}` : `-₹${Math.abs(diff).toLocaleString("en-IN")}`} ({diffPct}%)
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 {/* Mathematical Formula Callout */}
                 <div className="bg-amber-50/60 border border-amber-200 rounded-2xl p-4 space-y-2">
@@ -2188,9 +2709,9 @@ export default function HRGrossAnalytics() {
                     <div className="text-xs font-medium text-emerald-800">
                       Raw Score: <strong>{selectedCandidate.attitudeTotalScore} / {selectedCandidate.attitudeMaxScore}</strong> • Weighted: <strong>{selectedCandidate.weightedAttitude} points</strong>
                     </div>
-                    {selectedCandidate.rawApp?.attitudeEvaluation?.remarks && (
+                    {(selectedCandidate.rawApp?.attitudeEvaluation?.remarks || selectedCandidate.rawApp?.attitudeForm?.remarks || selectedCandidate.rawApp?.attitudeForm?.principalRemarks) && (
                       <div className="text-[11px] text-zinc-600 bg-white p-2.5 rounded-xl border border-emerald-100 italic">
-                        "{selectedCandidate.rawApp.attitudeEvaluation.remarks}"
+                        "{selectedCandidate.rawApp?.attitudeEvaluation?.remarks || selectedCandidate.rawApp?.attitudeForm?.principalRemarks || selectedCandidate.rawApp?.attitudeForm?.remarks}"
                       </div>
                     )}
                   </div>

@@ -6,11 +6,12 @@ import { onAuthStateChanged } from "firebase/auth";
 import {
   User, CheckCircle2, AlertCircle, FileText, ChevronRight,
   Eye, Check, Search, Building2, Filter, Loader2, ArrowLeft,
-  X, Star, Printer, Undo2, Award, Sparkles, Send, GraduationCap, Library, Paperclip, Save, Edit2
+  X, Star, Printer, Undo2, Award, Sparkles, Send, GraduationCap, Library, Paperclip, Save, Edit2,
+  ExternalLink, Download
 } from "lucide-react";
 import HRLayout from "../components/HRLayout";
-import { getSchoolShortName, isSameInstitution } from "../utils/appraisalScore";
-import { loadAppraisalEvidences } from "../utils/appraisalStorage";
+import { getSchoolShortName, isSameInstitution, normalizeInstitution } from "../utils/appraisalScore";
+import { loadAppraisalEvidences, findEvidenceInMap } from "../utils/appraisalStorage";
 import { jsPDF } from "jspdf";
 import "jspdf-autotable";
 
@@ -540,6 +541,7 @@ export default function AppraisalReviews() {
   });
   const [selectedAppraisal, setSelectedAppraisal] = useState(null);
   const [activeDetailsTab, setActiveDetailsTab] = useState(1);
+  const [viewingProof, setViewingProof] = useState(null);
 
   // Scoring states (Parity with HODDashboard review modal)
   const [hodFacultyScoresMap, setHodFacultyScoresMap] = useState({});
@@ -594,7 +596,21 @@ export default function AppraisalReviews() {
 
   const getSectionTitle = (id, defaultTitle) => {
     const field = customFieldsConfig.find(f => f.id === id);
-    return field ? field.title : defaultTitle;
+    if (!field) return defaultTitle;
+    const t = field.title || defaultTitle;
+    if (id === "sec_academic_nptel" && (t.toUpperCase().includes("WORKSHOP") || t.toUpperCase().includes("PARTICIPATION"))) {
+      return defaultTitle;
+    }
+    if (id === "f_nptel_weeks" && (t.toUpperCase().includes("DAYS") || t.toUpperCase().includes("DAY"))) {
+      return defaultTitle;
+    }
+    if (id === "f_nptel_platform" && (t.toUpperCase().includes("ORGANIZATION") || t.toUpperCase().includes("INSTITUTE"))) {
+      return defaultTitle;
+    }
+    if (id === "f_nptel_title" && t.toUpperCase().includes("WORKSHOP")) {
+      return defaultTitle;
+    }
+    return t;
   };
 
   const getSectionDescription = (id, defaultDesc) => {
@@ -604,6 +620,158 @@ export default function AppraisalReviews() {
 
   const isSectionEvidenceRequired = (secId) => {
     return customFieldsConfig.find(f => f.id === secId)?.evidenceRequired === true;
+  };
+
+  const handleViewProof = async (e, fileUrl, fileName = "Proof File") => {
+    if (e && e.preventDefault) e.preventDefault();
+    if (e && e.stopPropagation) e.stopPropagation();
+
+    let targetUrl = fileUrl;
+    if (typeof targetUrl === "object" && targetUrl?.fileUrl) {
+      targetUrl = targetUrl.fileUrl;
+    }
+
+    if (!targetUrl) {
+      alert("No proof file attached or available to view.");
+      return;
+    }
+
+    // Unresolved evidence reference lookup
+    if (typeof targetUrl === "string" && targetUrl.startsWith("__EVIDENCE_REF__:")) {
+      const refKey = targetUrl.replace("__EVIDENCE_REF__:", "");
+
+      // 1. Check in-memory appraisal state strictly for selectedAppraisal
+      let foundUrl = findEvidenceInMap(selectedAppraisal?.evidences, refKey)
+                  || findEvidenceInMap(selectedAppraisal?.formData?.evidences, refKey)
+                  || findEvidenceInMap(selectedAppraisal?.formData, refKey)
+                  || findEvidenceInMap(selectedAppraisal, refKey);
+
+      // 2. On-demand query to Firestore evidence documents strictly for selectedAppraisal
+      if (!foundUrl && selectedAppraisal) {
+        const candidateIds = Array.from(new Set([
+          selectedAppraisal.id,
+          selectedAppraisal.docId,
+          selectedAppraisal.uid ? `appraisal_${selectedAppraisal.uid}_${selectedAppraisal.academicYear}` : null,
+          selectedAppraisal.formData?.uid ? `appraisal_${selectedAppraisal.formData.uid}_${selectedAppraisal.academicYear}` : null,
+          selectedAppraisal.uid ? `appraisal_${selectedAppraisal.uid}_2024-2025` : null,
+          selectedAppraisal.uid ? `appraisal_${selectedAppraisal.uid}_2025-2026` : null,
+          selectedAppraisal.uid ? `appraisal_${selectedAppraisal.uid}_2024-25` : null,
+          selectedAppraisal.uid ? `appraisal_${selectedAppraisal.uid}_2025-26` : null,
+          selectedAppraisal.uid ? `appraisal_${selectedAppraisal.uid}` : null,
+          selectedAppraisal.uid || null
+        ])).filter(Boolean);
+
+        const primaryColl = selectedAppraisal.formType === "non_teaching"
+          ? "non_teaching_appraisals_evidences"
+          : selectedAppraisal.formType === "hod"
+            ? "hod_appraisals_evidences"
+            : selectedAppraisal.formType === "teacher"
+              ? "teacher_appraisals_evidences"
+              : "faculty_appraisals_evidences";
+
+        const colls = Array.from(new Set([
+          primaryColl,
+          "faculty_appraisals_evidences",
+          "teacher_appraisals_evidences",
+          "non_teaching_appraisals_evidences",
+          "hod_appraisals_evidences"
+        ]));
+
+        for (const targetColl of colls) {
+          if (foundUrl) break;
+          for (const cId of candidateIds) {
+            try {
+              const snap = await getDoc(doc(db, targetColl, cId));
+              if (snap.exists()) {
+                const data = snap.data();
+                foundUrl = findEvidenceInMap(data?.evidences || data, refKey);
+                if (foundUrl) {
+                  if (selectedAppraisal) {
+                    selectedAppraisal.evidences = {
+                      ...(selectedAppraisal.evidences || {}),
+                      ...(data?.evidences || data)
+                    };
+                  }
+                  break;
+                }
+              }
+            } catch (e) {
+              console.warn("Evidence query error:", e);
+            }
+          }
+        }
+      }
+
+      // 3. Fallback: check localStorage STRICTLY for selectedAppraisal candidate keys (NEVER iterate other users' caches)
+      if (!foundUrl && selectedAppraisal) {
+        const localCandidateKeys = Array.from(new Set([
+          selectedAppraisal.id ? `evidences_${selectedAppraisal.id}` : null,
+          selectedAppraisal.uid ? `evidences_${selectedAppraisal.uid}` : null,
+          selectedAppraisal.uid ? `evidences_${selectedAppraisal.uid}_${selectedAppraisal.academicYear}` : null,
+          selectedAppraisal.id ? `appraisal_evidences_${selectedAppraisal.id}` : null,
+          selectedAppraisal.uid ? `appraisal_evidences_${selectedAppraisal.uid}` : null
+        ])).filter(Boolean);
+
+        for (const lk of localCandidateKeys) {
+          try {
+            const raw = localStorage.getItem(lk);
+            if (raw) {
+              const map = JSON.parse(raw);
+              foundUrl = findEvidenceInMap(map?.evidences || map, refKey);
+              if (foundUrl) break;
+            }
+          } catch (e) {}
+        }
+      }
+
+      if (foundUrl) {
+        targetUrl = foundUrl;
+      } else {
+        alert("Proof document is pending server synchronization.");
+        return;
+      }
+    }
+
+    // Determine MIME type
+    let mime = "";
+    if (typeof targetUrl === "string") {
+      if (targetUrl.startsWith("data:")) {
+        const match = targetUrl.match(/^data:([^;]+);/);
+        mime = match ? match[1] : "";
+      } else if (fileName) {
+        const ext = String(fileName).split(".").pop().toLowerCase();
+        if (ext === "pdf") mime = "application/pdf";
+        else if (["jpg", "jpeg", "png", "webp", "gif"].includes(ext)) mime = `image/${ext === "jpg" ? "jpeg" : ext}`;
+      }
+    }
+
+    // If Base64 Data URL, convert to Blob URL so preview & new tab work without browser security blocks
+    let safeUrl = targetUrl;
+    if (typeof targetUrl === "string" && targetUrl.startsWith("data:")) {
+      try {
+        const arr = targetUrl.split(",");
+        const mimeMatch = arr[0].match(/:(.*?);/);
+        const resolvedMime = mimeMatch ? mimeMatch[1] : (mime || "application/octet-stream");
+        mime = resolvedMime;
+        const bstr = atob(arr[1]);
+        let n = bstr.length;
+        const u8arr = new Uint8Array(n);
+        while (n--) {
+          u8arr[n] = bstr.charCodeAt(n);
+        }
+        const blob = new Blob([u8arr], { type: resolvedMime });
+        safeUrl = URL.createObjectURL(blob);
+      } catch (convErr) {
+        console.warn("Base64 to blob conversion failed, using raw data url:", convErr);
+      }
+    }
+
+    setViewingProof({
+      url: safeUrl,
+      rawUrl: targetUrl,
+      name: fileName || "Evidence Document",
+      mime: mime
+    });
   };
 
   const renderRowEvidenceHeader = (sectionId, force = true) => {
@@ -616,20 +784,58 @@ export default function AppraisalReviews() {
     return (
       <td className="border border-zinc-200 p-1.5 text-center min-w-[100px]">
         {row.fileUrl ? (
-          <a
-            href={row.fileUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-block text-[10px] font-extrabold text-blue-600 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded hover:bg-blue-100 transition-all"
+          <button
+            type="button"
+            onClick={(e) => handleViewProof(e, row.fileUrl, row.fileName || "Proof File")}
+            className="inline-flex items-center gap-1 text-[10px] font-extrabold text-blue-600 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded hover:bg-blue-100 transition-all cursor-pointer"
             title={row.fileName || "View Proof"}
           >
-            Proof File
-          </a>
+            <Eye size={10} />
+            <span>Proof File</span>
+          </button>
         ) : (
           <span className="text-zinc-400 font-semibold text-[10px]">-</span>
         )}
       </td>
     );
+  };
+
+  const getCustomGridColumnsForSection = (secId) => {
+    const knownBuiltInIds = new Set([
+      "f_nptel_title", "f_nptel_startDate", "f_nptel_endDate", "f_nptel_weeks", "f_nptel_platform", "f_nptel_examDate", "f_nptel_certificate",
+      "f_journals_title", "f_journals_date", "f_journals_journal", "f_journals_volIssue", "f_journals_index",
+      "f_fdp_title", "f_fdp_dates", "f_fdp_days", "f_fdp_org", "f_fdp_report",
+      "f_books_title", "f_books_publisher", "f_books_year",
+      "f_subjects_class", "f_subjects_code", "f_subjects_appeared", "f_subjects_handled", "f_subjects_passed", "f_subjects_passPercent", "f_subjects_feedback",
+      "f_subjects_odd_theory_title", "f_subjects_odd_practical_title", "f_subjects_even_theory_title", "f_subjects_even_practical_title",
+      "f_roles_program", "f_roles_dates", "f_roles_agency",
+      "f_memberships_society", "f_memberships_no",
+      "f_awards_title", "f_awards_body", "f_awards_year"
+    ]);
+
+    return customFieldsConfig.filter(f =>
+      f.parentId === secId &&
+      f.visible !== false &&
+      !knownBuiltInIds.has(f.id)
+    );
+  };
+
+  const renderCustomGridHeaders = (secId) => {
+    const customCols = getCustomGridColumnsForSection(secId);
+    return customCols.map(col => (
+      <th key={col.id} className="border-r border-zinc-200 p-2.5 text-center font-black">
+        {col.title}
+      </th>
+    ));
+  };
+
+  const renderCustomGridCellsReadOnly = (row, secId) => {
+    const customCols = getCustomGridColumnsForSection(secId);
+    return customCols.map(col => (
+      <td key={col.id} className="border-r border-zinc-200 p-2 text-center text-slate-700">
+        {row[col.id] || "-"}
+      </td>
+    ));
   };
 
   const renderExamTableReview = (title, list = [], summaryText = "") => {
@@ -663,15 +869,14 @@ export default function AppraisalReviews() {
                     <td className="p-2.5 text-center font-black text-emerald-700">{row.subjectAvg || "-"}</td>
                     <td className="p-2.5 text-center">
                       {row.fileUrl ? (
-                        <a
-                          href={row.fileUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-[10px] font-extrabold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-lg hover:bg-indigo-100 transition-all"
+                        <button
+                          type="button"
+                          onClick={(e) => handleViewProof(e, row.fileUrl, row.fileName || "Proof Attachment")}
+                          className="inline-flex items-center gap-1 text-[10px] font-extrabold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-lg hover:bg-indigo-100 transition-all cursor-pointer"
                           title={row.fileName || "View Proof Attachment"}
                         >
                           <Paperclip className="w-3 h-3" /> Proof
-                        </a>
+                        </button>
                       ) : (
                         <span className="text-zinc-400 font-semibold text-[10px]">-</span>
                       )}
@@ -853,14 +1058,13 @@ export default function AppraisalReviews() {
                 {field.evidenceRequired && savedEntry.fileUrl && (
                   <div className="flex items-center gap-2 mt-2">
                     <span className="text-zinc-400 font-semibold uppercase text-[9px]">Proof Attachment:</span>
-                    <a
-                      href={savedEntry.fileUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-xs font-bold text-blue-600 hover:underline truncate max-w-xs block"
+                    <button
+                      type="button"
+                      onClick={(e) => handleViewProof(e, savedEntry.fileUrl, savedEntry.fileName || "View Attachment")}
+                      className="text-xs font-bold text-blue-600 hover:underline truncate max-w-xs block cursor-pointer text-left"
                     >
                       {savedEntry.fileName || "View Attachment"}
-                    </a>
+                    </button>
                   </div>
                 )}
               </div>
@@ -929,9 +1133,38 @@ export default function AppraisalReviews() {
 
   useEffect(() => {
     const docRef = doc(db, "appraisal_config", "form_fields");
-    const unsub = onSnapshot(docRef, (snap) => {
+    const unsub = onSnapshot(docRef, async (snap) => {
       if (snap.exists()) {
-        setCustomFieldsConfig(snap.data().fields || []);
+        let fields = snap.data().fields || [];
+        let needsSave = false;
+        fields = fields.map(f => {
+          if (f.id === "sec_academic_nptel" && (f.title?.toUpperCase().includes("WORKSHOP") || f.title?.toUpperCase().includes("PARTICIPATION"))) {
+            needsSave = true;
+            return { ...f, title: "3.1 NPTEL Certifications Completed", description: "Certification details and credits earned via SWAYAM/NPTEL portals." };
+          }
+          if (f.id === "f_nptel_title" && (f.title?.toUpperCase().includes("WORKSHOP") || f.title?.toUpperCase().includes("PROGRAM"))) {
+            needsSave = true;
+            return { ...f, title: "Title of the Course", visible: true };
+          }
+          if (f.id === "f_nptel_weeks" && (f.title?.toUpperCase().includes("DAYS") || f.title?.toUpperCase().includes("NO. OF DAYS"))) {
+            needsSave = true;
+            return { ...f, title: "Weeks", visible: true };
+          }
+          if (f.id === "f_nptel_platform" && (f.title?.toUpperCase().includes("ORGANIZATION") || f.title?.toUpperCase().includes("INSTITUTE"))) {
+            needsSave = true;
+            return { ...f, title: "Platform", visible: true };
+          }
+          return f;
+        });
+
+        if (needsSave) {
+          try {
+            await setDoc(doc(db, "appraisal_config", "form_fields"), { fields }, { merge: true });
+          } catch (e) {
+            console.warn("Could not auto-repair form_fields:", e);
+          }
+        }
+        setCustomFieldsConfig(fields);
       }
     });
     return unsub;
@@ -966,25 +1199,25 @@ export default function AppraisalReviews() {
     let teacherList = [];
 
     const unsubFaculty = onSnapshot(collection(db, "faculty_appraisals"), (snap) => {
-      facultyList = snap.docs.map((d) => ({ id: d.id, formType: "faculty", facultyName: d.data().facultyName || d.data().name, ...d.data() }));
+      facultyList = snap.docs.map((d) => ({ ...d.data(), id: d.id, collectionName: "faculty_appraisals", formType: d.data().formType || "faculty", facultyName: d.data().facultyName || d.data().name }));
       setAppraisals([...facultyList, ...nonTeachingList, ...hodList, ...teacherList]);
       setLoading(false);
     });
 
     const unsubNonTeaching = onSnapshot(collection(db, "non_teaching_appraisals"), (snap) => {
-      nonTeachingList = snap.docs.map((d) => ({ id: d.id, formType: "non_teaching", facultyName: d.data().staffName || d.data().name, ...d.data() }));
+      nonTeachingList = snap.docs.map((d) => ({ ...d.data(), id: d.id, collectionName: "non_teaching_appraisals", formType: "non_teaching", facultyName: d.data().staffName || d.data().name }));
       setAppraisals([...facultyList, ...nonTeachingList, ...hodList, ...teacherList]);
       setLoading(false);
     });
 
     const unsubHOD = onSnapshot(collection(db, "hod_appraisals"), (snap) => {
-      hodList = snap.docs.map((d) => ({ id: d.id, formType: "hod", facultyName: d.data().hodName || d.data().name, ...d.data() }));
+      hodList = snap.docs.map((d) => ({ ...d.data(), id: d.id, collectionName: "hod_appraisals", formType: "hod", facultyName: d.data().hodName || d.data().name }));
       setAppraisals([...facultyList, ...nonTeachingList, ...hodList, ...teacherList]);
       setLoading(false);
     });
 
     const unsubTeacher = onSnapshot(collection(db, "teacher_appraisals"), (snap) => {
-      teacherList = snap.docs.map((d) => ({ id: d.id, formType: "teacher", facultyName: d.data().facultyName || d.data().name, ...d.data() }));
+      teacherList = snap.docs.map((d) => ({ ...d.data(), id: d.id, collectionName: "teacher_appraisals", formType: "teacher", facultyName: d.data().facultyName || d.data().name }));
       setAppraisals([...facultyList, ...nonTeachingList, ...hodList, ...teacherList]);
       setLoading(false);
     });
@@ -1000,6 +1233,70 @@ export default function AppraisalReviews() {
   const isCoordinatorRole = userRole === "Coordinator" || (userRole || "").toLowerCase().includes("coordinator");
   const isHODRole = userRole === "HOD" || (userRole || "").toLowerCase().includes("hod");
   const isPrincipalOrHR = userRole === "Principal" || userRole === "Principal / HR" || userRole === "HR" || userRole === "Admin" || userRole === "Super Admin" || (userRole || "").toLowerCase().includes("principal") || (userRole || "").toLowerCase().includes("hr");
+
+  // Helper to resolve attitude evaluation status & score across all collections (CKCOE, CKSPK, CKSPE)
+  const getAttitudeScoreInfo = (app) => {
+    if (!app) return { isSubmitted: false, isDraft: false, totalScore: 0, maxScore: 0, average: "0.00", hasMarks: false, hodScore: 0, hodMax: 0, principalScore: 0, principalMax: 0 };
+    const evalObj = app.attitudeForm || app.attitudeEvaluation || {};
+    const questions = getAttitudeQuestions(app);
+    const defaultMax = (questions.length || 18) * 5;
+
+    // Check if submitted to Principal or already evaluated
+    const isSubmitted = Boolean(
+      app.attitudeSubmittedToPrincipal === true ||
+      evalObj.submittedToPrincipal === true ||
+      evalObj.principalEvaluated === true ||
+      (evalObj.totalScore !== undefined && Number(evalObj.totalScore) > 0 && !evalObj.isDraft) ||
+      (evalObj.principalTotalScore !== undefined && Number(evalObj.principalTotalScore) > 0) ||
+      (app.principalReview?.attitudeTotalScore !== undefined && Number(app.principalReview?.attitudeTotalScore) > 0) ||
+      (evalObj.ratings && Object.keys(evalObj.ratings).length > 0 && !evalObj.isDraft)
+    );
+    const isDraft = Boolean(!isSubmitted && (evalObj.isDraft || app.attitudeDraft));
+
+    // Coordinator/HOD scores
+    let hodScore = evalObj.totalScore;
+    if (hodScore === undefined || hodScore === null || hodScore === 0) {
+      const hRatings = evalObj.ratings || evalObj.hodRatings || {};
+      const vals = Object.values(hRatings);
+      if (vals.length > 0) {
+        hodScore = vals.reduce((s, v) => s + (Number(v) || 0), 0);
+      }
+    }
+    const hodMax = evalObj.maxScore || defaultMax;
+
+    // Principal scores
+    let principalScore = evalObj.principalTotalScore ?? app.principalReview?.attitudeTotalScore;
+    if (principalScore === undefined || principalScore === null || principalScore === 0) {
+      const pRatings = evalObj.principalMarks || evalObj.principalRatings || app.principalReview?.attitudeMarks || {};
+      const vals = Object.values(pRatings);
+      if (vals.length > 0) {
+        principalScore = vals.reduce((s, v) => s + (Number(v) || 0), 0);
+      }
+    }
+    const principalMax = evalObj.principalMaxScore || defaultMax;
+
+    // Total effective score: principal's score takes precedence if evaluated, otherwise coordinator's score
+    const totalScore = (principalScore !== undefined && principalScore !== null && Number(principalScore) > 0)
+      ? Number(principalScore)
+      : (Number(hodScore) || 0);
+
+    const maxScore = (principalScore !== undefined && Number(principalScore) > 0) ? principalMax : hodMax;
+    const average = questions.length > 0 ? (totalScore / questions.length).toFixed(2) : "0.00";
+    const hasMarks = totalScore > 0 || (evalObj.ratings && Object.keys(evalObj.ratings).length > 0) || (evalObj.principalMarks && Object.keys(evalObj.principalMarks).length > 0);
+
+    return {
+      isSubmitted,
+      isDraft,
+      totalScore,
+      maxScore: Number(maxScore) || defaultMax,
+      average,
+      hasMarks,
+      hodScore: Number(hodScore) || 0,
+      hodMax: Number(hodMax) || defaultMax,
+      principalScore: Number(principalScore) || 0,
+      principalMax: Number(principalMax) || defaultMax
+    };
+  };
 
   const filteredAppraisals = appraisals.filter((app) => {
     const nameMatch = (app.facultyName || "").toLowerCase().includes(searchTerm.toLowerCase());
@@ -1041,6 +1338,10 @@ export default function AppraisalReviews() {
     const initialHodScores = {};
     if (app.hodReview?.hodScores) {
       Object.assign(initialHodScores, app.hodReview.hodScores);
+    } else if (app.principalReview?.principalScores) {
+      Object.assign(initialHodScores, app.principalReview.principalScores);
+    } else if (app.principalReview?.scores) {
+      Object.assign(initialHodScores, app.principalReview.scores);
     } else if (app.coordinatorReview?.scores) {
       Object.assign(initialHodScores, app.coordinatorReview.scores);
     } else if (app.autoScore?.breakdown) {
@@ -1071,13 +1372,54 @@ export default function AppraisalReviews() {
       setNonTeachingIncrementGrade("A");
     }
 
+    const appInstCode = normalizeInstitution(app.institution || app.formData?.institution || app.department || userInstitution || "");
+    const isCKCOE = appInstCode === "CKCOE" || String(app.institution || "").toUpperCase().includes("CKCOE");
+    const isCKSPK = appInstCode === "CKSPK" || String(app.institution || "").toUpperCase().includes("CKSPK");
+    const isCKSPE = appInstCode === "CKSPE" || String(app.institution || "").toUpperCase().includes("CKSPE");
+    const isSchoolOrCOE = isCKCOE || isCKSPK || isCKSPE;
+
+    // Compute cumulative score from initial criteria or non-teaching marks
+    const isNT = app.formType === "non_teaching" || app.collectionName === "non_teaching_appraisals";
+    let cumulativeInitialScore = 0;
+    if (isNT) {
+      const marksObj = existingEval?.marks || { 1: 10, 2: 10, 3: 10, 4: 10, 5: 10, 6: 10, 7: 10, 8: 10, 9: 10, 10: 10 };
+      cumulativeInitialScore = Object.values(marksObj).reduce((a, b) => a + (Number(b) || 0), 0);
+    } else {
+      const bdRows = (app.autoScore?.breakdown?.part1Rows || app.autoScore?.breakdown?.part2Rows)
+        ? [...(app.autoScore.breakdown.part1Rows || []), ...(app.autoScore.breakdown.part2Rows || [])]
+        : (app.evaluatedScore?.part1Rows || app.evaluatedScore?.part2Rows)
+          ? [...(app.evaluatedScore.part1Rows || []), ...(app.evaluatedScore.part2Rows || [])]
+          : [];
+      if (bdRows.length > 0) {
+        cumulativeInitialScore = bdRows.reduce((acc, row) => {
+          const val = initialHodScores[row.id] ?? row.scored;
+          return acc + (Number(val) || 0);
+        }, 0);
+      } else {
+        cumulativeInitialScore = Object.values(initialHodScores).reduce((acc, v) => acc + (Number(v) || 0), 0);
+      }
+    }
+    cumulativeInitialScore = Math.round(cumulativeInitialScore * 100) / 100;
+
     if (isHODRole || isCoordinatorRole) {
       setComments(app.hodReview?.comments || app.coordinatorReview?.comments || "");
       setEvaluationGrade(app.hodReview?.grade || app.coordinatorReview?.grade || "Good");
     } else if (isPrincipalOrHR) {
       setComments(app.principalReview?.comments || "");
       setEvaluationGrade(app.principalReview?.grade || "Good");
-      setFinalRating(app.principalReview?.finalRating ?? app.principalReview?.rating ?? "");
+
+      const existingFinal = app.principalReview?.finalRating ?? app.principalReview?.rating ?? "";
+      let resolvedFinal = "";
+      if (isSchoolOrCOE && cumulativeInitialScore > 0) {
+        // For CKCOE, CKSPK, CKSPE, cumulative of principal score sits in final rating
+        resolvedFinal = String(cumulativeInitialScore);
+      } else if (existingFinal !== "" && existingFinal !== null && existingFinal !== undefined) {
+        resolvedFinal = String(existingFinal);
+      } else if (cumulativeInitialScore > 0) {
+        resolvedFinal = String(cumulativeInitialScore);
+      }
+      setFinalRating(resolvedFinal);
+
       setPrincipalCheckboxes({
         appreciated: app.principalReview?.checkboxes?.appreciated || false,
         satisfactory: app.principalReview?.checkboxes?.satisfactory || false,
@@ -1144,33 +1486,41 @@ export default function AppraisalReviews() {
         reviewedAt: new Date().toISOString()
       };
     } else if (isPrincipalOrHR) {
+      const isNT = isNonTeaching;
+      const finalGrandT = isNT ? totalScore : Math.round((revP1T + revP2T) * 100) / 100;
+      const rawFinalRating = finalRating !== "" && finalRating !== null && finalRating !== undefined
+        ? Number(finalRating)
+        : (finalGrandT > 0 ? finalGrandT : (selectedAppraisal.principalReview?.finalRating ?? ""));
+
       updatePayload.principalReview = {
+        ...(selectedAppraisal.principalReview || {}),
         comments: comments || "Approved by Principal",
         grade: isNonTeaching ? derivedGrade : evaluationGrade,
-        finalRating: finalRating !== "" ? finalRating : (selectedAppraisal.principalReview?.finalRating ?? ""),
+        finalRating: (rawFinalRating !== "" && !isNaN(Number(rawFinalRating))) ? Number(rawFinalRating) : rawFinalRating,
+        principalTotalScore: (rawFinalRating !== "" && !isNaN(Number(rawFinalRating))) ? Number(rawFinalRating) : finalGrandT,
+        principalScores: { ...hodFacultyScoresMap },
+        principalPart1Total: revP1T,
+        principalPart2Total: revP2T,
         checkboxes: principalCheckboxes,
         reviewedBy: currentUser?.email || "",
         reviewedAt: new Date().toISOString()
       };
+      updatePayload.finalRating = (rawFinalRating !== "" && !isNaN(Number(rawFinalRating))) ? Number(rawFinalRating) : rawFinalRating;
+      updatePayload.principalTotalScore = (rawFinalRating !== "" && !isNaN(Number(rawFinalRating))) ? Number(rawFinalRating) : finalGrandT;
+
       if (selectedAppraisal.hodReview) {
         updatePayload.hodReview = selectedAppraisal.hodReview;
       }
     }
 
     if (!isNonTeaching && reviewScore && !isCoordOnly) {
-      const p1 = reviewScore.part1Rows || [];
-      const p2 = reviewScore.part2Rows || [];
-      const p1HodT = p1.reduce((sum, r) => sum + (Number(hodFacultyScoresMap[r.id] ?? r.scored) || 0), 0);
-      const p2HodT = p2.reduce((sum, r) => sum + (Number(hodFacultyScoresMap[r.id] ?? r.scored) || 0), 0);
-      const gHodT = p1HodT + p2HodT;
-
       if (!updatePayload.hodReview) {
         updatePayload.hodReview = selectedAppraisal.hodReview || {};
       }
-      updatePayload.hodReview.hodScores = hodFacultyScoresMap;
-      updatePayload.hodReview.hodPart1Total = p1HodT;
-      updatePayload.hodReview.hodPart2Total = p2HodT;
-      updatePayload.hodReview.hodTotalScore = gHodT;
+      updatePayload.hodReview.hodScores = { ...hodFacultyScoresMap };
+      updatePayload.hodReview.hodPart1Total = revP1T;
+      updatePayload.hodReview.hodPart2Total = revP2T;
+      updatePayload.hodReview.hodTotalScore = Math.round((revP1T + revP2T) * 100) / 100;
     }
 
     if (isNonTeaching) {
@@ -1289,20 +1639,20 @@ export default function AppraisalReviews() {
 
   const handleOpenAttitudeModal = (app) => {
     setAttitudeAppraisal(app);
-    if (app.attitudeForm?.ratings) {
-      setAttitudeRatings({ ...app.attitudeForm.ratings });
-      setAttitudeRemarks(app.attitudeForm.remarks || "");
-    } else {
-      setAttitudeRatings({});
-      setAttitudeRemarks("");
-    }
+    const evalObj = app.attitudeForm || app.attitudeEvaluation || {};
+    const existingRatings = evalObj.ratings || evalObj.principalRatings || evalObj.hodRatings || {};
+    const existingPrincipalMarks = evalObj.principalMarks || evalObj.principalRatings || app.principalReview?.attitudeMarks || {};
 
-    if (app.attitudeForm?.principalMarks) {
-      setPrincipalAttitudeMarks({ ...app.attitudeForm.principalMarks });
-      setPrincipalAttitudeRemarks(app.attitudeForm.principalRemarks || "");
-    } else if (app.principalReview?.attitudeMarks) {
-      setPrincipalAttitudeMarks({ ...app.principalReview.attitudeMarks });
-      setPrincipalAttitudeRemarks(app.principalReview.attitudeRemarks || "");
+    setAttitudeRatings({ ...existingRatings });
+    setAttitudeRemarks(evalObj.remarks || "");
+
+    // If principal marks exist, use them. Otherwise, prefill with coordinator ratings so Principal can edit directly
+    if (Object.keys(existingPrincipalMarks).length > 0) {
+      setPrincipalAttitudeMarks({ ...existingPrincipalMarks });
+      setPrincipalAttitudeRemarks(evalObj.principalRemarks || app.principalReview?.attitudeRemarks || "");
+    } else if (Object.keys(existingRatings).length > 0) {
+      setPrincipalAttitudeMarks({ ...existingRatings });
+      setPrincipalAttitudeRemarks(evalObj.principalRemarks || app.principalReview?.attitudeRemarks || "");
     } else {
       setPrincipalAttitudeMarks({});
       setPrincipalAttitudeRemarks("");
@@ -1315,6 +1665,23 @@ export default function AppraisalReviews() {
       ...prev,
       [questionId]: ratingValue
     }));
+    if (isPrincipalOrHR) {
+      setPrincipalAttitudeMarks(prev => ({
+        ...prev,
+        [questionId]: ratingValue
+      }));
+    }
+  };
+
+  const handleSetAllAttitudeRatings = (val) => {
+    if (!attitudeAppraisal) return;
+    const questions = getAttitudeQuestions(attitudeAppraisal);
+    const updated = {};
+    questions.forEach(q => {
+      updated[q.id] = val;
+    });
+    setAttitudeRatings(updated);
+    setPrincipalAttitudeMarks(updated);
   };
 
   const handleSaveAttitudeForm = async (options = {}) => {
@@ -1324,73 +1691,66 @@ export default function AppraisalReviews() {
       const activeQuestions = getAttitudeQuestions(attitudeAppraisal);
       const maxScore = activeQuestions.length * 5;
 
-      // Coordinator score calculation
-      const ratedValues = Object.entries(attitudeRatings).map(([k, v]) => Number(v) || 0);
-      const totalScore = ratedValues.reduce((sum, v) => sum + v, 0);
-      const ratedCount = Object.keys(attitudeRatings).filter(k => attitudeRatings[k] > 0).length;
-      const percentage = Math.round((totalScore / maxScore) * 1000) / 10;
+      // Merge principal and coordinator ratings
+      const hasPrincipalMarks = Object.keys(principalAttitudeMarks).some(k => Number(principalAttitudeMarks[k]) > 0);
+      const effectiveRatings = (isPrincipalOrHR || hasPrincipalMarks)
+        ? { ...attitudeRatings, ...principalAttitudeMarks }
+        : { ...attitudeRatings };
+
+      const totalScore = Object.values(effectiveRatings).reduce((sum, v) => sum + (Number(v) || 0), 0);
+      const ratedCount = Object.keys(effectiveRatings).filter(k => (Number(effectiveRatings[k]) || 0) > 0).length;
+      const percentage = maxScore > 0 ? Math.round((totalScore / maxScore) * 1000) / 10 : 0;
       const average = ratedCount > 0 ? (totalScore / ratedCount).toFixed(2) : "0.00";
 
-      // Principal / HR score calculation
-      const principalRatedValues = Object.entries(principalAttitudeMarks).map(([k, v]) => Number(v) || 0);
-      const principalTotalScore = principalRatedValues.reduce((sum, v) => sum + v, 0);
-      const principalRatedCount = Object.keys(principalAttitudeMarks).filter(k => principalAttitudeMarks[k] > 0).length;
-      const principalPercentage = Math.round((principalTotalScore / maxScore) * 1000) / 10;
-      const principalAverage = principalRatedCount > 0 ? (principalTotalScore / principalRatedCount).toFixed(2) : "0.00";
-
-      const isSubmittingToPrincipal = options.submitToPrincipal === true;
-      const existingAttitudeForm = attitudeAppraisal.attitudeForm || {};
+      const isSubmittingToPrincipal = options.submitToPrincipal === true || isPrincipalOrHR || attitudeAppraisal.formType === "hod" || ratedCount > 0;
+      const existingAttitudeForm = attitudeAppraisal.attitudeForm || attitudeAppraisal.attitudeEvaluation || {};
 
       const attitudePayload = {
         ...existingAttitudeForm,
-        ratings: attitudeRatings,
+        ratings: effectiveRatings,
         totalScore,
         maxScore,
         ratedCount,
         percentage,
         average,
-        remarks: attitudeRemarks.trim(),
+        remarks: attitudeRemarks.trim() || existingAttitudeForm.remarks || "",
+        principalMarks: effectiveRatings,
+        principalTotalScore: totalScore,
+        principalMaxScore: maxScore,
+        principalRatedCount: ratedCount,
+        principalPercentage: percentage,
+        principalAverage: average,
+        principalRemarks: principalAttitudeRemarks.trim() || attitudeRemarks.trim() || existingAttitudeForm.principalRemarks || "",
+        principalEvaluated: true,
+        principalEvaluatedBy: currentUser?.displayName || currentUser?.email || "Principal / HR",
+        principalEvaluatedEmail: currentUser?.email || "",
+        principalEvaluatedAt: new Date().toISOString(),
+        evaluatedBy: existingAttitudeForm.evaluatedBy || currentUser?.displayName || currentUser?.email || (isPrincipalOrHR ? "Principal / HR" : "Coordinator"),
+        evaluatorEmail: existingAttitudeForm.evaluatorEmail || currentUser?.email || "",
+        evaluatorRole: existingAttitudeForm.evaluatorRole || userRole || (isPrincipalOrHR ? "Principal / HR" : "Coordinator"),
+        evaluatedAt: existingAttitudeForm.evaluatedAt || new Date().toISOString(),
+        submittedToPrincipal: isSubmittingToPrincipal,
+        submittedToPrincipalAt: isSubmittingToPrincipal ? (existingAttitudeForm.submittedToPrincipalAt || new Date().toISOString()) : null,
+        coordinatorStatus: isSubmittingToPrincipal ? "Submitted to Principal" : "Draft",
         updatedAt: new Date().toISOString()
       };
 
-      if (!existingAttitudeForm.evaluatedBy || !isPrincipalOrHR) {
-        attitudePayload.evaluatedBy = currentUser?.displayName || currentUser?.email || "Coordinator";
-        attitudePayload.evaluatorEmail = currentUser?.email || "";
-        attitudePayload.evaluatorRole = userRole || "Coordinator";
-        attitudePayload.evaluatedAt = existingAttitudeForm.evaluatedAt || new Date().toISOString();
-      }
-
-      if (isSubmittingToPrincipal) {
-        attitudePayload.submittedToPrincipal = true;
-        attitudePayload.submittedToPrincipalAt = new Date().toISOString();
-        attitudePayload.coordinatorStatus = "Submitted to Principal";
-      }
-
-      if (isPrincipalOrHR) {
-        attitudePayload.principalMarks = principalAttitudeMarks;
-        attitudePayload.principalTotalScore = principalTotalScore;
-        attitudePayload.principalMaxScore = maxScore;
-        attitudePayload.principalRatedCount = principalRatedCount;
-        attitudePayload.principalPercentage = principalPercentage;
-        attitudePayload.principalAverage = principalAverage;
-        attitudePayload.principalRemarks = principalAttitudeRemarks.trim();
-        attitudePayload.principalEvaluatedBy = currentUser?.displayName || currentUser?.email || "Principal";
-        attitudePayload.principalEvaluatedEmail = currentUser?.email || "";
-        attitudePayload.principalEvaluatedAt = existingAttitudeForm.principalEvaluatedAt || new Date().toISOString();
-        attitudePayload.principalEvaluated = true;
-      }
-
-      const targetColl = attitudeAppraisal.formType === "hod"
-        ? "hod_appraisals"
-        : attitudeAppraisal.formType === "non_teaching"
-          ? "non_teaching_appraisals"
-          : attitudeAppraisal.formType === "teacher"
-            ? "teacher_appraisals"
-            : "faculty_appraisals";
+      const targetColl = attitudeAppraisal.collectionName || (
+        attitudeAppraisal.formType === "hod"
+          ? "hod_appraisals"
+          : attitudeAppraisal.formType === "non_teaching"
+            ? "non_teaching_appraisals"
+            : attitudeAppraisal.formType === "teacher"
+              ? "teacher_appraisals"
+              : "faculty_appraisals"
+      );
 
       const updateDocPayload = {
         attitudeForm: attitudePayload,
         attitudeEvaluation: attitudePayload,
+        attitudeSubmittedToPrincipal: isSubmittingToPrincipal,
+        attitudeSubmittedAt: isSubmittingToPrincipal ? new Date().toISOString() : null,
+        attitudeDraft: isSubmittingToPrincipal ? null : attitudePayload,
         updatedAt: new Date().toISOString()
       };
 
@@ -1408,10 +1768,10 @@ export default function AppraisalReviews() {
       if (isPrincipalOrHR) {
         updateDocPayload.principalReview = {
           ...(attitudeAppraisal.principalReview || {}),
-          attitudeMarks: principalAttitudeMarks,
-          attitudeTotalScore: principalTotalScore,
-          attitudeAverage: principalAverage,
-          attitudeRemarks: principalAttitudeRemarks.trim(),
+          attitudeMarks: effectiveRatings,
+          attitudeTotalScore: totalScore,
+          attitudeAverage: average,
+          attitudeRemarks: principalAttitudeRemarks.trim() || attitudeRemarks.trim(),
           reviewedBy: currentUser?.email || "",
           reviewedAt: new Date().toISOString()
         };
@@ -1425,13 +1785,7 @@ export default function AppraisalReviews() {
         setSelectedAppraisal(prev => ({ ...prev, ...updateDocPayload }));
       }
 
-      if (isPrincipalOrHR) {
-        showToast(`Principal / HR Attitude Evaluation submitted successfully! (Score: ${principalTotalScore}/${maxScore})`, "success");
-      } else if (isSubmittingToPrincipal) {
-        showToast(`Attitude Form submitted to Principal successfully! (Score: ${totalScore}/${maxScore})`, "success");
-      } else {
-        showToast(`Attitude Form saved successfully! (Score: ${totalScore}/${maxScore})`, "success");
-      }
+      showToast(`Attitude Evaluation saved & updated successfully! (${totalScore}/${maxScore})`, "success");
       setAttitudeModalOpen(false);
     } catch (err) {
       console.error("Error saving attitude form:", err);
@@ -1872,14 +2226,13 @@ export default function AppraisalReviews() {
                               {k1.proof?.fileUrl && (
                                 <div className="flex items-center gap-2 pt-1">
                                   <span className="text-[10px] font-bold text-zinc-400 uppercase">Evidence Document:</span>
-                                  <a
-                                    href={k1.proof.fileUrl}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-3 py-1 rounded-lg text-xs"
+                                  <button
+                                    type="button"
+                                    onClick={(e) => handleViewProof(e, k1.proof.fileUrl, k1.proof.fileName || "File")}
+                                    className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-3 py-1 rounded-lg text-xs cursor-pointer"
                                   >
                                     View Evidence ({k1.proof.fileName || "File"})
-                                  </a>
+                                  </button>
                                 </div>
                               )}
                             </div>
@@ -1924,14 +2277,13 @@ export default function AppraisalReviews() {
                                       {sub.fileUrl && (
                                         <div className="flex items-center gap-2 pt-0.5">
                                           <span className="text-[10px] font-bold text-zinc-400 uppercase">Proof:</span>
-                                          <a
-                                            href={sub.fileUrl}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
+                                          <button
+                                            type="button"
+                                            onClick={(e) => handleViewProof(e, sub.fileUrl, sub.fileName || "File")}
+                                            className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px] cursor-pointer"
                                           >
                                             View Evidence ({sub.fileName || "File"})
-                                          </a>
+                                          </button>
                                         </div>
                                       )}
                                     </div>
@@ -1972,14 +2324,13 @@ export default function AppraisalReviews() {
                                 {k3.proof?.fileUrl && (
                                   <div className="flex items-center gap-2 pt-0.5">
                                     <span className="text-[10px] font-bold text-zinc-400 uppercase">Proof:</span>
-                                    <a
-                                      href={k3.proof.fileUrl}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
+                                    <button
+                                      type="button"
+                                      onClick={(e) => handleViewProof(e, k3.proof.fileUrl, k3.proof.fileName || "File")}
+                                      className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px] cursor-pointer"
                                     >
                                       View Evidence ({k3.proof.fileName || "File"})
-                                    </a>
+                                    </button>
                                   </div>
                                 )}
                               </div>
@@ -2012,14 +2363,13 @@ export default function AppraisalReviews() {
                                       {item.fileUrl && (
                                         <div className="flex items-center gap-2 pt-1">
                                           <span className="text-[10px] font-bold text-zinc-400 uppercase">Proof:</span>
-                                          <a
-                                            href={item.fileUrl}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
+                                          <button
+                                            type="button"
+                                            onClick={(e) => handleViewProof(e, item.fileUrl, item.fileName || "File")}
+                                            className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px] cursor-pointer"
                                           >
                                             View Evidence ({item.fileName || "File"})
-                                          </a>
+                                          </button>
                                         </div>
                                       )}
                                     </div>
@@ -2104,14 +2454,13 @@ export default function AppraisalReviews() {
                                   {(k5.proof?.fileUrl || k5.resultProof?.fileUrl) && (
                                     <div className="flex items-center gap-2 pt-0.5">
                                       <span className="text-[10px] font-bold text-zinc-400 uppercase">Result Proof:</span>
-                                      <a
-                                        href={k5.proof?.fileUrl || k5.resultProof?.fileUrl}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px]"
+                                      <button
+                                        type="button"
+                                        onClick={(e) => handleViewProof(e, k5.proof?.fileUrl || k5.resultProof?.fileUrl, (k5.proof || k5.resultProof)?.fileName || "File")}
+                                        className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-2.5 py-0.5 rounded-md text-[11px] cursor-pointer"
                                       >
                                         View Evidence ({(k5.proof || k5.resultProof)?.fileName || "File"})
-                                      </a>
+                                      </button>
                                     </div>
                                   )}
                                 </div>
@@ -2176,25 +2525,31 @@ export default function AppraisalReviews() {
                                 Staff Attitude & Competency Evaluation
                               </div>
                                 <div className="text-xs text-slate-600 mt-0.5 font-medium flex flex-wrap items-center gap-2">
-                                  {selectedAppraisal.attitudeForm?.totalScore !== undefined ? (
-                                    <>
-                                      <span>
-                                        Coord: <strong className="text-teal-700 font-bold">{selectedAppraisal.attitudeForm.totalScore}/{selectedAppraisal.attitudeForm.maxScore || (getAttitudeQuestions(selectedAppraisal).length * 5)}</strong> ({selectedAppraisal.attitudeForm.average}/5.0)
-                                      </span>
-                                      {selectedAppraisal.attitudeForm.principalTotalScore !== undefined && (
-                                        <span className="text-amber-800 font-medium">
-                                          • Principal: <strong className="text-amber-900 font-bold">{selectedAppraisal.attitudeForm.principalTotalScore}/{selectedAppraisal.attitudeForm.principalMaxScore || (getAttitudeQuestions(selectedAppraisal).length * 5)}</strong> ({selectedAppraisal.attitudeForm.principalAverage}/5.0)
-                                        </span>
-                                      )}
-                                      {selectedAppraisal.attitudeForm.submittedToPrincipal && (
-                                        <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full">
-                                          ✓ Submitted to Principal
-                                        </span>
-                                      )}
-                                    </>
-                                  ) : (
-                                    <span className="text-amber-700 font-semibold">Not yet evaluated</span>
-                                  )}
+                                  {(() => {
+                                    const attInfo = getAttitudeScoreInfo(selectedAppraisal);
+                                    if (attInfo.hasMarks || attInfo.totalScore > 0) {
+                                      return (
+                                        <>
+                                          {attInfo.hodScore > 0 && (
+                                            <span>
+                                              Coord: <strong className="text-teal-700 font-bold">{attInfo.hodScore}/{attInfo.hodMax}</strong> ({(attInfo.hodScore / (getAttitudeQuestions(selectedAppraisal).length || 18)).toFixed(2)}/5.0)
+                                            </span>
+                                          )}
+                                          {attInfo.principalScore > 0 && (
+                                            <span className="text-amber-800 font-medium">
+                                              • Principal: <strong className="text-amber-900 font-bold">{attInfo.principalScore}/{attInfo.principalMax}</strong> ({(attInfo.principalScore / (getAttitudeQuestions(selectedAppraisal).length || 18)).toFixed(2)}/5.0)
+                                            </span>
+                                          )}
+                                          {attInfo.isSubmitted && (
+                                            <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                              ✓ Submitted to Principal
+                                            </span>
+                                          )}
+                                        </>
+                                      );
+                                    }
+                                    return <span className="text-amber-700 font-semibold">Not yet evaluated</span>;
+                                  })()}
                                 </div>
                               </div>
                             </div>
@@ -2204,9 +2559,17 @@ export default function AppraisalReviews() {
                               className="px-4 py-2 bg-[#1c355e] hover:bg-[#142644] text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
                             >
                               <Award size={14} />
-                              {isPrincipalOrHR
-                                ? (selectedAppraisal.attitudeForm?.principalMarks ? "Review / Edit Principal Attitude Marks" : "Evaluate Attitude Form")
-                                : (selectedAppraisal.attitudeForm?.ratings ? "View / Edit Attitude Form" : "Fill Attitude Form")}
+                              {(() => {
+                                const attInfo = getAttitudeScoreInfo(selectedAppraisal);
+                                if (isPrincipalOrHR) {
+                                  return attInfo.principalScore > 0
+                                    ? `Review Principal Attitude Marks (${attInfo.principalScore}/${attInfo.principalMax})`
+                                    : "Evaluate Attitude Form";
+                                }
+                                return attInfo.hasMarks || attInfo.totalScore > 0
+                                  ? `View / Edit Attitude Form (${attInfo.totalScore}/${attInfo.maxScore})`
+                                  : "Fill Attitude Form";
+                              })()}
                             </button>
                           </div>
 
@@ -2403,15 +2766,14 @@ export default function AppraisalReviews() {
                                       <td className="p-2.5 text-center font-bold">{w.reportSubmitted || "Yes"}</td>
                                       <td className="p-2.5 text-center">
                                         {w.fileUrl ? (
-                                          <a
-                                            href={w.fileUrl}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            className="inline-flex items-center gap-1 text-[10px] font-extrabold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-lg hover:bg-indigo-100 transition-all"
+                                          <button
+                                            type="button"
+                                            onClick={(e) => handleViewProof(e, w.fileUrl, w.fileName || "View Attachment")}
+                                            className="inline-flex items-center gap-1 text-[10px] font-extrabold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-lg hover:bg-indigo-100 transition-all cursor-pointer"
                                             title={w.fileName || "View Attachment"}
                                           >
                                             <Paperclip className="w-3 h-3" /> Proof
-                                          </a>
+                                          </button>
                                         ) : (
                                           <span className="text-zinc-400 font-semibold text-[10px]">-</span>
                                         )}
@@ -2662,14 +3024,13 @@ export default function AppraisalReviews() {
                           {selectedAppraisal.formData?.rolesEvidenceUrl && (
                             <div className="flex items-center gap-2 pt-1">
                               <span className="text-[10px] font-bold text-zinc-400 uppercase">Evidence Document:</span>
-                              <a
-                                href={selectedAppraisal.formData.rolesEvidenceUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-3 py-1 rounded-lg text-xs"
+                              <button
+                                type="button"
+                                onClick={(e) => handleViewProof(e, selectedAppraisal.formData.rolesEvidenceUrl, selectedAppraisal.formData.rolesEvidenceName || "Attachment")}
+                                className="text-indigo-600 font-bold hover:underline inline-flex items-center gap-1 bg-indigo-50 border border-indigo-100 px-3 py-1 rounded-lg text-xs cursor-pointer"
                               >
                                 View Evidence ({selectedAppraisal.formData.rolesEvidenceName || "Attachment"})
-                              </a>
+                              </button>
                             </div>
                           )}
                         </div>
@@ -3067,135 +3428,209 @@ export default function AppraisalReviews() {
                         {isSectionVisible("sec_subjects_results") && (
                           <>
                             {/* Dynamic Title / Description */}
-                            <div className="border-b border-slate-100 pb-2 mb-4">
-                              <span style={{ fontSize: "11px" }} className="font-extrabold text-indigo-950 block uppercase tracking-wider">
-                                {getSectionTitle("sec_subjects_results", "2.1 SUBJECTS HANDLED & PASS PERCENTAGE")}
-                              </span>
-                              {getSectionDescription("sec_subjects_results") && (
-                                <p className="text-[10px] text-zinc-400 font-semibold uppercase mt-0.5">{getSectionDescription("sec_subjects_results")}</p>
-                              )}
+                            <div>
+                              <h3 className="font-extrabold text-xs md:text-sm text-slate-900 uppercase tracking-wider mb-1">
+                                {getSectionTitle("sec_subjects_results", "2.1 SUBJECTS HANDLED & EXAM PASS TARGETS")}
+                              </h3>
+                              <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider mb-6">
+                                {getSectionDescription("sec_subjects_results") || "TABULAR EVALUATION OF RESULT PERCENTAGES AND STUDENT FEEDBACK TARGETS."}
+                              </p>
                             </div>
 
-                            {/* Odd Semester */}
-                            <div>
-                              <span className="text-xs font-black text-[#120c7a] block mb-2 uppercase tracking-wider">
-                                {getSectionTitle("f_subjects_odd_theory_title", "THEORY : Quarterly Examination")}
+                            {/* ODD SEMESTER BANNER */}
+                            <div className="bg-indigo-50/70 border border-indigo-100/80 rounded-xl px-4 py-2.5 mb-6">
+                              <span className="text-xs font-black text-indigo-950 uppercase tracking-wider">
+                                ODD SEMESTER (NOV/DEC)
                               </span>
-                              <table className="w-full border-collapse border border-zinc-200 text-xs">
-                                <tr className="bg-zinc-50 font-bold">
-                                  <th className="border border-zinc-200 p-2 text-center w-12">Sl. No.</th>
-                                  <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_class", "Class")}</th>
-                                  <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_code", "Subject")}</th>
-                                  <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_appeared", "Appeared")}</th>
-                                  <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_passed", "Passed")}</th>
-                                  <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_passPercent", "Pass Percentage")}</th>
-                                  <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_feedback", "Feedback Rating")}</th>
-                                  {renderRowEvidenceHeader("sec_subjects_results")}
-                                </tr>
-                                {(selectedAppraisal.formData?.oddTheorySubjects || []).map((row, i) => (
-                                  <tr key={i}>
-                                    <td className="border border-zinc-200 p-2 text-center font-bold">{i + 1}</td>
-                                    <td className="border border-zinc-200 p-2">{row.class}</td>
-                                    <td className="border border-zinc-200 p-2">{row.subjectCodeTitle}</td>
-                                    <td className="border border-zinc-200 p-2 text-center">{row.appeared}</td>
-                                    <td className="border border-zinc-200 p-2 text-center">{row.passed}</td>
-                                    <td className="border border-zinc-200 p-2 text-center font-bold text-[#120c7a]">{row.resultPercentage}</td>
-                                    <td className="border border-zinc-200 p-2 text-center font-bold text-indigo-700">{row.feedbackRating}</td>
-                                    {renderRowEvidenceCellReadOnly(row, "sec_subjects_results")}
-                                  </tr>
-                                ))}
-                              </table>
                             </div>
 
-                            <div>
-                              <span className="text-xs font-black text-[#120c7a] block mb-2 uppercase tracking-wider">
-                                {getSectionTitle("f_subjects_odd_practical_title", "THEORY: Half Yearly Examination")}
-                              </span>
-                              <table className="w-full border-collapse border border-zinc-200 text-xs">
-                                <tr className="bg-zinc-50 font-bold">
-                                  <th className="border border-zinc-200 p-2 text-center w-12">Sl. No.</th>
-                                  <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_class", "Class")}</th>
-                                  <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_code", "Subject")}</th>
-                                  <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_appeared", "Appeared")}</th>
-                                  <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_passed", "Passed")}</th>
-                                  <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_passPercent", "Pass Percentage")}</th>
-                                  <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_feedback", "Feedback Rating")}</th>
-                                  {renderRowEvidenceHeader("sec_subjects_results")}
-                                </tr>
-                                {(selectedAppraisal.formData?.oddPracticalSubjects || []).map((row, i) => (
-                                  <tr key={i}>
-                                    <td className="border border-zinc-200 p-2 text-center font-bold">{i + 1}</td>
-                                    <td className="border border-zinc-200 p-2">{row.class}</td>
-                                    <td className="border border-zinc-200 p-2">{row.subjectCodeTitle}</td>
-                                    <td className="border border-zinc-200 p-2 text-center">{row.appeared}</td>
-                                    <td className="border border-zinc-200 p-2 text-center">{row.passed}</td>
-                                    <td className="border border-zinc-200 p-2 text-center font-bold text-[#120c7a]">{row.resultPercentage}</td>
-                                    <td className="border border-zinc-200 p-2 text-center font-bold text-indigo-700">{row.feedbackRating}</td>
-                                    {renderRowEvidenceCellReadOnly(row, "sec_subjects_results")}
-                                  </tr>
-                                ))}
-                              </table>
+                            {/* Odd Sem Theory Table */}
+                            <div className="mb-8">
+                              <div className="flex justify-between items-center mb-3">
+                                <span className="text-xs font-black text-slate-800 uppercase tracking-wider">THEORY Subjects</span>
+                              </div>
+                              <div className="overflow-x-auto rounded-xl border border-zinc-200">
+                                <table className="w-full border-collapse text-xs">
+                                  <thead>
+                                    <tr className="bg-zinc-50/80 font-bold text-slate-900 border-b border-zinc-200">
+                                      <th className="border-r border-zinc-200 p-2.5 text-center w-12 font-black">S.No</th>
+                                      {isSectionVisible("f_subjects_class") && <th className="border-r border-zinc-200 p-2.5 text-left font-black">{getSectionTitle("f_subjects_class", "Class")}</th>}
+                                      {isSectionVisible("f_subjects_code") && <th className="border-r border-zinc-200 p-2.5 text-left font-black">{getSectionTitle("f_subjects_code", "Subject Code & Title")}</th>}
+                                      {isSectionVisible("f_subjects_appeared") && <th className="border-r border-zinc-200 p-2.5 text-center w-24 font-black">{getSectionTitle("f_subjects_appeared", "Appeared")}</th>}
+                                      {isSectionVisible("f_subjects_passed") && <th className="border-r border-zinc-200 p-2.5 text-center w-28 font-black">{getSectionTitle("f_subjects_passed", "No. of Students Passed")}</th>}
+                                      {isSectionVisible("f_subjects_passPercent") && <th className="border-r border-zinc-200 p-2.5 text-center w-28 font-black">{getSectionTitle("f_subjects_passPercent", "Pass Percentage (%)")}</th>}
+                                      {isSectionVisible("f_subjects_feedback") && <th className="border-r border-zinc-200 p-2.5 text-center w-36 font-black">{getSectionTitle("f_subjects_feedback", "Student Feedback Score (%)")}</th>}
+                                      {renderCustomGridHeaders("sec_subjects_results")}
+                                      {renderRowEvidenceHeader("sec_subjects_results")}
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {(selectedAppraisal.formData?.oddTheorySubjects || []).filter(r => r.class || r.subjectCodeTitle || r.appeared || r.passed || r.resultPercentage).length === 0 ? (
+                                      <tr>
+                                        <td colSpan={10} className="p-3 text-center text-zinc-400 italic text-xs">No theory subjects recorded</td>
+                                      </tr>
+                                    ) : (
+                                      (selectedAppraisal.formData?.oddTheorySubjects || []).map((row, i) => (
+                                        <tr key={i} className="hover:bg-zinc-50/50 border-b border-zinc-200 last:border-b-0">
+                                          <td className="border-r border-zinc-200 p-2.5 text-center font-black text-slate-800">{i + 1}</td>
+                                          {isSectionVisible("f_subjects_class") && <td className="border-r border-zinc-200 p-2 text-slate-800 font-medium">{row.class || "-"}</td>}
+                                          {isSectionVisible("f_subjects_code") && <td className="border-r border-zinc-200 p-2 font-medium text-slate-850">{row.subjectCodeTitle || "-"}</td>}
+                                          {isSectionVisible("f_subjects_appeared") && <td className="border-r border-zinc-200 p-2 text-center text-slate-700">{row.appeared ?? "-"}</td>}
+                                          {isSectionVisible("f_subjects_passed") && <td className="border-r border-zinc-200 p-2 text-center text-slate-700">{row.passed ?? "-"}</td>}
+                                          {isSectionVisible("f_subjects_passPercent") && <td className="border-r border-zinc-200 p-2 text-center font-black text-[#120c7a]">{row.resultPercentage ? `${row.resultPercentage}${String(row.resultPercentage).includes('%') ? '' : '%'}` : "-"}</td>}
+                                          {isSectionVisible("f_subjects_feedback") && <td className="border-r border-zinc-200 p-2 text-center font-bold text-indigo-700">{row.feedbackRating ? `${row.feedbackRating}${String(row.feedbackRating).includes('%') ? '' : '%'}` : "-"}</td>}
+                                          {renderCustomGridCellsReadOnly(row, "sec_subjects_results")}
+                                          {renderRowEvidenceCellReadOnly(row, "sec_subjects_results")}
+                                        </tr>
+                                      ))
+                                    )}
+                                  </tbody>
+                                </table>
+                              </div>
                             </div>
 
-                            {/* Even Semester */}
-                            <div>
-                              <span className="text-xs font-black text-[#120c7a] block mb-2 uppercase tracking-wider">
-                                {getSectionTitle("f_subjects_even_theory_title", "THEORY: Annual Examination")}
-                              </span>
-                              <table className="w-full border-collapse border border-zinc-200 text-xs">
-                                <tr className="bg-zinc-50 font-bold">
-                                  <th className="border border-zinc-200 p-2 text-center w-12">Sl. No.</th>
-                                  <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_class", "Class")}</th>
-                                  <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_code", "Subject")}</th>
-                                  <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_appeared", "Appeared")}</th>
-                                  <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_passed", "Passed")}</th>
-                                  <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_passPercent", "Pass Percentage")}</th>
-                                  <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_feedback", "Feedback Rating")}</th>
-                                  {renderRowEvidenceHeader("sec_subjects_results")}
-                                </tr>
-                                {(selectedAppraisal.formData?.evenTheorySubjects || []).map((row, i) => (
-                                  <tr key={i}>
-                                    <td className="border border-zinc-200 p-2 text-center font-bold">{i + 1}</td>
-                                    <td className="border border-zinc-200 p-2">{row.class}</td>
-                                    <td className="border border-zinc-200 p-2">{row.subjectCodeTitle}</td>
-                                    <td className="border border-zinc-200 p-2 text-center">{row.appeared}</td>
-                                    <td className="border border-zinc-200 p-2 text-center">{row.passed}</td>
-                                    <td className="border border-zinc-200 p-2 text-center font-bold text-[#120c7a]">{row.resultPercentage}</td>
-                                    <td className="border border-zinc-200 p-2 text-center font-bold text-indigo-700">{row.feedbackRating}</td>
-                                    {renderRowEvidenceCellReadOnly(row, "sec_subjects_results")}
-                                  </tr>
-                                ))}
-                              </table>
+                            {/* Odd Sem Practical Table */}
+                            <div className="mb-8">
+                              <div className="flex justify-between items-center mb-3">
+                                <span className="text-xs font-black text-slate-800 uppercase tracking-wider">PRACTICAL / PROJECT Subjects</span>
+                              </div>
+                              <div className="overflow-x-auto rounded-xl border border-zinc-200">
+                                <table className="w-full border-collapse text-xs">
+                                  <thead>
+                                    <tr className="bg-zinc-50/80 font-bold text-slate-900 border-b border-zinc-200">
+                                      <th className="border-r border-zinc-200 p-2.5 text-center w-12 font-black">S.No</th>
+                                      {isSectionVisible("f_subjects_class") && <th className="border-r border-zinc-200 p-2.5 text-left font-black">{getSectionTitle("f_subjects_class", "Class")}</th>}
+                                      {isSectionVisible("f_subjects_code") && <th className="border-r border-zinc-200 p-2.5 text-left font-black">{getSectionTitle("f_subjects_code", "Subject Code & Title")}</th>}
+                                      {isSectionVisible("f_subjects_appeared") && <th className="border-r border-zinc-200 p-2.5 text-center w-24 font-black">{getSectionTitle("f_subjects_appeared", "Appeared")}</th>}
+                                      {isSectionVisible("f_subjects_passed") && <th className="border-r border-zinc-200 p-2.5 text-center w-28 font-black">{getSectionTitle("f_subjects_passed", "No. of Students Passed")}</th>}
+                                      {isSectionVisible("f_subjects_passPercent") && <th className="border-r border-zinc-200 p-2.5 text-center w-28 font-black">{getSectionTitle("f_subjects_passPercent", "Pass Percentage (%)")}</th>}
+                                      {isSectionVisible("f_subjects_feedback") && <th className="border-r border-zinc-200 p-2.5 text-center w-36 font-black">{getSectionTitle("f_subjects_feedback", "Student Feedback Score (%)")}</th>}
+                                      {renderCustomGridHeaders("sec_subjects_results")}
+                                      {renderRowEvidenceHeader("sec_subjects_results")}
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {(selectedAppraisal.formData?.oddPracticalSubjects || []).filter(r => r.class || r.subjectCodeTitle || r.appeared || r.passed || r.resultPercentage).length === 0 ? (
+                                      <tr>
+                                        <td colSpan={10} className="p-3 text-center text-zinc-400 italic text-xs">No practical subjects recorded</td>
+                                      </tr>
+                                    ) : (
+                                      (selectedAppraisal.formData?.oddPracticalSubjects || []).map((row, i) => (
+                                        <tr key={i} className="hover:bg-zinc-50/50 border-b border-zinc-200 last:border-b-0">
+                                          <td className="border-r border-zinc-200 p-2.5 text-center font-black text-slate-800">{i + 1}</td>
+                                          {isSectionVisible("f_subjects_class") && <td className="border-r border-zinc-200 p-2 text-slate-800 font-medium">{row.class || "-"}</td>}
+                                          {isSectionVisible("f_subjects_code") && <td className="border-r border-zinc-200 p-2 font-medium text-slate-850">{row.subjectCodeTitle || "-"}</td>}
+                                          {isSectionVisible("f_subjects_appeared") && <td className="border-r border-zinc-200 p-2 text-center text-slate-700">{row.appeared ?? "-"}</td>}
+                                          {isSectionVisible("f_subjects_passed") && <td className="border-r border-zinc-200 p-2 text-center text-slate-700">{row.passed ?? "-"}</td>}
+                                          {isSectionVisible("f_subjects_passPercent") && <td className="border-r border-zinc-200 p-2 text-center font-black text-[#120c7a]">{row.resultPercentage ? `${row.resultPercentage}${String(row.resultPercentage).includes('%') ? '' : '%'}` : "-"}</td>}
+                                          {isSectionVisible("f_subjects_feedback") && <td className="border-r border-zinc-200 p-2 text-center font-bold text-indigo-700">{row.feedbackRating ? `${row.feedbackRating}${String(row.feedbackRating).includes('%') ? '' : '%'}` : "-"}</td>}
+                                          {renderCustomGridCellsReadOnly(row, "sec_subjects_results")}
+                                          {renderRowEvidenceCellReadOnly(row, "sec_subjects_results")}
+                                        </tr>
+                                      ))
+                                    )}
+                                  </tbody>
+                                </table>
+                              </div>
                             </div>
 
+                            {/* EVEN SEMESTER BANNER */}
                             <div>
-                              <span className="text-xs font-black text-[#120c7a] block mb-2 uppercase tracking-wider">
-                                {getSectionTitle("f_subjects_even_practical_title", "PRACTICALS – Annual Examination")}
-                              </span>
-                              <table className="w-full border-collapse border border-zinc-200 text-xs">
-                                <tr className="bg-zinc-50 font-bold">
-                                  <th className="border border-zinc-200 p-2 text-center w-12">Sl. No.</th>
-                                  <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_class", "Class")}</th>
-                                  <th className="border border-zinc-200 p-2">{getSectionTitle("f_subjects_code", "Subject")}</th>
-                                  <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_appeared", "Appeared")}</th>
-                                  <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_passed", "Passed")}</th>
-                                  <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_passPercent", "Pass Percentage")}</th>
-                                  <th className="border border-zinc-200 p-2 text-center">{getSectionTitle("f_subjects_feedback", "Feedback Rating")}</th>
-                                  {renderRowEvidenceHeader("sec_subjects_results")}
-                                </tr>
-                                {(selectedAppraisal.formData?.evenPracticalSubjects || []).map((row, i) => (
-                                  <tr key={i}>
-                                    <td className="border border-zinc-200 p-2 text-center font-bold">{i + 1}</td>
-                                    <td className="border border-zinc-200 p-2">{row.class}</td>
-                                    <td className="border border-zinc-200 p-2">{row.subjectCodeTitle}</td>
-                                    <td className="border border-zinc-200 p-2 text-center">{row.appeared}</td>
-                                    <td className="border border-zinc-200 p-2 text-center">{row.passed}</td>
-                                    <td className="border border-zinc-200 p-2 text-center font-bold text-[#120c7a]">{row.resultPercentage}</td>
-                                    <td className="border border-zinc-200 p-2 text-center font-bold text-indigo-700">{row.feedbackRating}</td>
-                                    {renderRowEvidenceCellReadOnly(row, "sec_subjects_results")}
-                                  </tr>
-                                ))}
-                              </table>
+                              <div className="bg-indigo-50/70 border border-indigo-100/80 rounded-xl px-4 py-2.5 mb-6">
+                                <span className="text-xs font-black text-indigo-950 uppercase tracking-wider">
+                                  EVEN SEMESTER (APRIL/MAY)
+                                </span>
+                              </div>
+
+                              {/* Even Sem Theory Table */}
+                              <div className="mb-8">
+                                <div className="flex justify-between items-center mb-3">
+                                  <span className="text-xs font-black text-slate-800 uppercase tracking-wider">THEORY Subjects</span>
+                                </div>
+                                <div className="overflow-x-auto rounded-xl border border-zinc-200">
+                                  <table className="w-full border-collapse text-xs">
+                                    <thead>
+                                      <tr className="bg-zinc-50/80 font-bold text-slate-900 border-b border-zinc-200">
+                                        <th className="border-r border-zinc-200 p-2.5 text-center w-12 font-black">S.No</th>
+                                        {isSectionVisible("f_subjects_class") && <th className="border-r border-zinc-200 p-2.5 text-left font-black">{getSectionTitle("f_subjects_class", "Class")}</th>}
+                                        {isSectionVisible("f_subjects_code") && <th className="border-r border-zinc-200 p-2.5 text-left font-black">{getSectionTitle("f_subjects_code", "Subject Code & Title")}</th>}
+                                        {isSectionVisible("f_subjects_appeared") && <th className="border-r border-zinc-200 p-2.5 text-center w-24 font-black">{getSectionTitle("f_subjects_appeared", "Appeared")}</th>}
+                                        {isSectionVisible("f_subjects_passed") && <th className="border-r border-zinc-200 p-2.5 text-center w-28 font-black">{getSectionTitle("f_subjects_passed", "No. of Students Passed")}</th>}
+                                        {isSectionVisible("f_subjects_passPercent") && <th className="border-r border-zinc-200 p-2.5 text-center w-28 font-black">{getSectionTitle("f_subjects_passPercent", "Pass Percentage (%)")}</th>}
+                                        {isSectionVisible("f_subjects_feedback") && <th className="border-r border-zinc-200 p-2.5 text-center w-36 font-black">{getSectionTitle("f_subjects_feedback", "Student Feedback Score (%)")}</th>}
+                                        {renderCustomGridHeaders("sec_subjects_results")}
+                                        {renderRowEvidenceHeader("sec_subjects_results")}
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {(selectedAppraisal.formData?.evenTheorySubjects || []).filter(r => r.class || r.subjectCodeTitle || r.appeared || r.passed || r.resultPercentage).length === 0 ? (
+                                        <tr>
+                                          <td colSpan={10} className="p-3 text-center text-zinc-400 italic text-xs">No theory subjects recorded</td>
+                                        </tr>
+                                      ) : (
+                                        (selectedAppraisal.formData?.evenTheorySubjects || []).map((row, i) => (
+                                          <tr key={i} className="hover:bg-zinc-50/50 border-b border-zinc-200 last:border-b-0">
+                                            <td className="border-r border-zinc-200 p-2.5 text-center font-black text-slate-800">{i + 1}</td>
+                                            {isSectionVisible("f_subjects_class") && <td className="border-r border-zinc-200 p-2 text-slate-800 font-medium">{row.class || "-"}</td>}
+                                            {isSectionVisible("f_subjects_code") && <td className="border-r border-zinc-200 p-2 font-medium text-slate-850">{row.subjectCodeTitle || "-"}</td>}
+                                            {isSectionVisible("f_subjects_appeared") && <td className="border-r border-zinc-200 p-2 text-center text-slate-700">{row.appeared ?? "-"}</td>}
+                                            {isSectionVisible("f_subjects_passed") && <td className="border-r border-zinc-200 p-2 text-center text-slate-700">{row.passed ?? "-"}</td>}
+                                            {isSectionVisible("f_subjects_passPercent") && <td className="border-r border-zinc-200 p-2 text-center font-black text-[#120c7a]">{row.resultPercentage ? `${row.resultPercentage}${String(row.resultPercentage).includes('%') ? '' : '%'}` : "-"}</td>}
+                                            {isSectionVisible("f_subjects_feedback") && <td className="border-r border-zinc-200 p-2 text-center font-bold text-indigo-700">{row.feedbackRating ? `${row.feedbackRating}${String(row.feedbackRating).includes('%') ? '' : '%'}` : "-"}</td>}
+                                            {renderCustomGridCellsReadOnly(row, "sec_subjects_results")}
+                                            {renderRowEvidenceCellReadOnly(row, "sec_subjects_results")}
+                                          </tr>
+                                        ))
+                                      )}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+
+                              {/* Even Sem Practical Table */}
+                              <div className="mb-8">
+                                <div className="flex justify-between items-center mb-3">
+                                  <span className="text-xs font-black text-slate-800 uppercase tracking-wider">PRACTICAL / PROJECT Subjects</span>
+                                </div>
+                                <div className="overflow-x-auto rounded-xl border border-zinc-200">
+                                  <table className="w-full border-collapse text-xs">
+                                    <thead>
+                                      <tr className="bg-zinc-50/80 font-bold text-slate-900 border-b border-zinc-200">
+                                        <th className="border-r border-zinc-200 p-2.5 text-center w-12 font-black">S.No</th>
+                                        {isSectionVisible("f_subjects_class") && <th className="border-r border-zinc-200 p-2.5 text-left font-black">{getSectionTitle("f_subjects_class", "Class")}</th>}
+                                        {isSectionVisible("f_subjects_code") && <th className="border-r border-zinc-200 p-2.5 text-left font-black">{getSectionTitle("f_subjects_code", "Subject Code & Title")}</th>}
+                                        {isSectionVisible("f_subjects_appeared") && <th className="border-r border-zinc-200 p-2.5 text-center w-24 font-black">{getSectionTitle("f_subjects_appeared", "Appeared")}</th>}
+                                        {isSectionVisible("f_subjects_passed") && <th className="border-r border-zinc-200 p-2.5 text-center w-28 font-black">{getSectionTitle("f_subjects_passed", "No. of Students Passed")}</th>}
+                                        {isSectionVisible("f_subjects_passPercent") && <th className="border-r border-zinc-200 p-2.5 text-center w-28 font-black">{getSectionTitle("f_subjects_passPercent", "Pass Percentage (%)")}</th>}
+                                        {isSectionVisible("f_subjects_feedback") && <th className="border-r border-zinc-200 p-2.5 text-center w-36 font-black">{getSectionTitle("f_subjects_feedback", "Student Feedback Score (%)")}</th>}
+                                        {renderCustomGridHeaders("sec_subjects_results")}
+                                        {renderRowEvidenceHeader("sec_subjects_results")}
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {(selectedAppraisal.formData?.evenPracticalSubjects || []).filter(r => r.class || r.subjectCodeTitle || r.appeared || r.passed || r.resultPercentage).length === 0 ? (
+                                        <tr>
+                                          <td colSpan={10} className="p-3 text-center text-zinc-400 italic text-xs">No practical subjects recorded</td>
+                                        </tr>
+                                      ) : (
+                                        (selectedAppraisal.formData?.evenPracticalSubjects || []).map((row, i) => (
+                                          <tr key={i} className="hover:bg-zinc-50/50 border-b border-zinc-200 last:border-b-0">
+                                            <td className="border-r border-zinc-200 p-2.5 text-center font-black text-slate-800">{i + 1}</td>
+                                            {isSectionVisible("f_subjects_class") && <td className="border-r border-zinc-200 p-2 text-slate-800 font-medium">{row.class || "-"}</td>}
+                                            {isSectionVisible("f_subjects_code") && <td className="border-r border-zinc-200 p-2 font-medium text-slate-850">{row.subjectCodeTitle || "-"}</td>}
+                                            {isSectionVisible("f_subjects_appeared") && <td className="border-r border-zinc-200 p-2 text-center text-slate-700">{row.appeared ?? "-"}</td>}
+                                            {isSectionVisible("f_subjects_passed") && <td className="border-r border-zinc-200 p-2 text-center text-slate-700">{row.passed ?? "-"}</td>}
+                                            {isSectionVisible("f_subjects_passPercent") && <td className="border-r border-zinc-200 p-2 text-center font-black text-[#120c7a]">{row.resultPercentage ? `${row.resultPercentage}${String(row.resultPercentage).includes('%') ? '' : '%'}` : "-"}</td>}
+                                            {isSectionVisible("f_subjects_feedback") && <td className="border-r border-zinc-200 p-2 text-center font-bold text-indigo-700">{row.feedbackRating ? `${row.feedbackRating}${String(row.feedbackRating).includes('%') ? '' : '%'}` : "-"}</td>}
+                                            {renderCustomGridCellsReadOnly(row, "sec_subjects_results")}
+                                            {renderRowEvidenceCellReadOnly(row, "sec_subjects_results")}
+                                          </tr>
+                                        ))
+                                      )}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
                             </div>
 
                             <div className="bg-slate-50 p-4 rounded-xl border border-zinc-200">
@@ -3209,135 +3644,216 @@ export default function AppraisalReviews() {
                       </div>
                     )}
 
+                    {/* Sub-Tab 3: Academic Development */}
                     {activeDetailsTab === 3 && (
                       <div className="space-y-6">
+                        {/* 3.1 NPTEL CERTIFICATIONS COMPLETED */}
                         {isSectionVisible("sec_academic_nptel") && (
                           <div>
-                            <span className="text-xs font-black text-[#120c7a] block mb-1 uppercase tracking-wider">
-                              {getSectionTitle("sec_academic_nptel", "3.1 NPTEL CERTIFICATIONS COMPLETED")}
-                            </span>
+                            <div className="flex justify-between items-center mb-2 border-b border-slate-100 pb-1">
+                              <span style={{ fontSize: "11px" }} className="font-extrabold text-slate-800 uppercase tracking-wider">
+                                3.1 NPTEL CERTIFICATIONS COMPLETED
+                              </span>
+                            </div>
                             <p className="text-[10px] text-zinc-400 font-semibold mb-3 uppercase">
-                              {getSectionDescription("sec_academic_nptel") || "CERTIFICATION DETAILS AND CREDITS EARNED VIA SWAYAM/NPTEL PORTALS."}
+                              CERTIFICATION DETAILS AND CREDITS EARNED VIA SWAYAM/NPTEL PORTALS.
                             </p>
-                            <table className="w-full border-collapse border border-zinc-200 text-xs">
-                              <tr className="bg-zinc-50 font-bold">
-                                <th className="border border-zinc-200 p-2">Course Title</th>
-                                <th className="border border-zinc-200 p-2 text-center">Start Date</th>
-                                <th className="border border-zinc-200 p-2 text-center">End Date</th>
-                                <th className="border border-zinc-200 p-2 text-center">Platform</th>
-                                <th className="border border-zinc-200 p-2 text-center">Exam Date</th>
-                                <th className="border border-zinc-200 p-2 text-center">Cert?</th>
-                                {renderRowEvidenceHeader("sec_academic_nptel")}
-                              </tr>
-                              {(selectedAppraisal.formData?.onlineCourses || []).map((row, i) => (
-                                <tr key={i}>
-                                  <td className="border border-zinc-200 p-2 font-semibold">{row.title}</td>
-                                  <td className="border border-zinc-200 p-2 text-center">{row.startDate}</td>
-                                  <td className="border border-zinc-200 p-2 text-center">{row.endDate}</td>
-                                  <td className="border border-zinc-200 p-2 text-center">{row.platform}</td>
-                                  <td className="border border-zinc-200 p-2 text-center">{row.examDate}</td>
-                                  <td className="border border-zinc-200 p-2 text-center font-bold">{row.certificateReceived}</td>
-                                  {renderRowEvidenceCellReadOnly(row, "sec_academic_nptel")}
-                                </tr>
-                              ))}
-                            </table>
+                            <div className="overflow-x-auto rounded-xl border border-zinc-200">
+                              <table className="w-full border-collapse text-xs">
+                                <thead>
+                                  <tr className="bg-zinc-50/80 font-bold text-slate-900 border-b border-zinc-200">
+                                    <th className="border-r border-zinc-200 p-2 text-center w-12 font-black">Sl.No</th>
+                                    <th className="border-r border-zinc-200 p-2 text-left font-black">Title of the Course</th>
+                                    <th className="border-r border-zinc-200 p-2 text-center w-24 font-black">Start Date</th>
+                                    <th className="border-r border-zinc-200 p-2 text-center w-24 font-black">End Date</th>
+                                    <th className="border-r border-zinc-200 p-2 text-center w-20 font-black">Weeks</th>
+                                    <th className="border-r border-zinc-200 p-2 text-center w-28 font-black">Platform</th>
+                                    <th className="border-r border-zinc-200 p-2 text-center w-24 font-black">Exam Date</th>
+                                    <th className="border-r border-zinc-200 p-2 text-center w-24 font-black">Certificate?</th>
+                                    {renderCustomGridHeaders("sec_academic_nptel")}
+                                    {renderRowEvidenceHeader("sec_academic_nptel")}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {(selectedAppraisal.formData?.onlineCourses || []).filter(r => r.title || r.startDate || r.platform || r.examDate).length === 0 ? (
+                                    <tr>
+                                      <td colSpan={10} className="p-3 text-center text-zinc-400 italic text-xs">No online / NPTEL certifications recorded</td>
+                                    </tr>
+                                  ) : (
+                                    (selectedAppraisal.formData?.onlineCourses || []).map((row, i) => (
+                                      <tr key={i} className="hover:bg-zinc-50/50 border-b border-zinc-200 last:border-b-0">
+                                        <td className="border-r border-zinc-200 p-2 text-center font-black text-slate-800">{i + 1}</td>
+                                        <td className="border-r border-zinc-200 p-2 font-semibold text-slate-800">{row.title || "-"}</td>
+                                        <td className="border-r border-zinc-200 p-2 text-center text-slate-700">{row.startDate || "-"}</td>
+                                        <td className="border-r border-zinc-200 p-2 text-center text-slate-700">{row.endDate || "-"}</td>
+                                        <td className="border-r border-zinc-200 p-2 text-center text-slate-700">{row.weeks ?? "-"}</td>
+                                        <td className="border-r border-zinc-200 p-2 text-center font-medium text-slate-800">{row.platform || "-"}</td>
+                                        <td className="border-r border-zinc-200 p-2 text-center text-slate-700">{row.examDate || "-"}</td>
+                                        <td className="border-r border-zinc-200 p-2 text-center font-bold text-emerald-700">{row.certificateReceived || "-"}</td>
+                                        {renderCustomGridCellsReadOnly(row, "sec_academic_nptel")}
+                                        {renderRowEvidenceCellReadOnly(row, "sec_academic_nptel")}
+                                      </tr>
+                                    ))
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
                             {selectedAppraisal.formData?.onlineCoursesOutcome && (
-                              <div className="bg-slate-50 border border-zinc-200 p-3 rounded-xl mt-2 text-xs">
-                                <span className="font-bold block mb-1 uppercase text-[10px] text-zinc-500 font-serif">* SPECIFY THE OUTCOME AND ACHIEVEMENTS OF 13.A</span>
-                                <p className="text-zinc-600 font-medium">{selectedAppraisal.formData.onlineCoursesOutcome}</p>
+                              <div className="bg-slate-50 border border-zinc-200 p-3.5 rounded-xl mt-3 text-xs">
+                                <span className="font-extrabold block mb-1 uppercase text-[10px] text-zinc-500 font-serif">* SPECIFY THE OUTCOME AND ACHIEVEMENTS OF 13.A</span>
+                                <p className="text-zinc-700 font-medium leading-relaxed">{selectedAppraisal.formData.onlineCoursesOutcome}</p>
                               </div>
                             )}
                           </div>
                         )}
 
+                        {/* 3.3 JOURNAL PUBLICATIONS */}
                         {isSectionVisible("sec_academic_journals") && (
                           <div>
-                            <span className="text-xs font-black text-[#120c7a] block mb-1 uppercase tracking-wider">
-                              {getSectionTitle("sec_academic_journals", "3.3 JOURNAL PUBLICATIONS")}
-                            </span>
+                            <div className="flex justify-between items-center mb-2 border-b border-slate-100 pb-1">
+                              <span style={{ fontSize: "11px" }} className="font-extrabold text-slate-800 uppercase tracking-wider">
+                                {getSectionTitle("sec_academic_journals", "3.3 JOURNAL PUBLICATIONS")}
+                              </span>
+                            </div>
                             <p className="text-[10px] text-zinc-400 font-semibold mb-3 uppercase">
                               {getSectionDescription("sec_academic_journals") || "DETAILS OF RESEARCH PUBLICATIONS IN INDEXED JOURNALS."}
                             </p>
-                            <table className="w-full border-collapse border border-zinc-200 text-xs">
-                              <tr className="bg-zinc-50 font-bold">
-                                <th className="border border-zinc-200 p-2">Paper Title</th>
-                                <th className="border border-zinc-200 p-2 text-center">Date/Month/Year</th>
-                                <th className="border border-zinc-200 p-2">Journal/Conference Name</th>
-                                <th className="border border-zinc-200 p-2">Volume & Page Details</th>
-                                <th className="border border-zinc-200 p-2 text-center">SCI/SCOPUS/UGC</th>
-                                {renderRowEvidenceHeader("sec_academic_journals")}
-                              </tr>
-                              {(selectedAppraisal.formData?.researchPapers || []).map((row, i) => (
-                                <tr key={i}>
-                                  <td className="border border-zinc-200 p-2 font-semibold">{row.title}</td>
-                                  <td className="border border-zinc-200 p-2 text-center">{row.dateMonthYear}</td>
-                                  <td className="border border-zinc-200 p-2">{row.journal}</td>
-                                  <td className="border border-zinc-200 p-2">{row.volumeIssue}</td>
-                                  <td className="border border-zinc-200 p-2 text-center font-bold text-indigo-700">{row.sciScopusUgc}</td>
-                                  {renderRowEvidenceCellReadOnly(row, "sec_academic_journals")}
-                                </tr>
-                              ))}
-                            </table>
+                            <div className="overflow-x-auto rounded-xl border border-zinc-200">
+                              <table className="w-full border-collapse text-xs">
+                                <thead>
+                                  <tr className="bg-zinc-50/80 font-bold text-slate-900 border-b border-zinc-200">
+                                    <th className="border-r border-zinc-200 p-2 text-center w-12 font-black">Sl.No</th>
+                                    <th className="border-r border-zinc-200 p-2 text-left font-black">{getSectionTitle("f_journals_title", "Title of the Paper")}</th>
+                                    <th className="border-r border-zinc-200 p-2 text-center w-28 font-black">{getSectionTitle("f_journals_date", "Date / Month / Year")}</th>
+                                    <th className="border-r border-zinc-200 p-2 text-left font-black">{getSectionTitle("f_journals_journal", "Name of Journal / Conference")}</th>
+                                    <th className="border-r border-zinc-200 p-2 text-left font-black">{getSectionTitle("f_journals_volIssue", "Vol. No, Issue No, Page No")}</th>
+                                    <th className="border-r border-zinc-200 p-2 text-center w-36 font-black">{getSectionTitle("f_journals_index", "SCI / SCOPUS / UGC")}</th>
+                                    {renderCustomGridHeaders("sec_academic_journals")}
+                                    {renderRowEvidenceHeader("sec_academic_journals")}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {(selectedAppraisal.formData?.researchPapers || []).filter(r => r.title || r.journal || r.volumeIssue).length === 0 ? (
+                                    <tr>
+                                      <td colSpan={10} className="p-3 text-center text-zinc-400 italic text-xs">No journal publications recorded</td>
+                                    </tr>
+                                  ) : (
+                                    (selectedAppraisal.formData?.researchPapers || []).map((row, i) => (
+                                      <tr key={i} className="hover:bg-zinc-50/50 border-b border-zinc-200 last:border-b-0">
+                                        <td className="border-r border-zinc-200 p-2 text-center font-black text-slate-800">{i + 1}</td>
+                                        <td className="border-r border-zinc-200 p-2 font-semibold text-slate-800">{row.title || "-"}</td>
+                                        <td className="border-r border-zinc-200 p-2 text-center text-slate-700">{row.dateMonthYear || "-"}</td>
+                                        <td className="border-r border-zinc-200 p-2 text-slate-800">{row.journal || "-"}</td>
+                                        <td className="border-r border-zinc-200 p-2 text-slate-700">{row.volumeIssue || "-"}</td>
+                                        <td className="border-r border-zinc-200 p-2 text-center font-bold text-indigo-700">{row.sciScopusUgc || "-"}</td>
+                                        {renderCustomGridCellsReadOnly(row, "sec_academic_journals")}
+                                        {renderRowEvidenceCellReadOnly(row, "sec_academic_journals")}
+                                      </tr>
+                                    ))
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
                           </div>
                         )}
 
+                        {/* 3.2 FDP / SEMINARS ORGANIZED & ATTENDED */}
                         {isSectionVisible("sec_academic_fdp") && (
                           <div>
-                            <span className="text-xs font-black text-[#120c7a] block mb-1 uppercase tracking-wider">
-                              {getSectionTitle("sec_academic_fdp", "3.2 FDP / SEMINARS ORGANIZED & ATTENDED")}
-                            </span>
+                            <div className="flex justify-between items-center mb-2 border-b border-slate-100 pb-1">
+                              <span style={{ fontSize: "11px" }} className="font-extrabold text-slate-800 uppercase tracking-wider">
+                                {getSectionTitle("sec_academic_fdp", "3.2 FDP / SEMINARS ORGANIZED & ATTENDED")}
+                              </span>
+                            </div>
                             <p className="text-[10px] text-zinc-400 font-semibold mb-3 uppercase">
                               {getSectionDescription("sec_academic_fdp") || "LIST OF FACULTY DEVELOPMENT PROGRAMS, SEMINARS, WORKSHOPS PARTICIPATED."}
                             </p>
-                            <table className="w-full border-collapse border border-zinc-200 text-xs">
-                              <tr className="bg-zinc-50 font-bold">
-                                <th className="border border-zinc-200 p-2 text-left">Program Title</th>
-                                <th className="border border-zinc-200 p-2 text-center">Dates</th>
-                                <th className="border border-zinc-200 p-2 text-center">Days</th>
-                                <th className="border border-zinc-200 p-2 text-left">Organizing Institution</th>
-                                <th className="border border-zinc-200 p-2 text-center">Report?</th>
-                                {renderRowEvidenceHeader("sec_academic_fdp")}
-                              </tr>
-                              {(selectedAppraisal.formData?.workshopsFDPs || []).map((row, i) => (
-                                <tr key={i}>
-                                  <td className="border border-zinc-200 p-2 font-semibold text-slate-700">{row.title}</td>
-                                  <td className="border border-zinc-200 p-2 text-center">{row.dates}</td>
-                                  <td className="border border-zinc-200 p-2 text-center">{row.days}</td>
-                                  <td className="border border-zinc-200 p-2 font-medium text-zinc-650">{row.organization}</td>
-                                  <td className="border border-zinc-200 p-2 text-center font-bold text-emerald-700">{row.reportSubmitted}</td>
-                                  {renderRowEvidenceCellReadOnly(row, "sec_academic_fdp")}
-                                </tr>
-                              ))}
-                            </table>
+                            <div className="overflow-x-auto rounded-xl border border-zinc-200">
+                              <table className="w-full border-collapse text-xs">
+                                <thead>
+                                  <tr className="bg-zinc-50/80 font-bold text-slate-900 border-b border-zinc-200">
+                                    <th className="border-r border-zinc-200 p-2 text-center w-12 font-black">Sl.No</th>
+                                    <th className="border-r border-zinc-200 p-2 text-left font-black">{getSectionTitle("f_fdp_title", "Title of Workshop / FDP / Special Program")}</th>
+                                    <th className="border-r border-zinc-200 p-2 text-center w-36 font-black">{getSectionTitle("f_fdp_dates", "Dates")}</th>
+                                    <th className="border-r border-zinc-200 p-2 text-center w-24 font-black">{getSectionTitle("f_fdp_days", "No. of Days")}</th>
+                                    <th className="border-r border-zinc-200 p-2 text-left font-black">{getSectionTitle("f_fdp_org", "Organization")}</th>
+                                    <th className="border-r border-zinc-200 p-2 text-center w-36 font-black">{getSectionTitle("f_fdp_report", "Submitted Report?")}</th>
+                                    {renderCustomGridHeaders("sec_academic_fdp")}
+                                    {renderRowEvidenceHeader("sec_academic_fdp")}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {(selectedAppraisal.formData?.workshopsFDPs || []).filter(r => r.title || r.dates || r.organization).length === 0 ? (
+                                    <tr>
+                                      <td colSpan={10} className="p-3 text-center text-zinc-400 italic text-xs">No FDP / workshop participations recorded</td>
+                                    </tr>
+                                  ) : (
+                                    (selectedAppraisal.formData?.workshopsFDPs || []).map((row, i) => (
+                                      <tr key={i} className="hover:bg-zinc-50/50 border-b border-zinc-200 last:border-b-0">
+                                        <td className="border-r border-zinc-200 p-2 text-center font-black text-slate-800">{i + 1}</td>
+                                        <td className="border-r border-zinc-200 p-2 font-semibold text-slate-800">{row.title || "-"}</td>
+                                        <td className="border-r border-zinc-200 p-2 text-center text-slate-700">{row.dates || "-"}</td>
+                                        <td className="border-r border-zinc-200 p-2 text-center text-slate-700">{row.days ?? "-"}</td>
+                                        <td className="border-r border-zinc-200 p-2 font-medium text-slate-800">{row.organization || "-"}</td>
+                                        <td className="border-r border-zinc-200 p-2 text-center font-bold text-emerald-700">{row.reportSubmitted || "-"}</td>
+                                        {renderCustomGridCellsReadOnly(row, "sec_academic_fdp")}
+                                        {renderRowEvidenceCellReadOnly(row, "sec_academic_fdp")}
+                                      </tr>
+                                    ))
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
                           </div>
                         )}
 
-                        {isSectionVisible("sec_academic_nptel") && selectedAppraisal.formData?.improvingQualification && (
-                          <div className="bg-[#120c7a]/5 border border-[#120c7a]/15 p-4 rounded-xl">
-                            <span className="block text-[11px] font-extrabold text-[#120c7a] uppercase mb-1 tracking-wider">HIGHER STUDIES / PHD UPGRADE</span>
-                            <span className="block text-[10px] font-black text-indigo-900 uppercase mb-2">QUALIFICATION UPGRADE DETAILS</span>
-                            <table className="w-full border-collapse border border-zinc-200 text-xs bg-white">
-                              <tr className="bg-zinc-50 font-bold">
-                                <th className="border border-zinc-200 p-1.5">Degree</th>
-                                <th className="border border-zinc-200 p-1.5">Specialization</th>
-                                <th className="border border-zinc-200 p-1.5">University</th>
-                                <th className="border border-zinc-200 p-1.5 text-center">Duration</th>
-                                <th className="border border-zinc-200 p-1.5 text-center">Status</th>
-                                <th className="border border-zinc-200 p-1.5 text-center">NOC Obtained?</th>
-                                {renderRowEvidenceHeader("sec_academic_nptel")}
-                              </tr>
-                              {(selectedAppraisal.formData?.improvingDetails || []).map((row, i) => (
-                                <tr key={i}>
-                                  <td className="border border-zinc-200 p-1.5">{row.degreeRegistered}</td>
-                                  <td className="border border-zinc-200 p-1.5">{row.specialization}</td>
-                                  <td className="border border-zinc-200 p-1.5">{row.university}</td>
-                                  <td className="border border-zinc-200 p-1.5 text-center">{row.duration}</td>
-                                  <td className="border border-zinc-200 p-1.5 text-center font-bold">{row.status}</td>
-                                  <td className="border border-zinc-200 p-1.5 text-center">{row.nocObtained}</td>
-                                  {renderRowEvidenceCellReadOnly(row, "sec_academic_nptel")}
-                                </tr>
-                              ))}
-                            </table>
+                        {/* HIGHER STUDIES / PHD UPGRADE */}
+                        {(selectedAppraisal.formData?.improvingQualification || (selectedAppraisal.formData?.improvingDetails && selectedAppraisal.formData.improvingDetails.length > 0)) && (
+                          <div className="bg-slate-50/80 border border-slate-200 rounded-2xl p-5 space-y-4">
+                            <span style={{ fontSize: "11px" }} className="block font-extrabold text-[#120c7a] uppercase tracking-wider">
+                              HIGHER STUDIES / PHD UPGRADE
+                            </span>
+                            <div className="flex justify-between items-center mb-1">
+                              <span className="text-[10px] font-black text-indigo-900 uppercase tracking-wider">
+                                QUALIFICATION UPGRADE DETAILS
+                              </span>
+                            </div>
+                            <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
+                              <table className="w-full border-collapse text-xs">
+                                <thead>
+                                  <tr className="bg-zinc-50/80 font-bold text-slate-900 border-b border-zinc-200">
+                                    <th className="border-r border-zinc-200 p-2 text-center w-12 font-black">Sl.No</th>
+                                    <th className="border-r border-zinc-200 p-2 text-left font-black">Degree Registered</th>
+                                    <th className="border-r border-zinc-200 p-2 text-left font-black">Specialization</th>
+                                    <th className="border-r border-zinc-200 p-2 text-left font-black">University</th>
+                                    <th className="border-r border-zinc-200 p-2 text-center w-24 font-black">Duration</th>
+                                    <th className="border-r border-zinc-200 p-2 text-center w-28 font-black">Status</th>
+                                    <th className="border-r border-zinc-200 p-2 text-center w-28 font-black">NOC Obtained?</th>
+                                    {renderRowEvidenceHeader("sec_academic_nptel")}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {(selectedAppraisal.formData?.improvingDetails || []).filter(r => r.degreeRegistered || r.specialization || r.university).length === 0 ? (
+                                    <tr>
+                                      <td colSpan={10} className="p-3 text-center text-zinc-400 italic text-xs">No qualification upgrade details recorded</td>
+                                    </tr>
+                                  ) : (
+                                    (selectedAppraisal.formData?.improvingDetails || []).map((row, i) => (
+                                      <tr key={i} className="hover:bg-zinc-50/50 border-b border-zinc-200 last:border-b-0">
+                                        <td className="border-r border-zinc-200 p-2 text-center font-black text-slate-800">{i + 1}</td>
+                                        <td className="border-r border-zinc-200 p-2 font-semibold text-slate-800">{row.degreeRegistered || "-"}</td>
+                                        <td className="border-r border-zinc-200 p-2 text-slate-700">{row.specialization || "-"}</td>
+                                        <td className="border-r border-zinc-200 p-2 text-slate-700">{row.university || "-"}</td>
+                                        <td className="border-r border-zinc-200 p-2 text-center text-slate-700">{row.duration || "-"}</td>
+                                        <td className="border-r border-zinc-200 p-2 text-center font-bold text-slate-800">{row.status || "-"}</td>
+                                        <td className="border-r border-zinc-200 p-2 text-center font-bold text-indigo-700">{row.nocObtained || "-"}</td>
+                                        {renderRowEvidenceCellReadOnly(row, "sec_academic_nptel")}
+                                      </tr>
+                                    ))
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
                           </div>
                         )}
 
@@ -3347,194 +3863,348 @@ export default function AppraisalReviews() {
 
                     {/* Sub-Tab 4: Institutional Roles */}
                     {activeDetailsTab === 4 && (() => {
-                      const reviewAppInst = selectedAppraisal?.institution || selectedAppraisal?.department || selectedStaff?.institution || selectedStaff?.department || "";
-                      const isCKCOE = isSameInstitution(reviewAppInst, "CKCOE") || getSchoolShortName(reviewAppInst) === "CKCOE" || String(reviewAppInst).toUpperCase().includes("CKCOE") || String(reviewAppInst).toUpperCase().includes("BED") || String(reviewAppInst).toUpperCase().includes("B.ED");
+                      const reviewAppInst = selectedAppraisal?.institution ||
+                        selectedAppraisal?.formData?.institution ||
+                        selectedAppraisal?.organization ||
+                        selectedAppraisal?.formData?.organization ||
+                        selectedAppraisal?.department ||
+                        selectedAppraisal?.formData?.department ||
+                        selectedAppraisal?.formData?.collegeName ||
+                        selectedStaff?.institution ||
+                        selectedStaff?.department ||
+                        "";
+
+                      const isCKCOE = isSameInstitution(reviewAppInst, "CKCOE") ||
+                        getSchoolShortName(reviewAppInst) === "CKCOE" ||
+                        String(reviewAppInst).toUpperCase().includes("CKCOE") ||
+                        String(reviewAppInst).toUpperCase().includes("COE") ||
+                        String(reviewAppInst).toUpperCase().includes("EDUCATION") ||
+                        String(reviewAppInst).toUpperCase().includes("BED") ||
+                        String(reviewAppInst).toUpperCase().includes("B.ED") ||
+                        Boolean(
+                          (selectedAppraisal?.formData?.organizingPrograms && selectedAppraisal.formData.organizingPrograms.length > 0) ||
+                          (selectedAppraisal?.formData?.admissionContribution && selectedAppraisal.formData.admissionContribution.length > 0) ||
+                          (selectedAppraisal?.formData?.fundingProposals && selectedAppraisal.formData.fundingProposals.length > 0) ||
+                          (selectedAppraisal?.formData?.involvementPlacement && selectedAppraisal.formData.involvementPlacement.length > 0) ||
+                          (selectedAppraisal?.formData?.accreditationContributions && selectedAppraisal.formData.accreditationContributions.length > 0) ||
+                          (selectedAppraisal?.formData?.rdContributions && selectedAppraisal.formData.rdContributions.length > 0)
+                        );
 
                       return (
                         <div className="space-y-6">
                           {isSectionVisible("sec_roles_department") && (
                             <>
-                              <div className="border-b border-slate-100 pb-2 mb-4">
-                                <span style={{ fontSize: "11px" }} className="font-extrabold text-indigo-950 block uppercase tracking-wider">
-                                  {getSectionTitle("sec_roles_department", "4.1 Department & Institutional contributions")}
-                                </span>
-                                {getSectionDescription("sec_roles_department") && (
-                                  <p className="text-[10px] text-zinc-400 font-semibold uppercase mt-0.5">{getSectionDescription("sec_roles_department")}</p>
-                                )}
-                              </div>
-
                               {isCKCOE ? (
-                                /* CKCOE SPECIFIC 7 SUB-SECTIONS */
+                                /* ── CKCOE SPECIFIC 7 SUB-SECTIONS (MATCHING FACULTY FORM) ── */
                                 <>
-                                  {/* Organizing Programs */}
+                                  {/* 4.1 Department & College Level Roles */}
                                   <div>
-                                    <span className="text-xs font-black text-slate-800 block mb-2 uppercase">A) Organizing FDP / Conferences / Workshops / Guest Lectures</span>
-                                    <table className="w-full border-collapse border border-zinc-200 text-xs">
-                                      <tr className="bg-zinc-50 font-bold">
-                                        <th className="border border-zinc-200 p-2 text-left">Event Title</th>
-                                        <th className="border border-zinc-200 p-2 text-center">Period</th>
-                                        <th className="border border-zinc-200 p-2 text-left">Resource Details</th>
-                                        <th className="border border-zinc-200 p-2 text-left">Target Audience & Outcome</th>
-                                        {renderRowEvidenceHeader("sec_roles_department")}
-                                      </tr>
-                                      {(selectedAppraisal.formData?.organizingPrograms || []).map((row, i) => (
-                                        <tr key={i}>
-                                          <td className="border border-zinc-200 p-2 font-semibold text-slate-700">{row.title}</td>
-                                          <td className="border border-zinc-200 p-2 text-center">{row.period}</td>
-                                          <td className="border border-zinc-200 p-2 font-medium text-zinc-655">{row.resourcePersonDetails}</td>
-                                          <td className="border border-zinc-200 p-2 text-zinc-600">{row.targetAudience} - {row.outcome}</td>
-                                          {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
-                                        </tr>
-                                      ))}
-                                    </table>
+                                    <div className="flex justify-between items-center mb-2 border-b border-slate-100 pb-1">
+                                      <span style={{ fontSize: "11px" }} className="font-extrabold text-slate-800 uppercase tracking-wider">
+                                        4.1 DEPARTMENT & COLLEGE LEVEL ROLES
+                                      </span>
+                                    </div>
+                                    <p className="text-[10px] text-zinc-400 font-semibold mb-3 uppercase">
+                                      RESPONSIBILITIES HELD LIKE LAB COORDINATOR, PLACEMENT COORDINATOR, ETC.
+                                    </p>
+                                    <div className="overflow-x-auto rounded-xl border border-zinc-200">
+                                      <table className="w-full border-collapse text-xs">
+                                        <thead>
+                                          <tr className="bg-zinc-50/80 font-bold text-slate-900 border-b border-zinc-200">
+                                            <th className="border-r border-zinc-200 p-2 text-center w-12 font-black">Sl.No</th>
+                                            <th className="border-r border-zinc-200 p-2 text-left font-black">Title of the Event</th>
+                                            <th className="border-r border-zinc-200 p-2 text-center w-28 font-black">Period</th>
+                                            <th className="border-r border-zinc-200 p-2 text-left font-black">Details of Resource Person</th>
+                                            <th className="border-r border-zinc-200 p-2 text-left font-black">For Whom program is organized</th>
+                                            <th className="border-r border-zinc-200 p-2 text-left font-black">Specify the Outcome of event</th>
+                                            {renderRowEvidenceHeader("sec_roles_department")}
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {(selectedAppraisal.formData?.organizingPrograms || []).filter(r => r.title || r.period || r.resourcePersonDetails || r.targetAudience || r.outcome).length === 0 ? (
+                                            <tr>
+                                              <td colSpan={10} className="p-3 text-center text-zinc-400 italic text-xs">No event records recorded</td>
+                                            </tr>
+                                          ) : (
+                                            (selectedAppraisal.formData?.organizingPrograms || []).map((row, i) => (
+                                              <tr key={i} className="hover:bg-zinc-50/50 border-b border-zinc-200 last:border-b-0">
+                                                <td className="border-r border-zinc-200 p-2 text-center font-black text-slate-800">{i + 1}</td>
+                                                <td className="border-r border-zinc-200 p-2 font-semibold text-slate-800">{row.title || "-"}</td>
+                                                <td className="border-r border-zinc-200 p-2 text-center text-slate-700">{row.period || "-"}</td>
+                                                <td className="border-r border-zinc-200 p-2 text-slate-800">{row.resourcePersonDetails || "-"}</td>
+                                                <td className="border-r border-zinc-200 p-2 text-slate-700">{row.targetAudience || "-"}</td>
+                                                <td className="border-r border-zinc-200 p-2 text-slate-700">{row.outcome || "-"}</td>
+                                                {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
+                                              </tr>
+                                            ))
+                                          )}
+                                        </tbody>
+                                      </table>
+                                    </div>
                                   </div>
 
                                   {/* Funding Proposals */}
                                   <div>
-                                    <span className="text-xs font-black text-slate-800 block mb-2 uppercase">B) Contribution towards Funding Proposals / Testing / Consultancy</span>
-                                    <table className="w-full border-collapse border border-zinc-200 text-xs">
-                                      <tr className="bg-zinc-50 font-bold">
-                                        <th className="border border-zinc-200 p-2 text-left">Proposal / Project Title</th>
-                                        <th className="border border-zinc-200 p-2 text-center">Role</th>
-                                        <th className="border border-zinc-200 p-2 text-center">Fund Requested (Rs)</th>
-                                        <th className="border border-zinc-200 p-2 text-center">Agency & Status</th>
-                                        {renderRowEvidenceHeader("sec_roles_department")}
-                                      </tr>
-                                      {(selectedAppraisal.formData?.fundingProposals || []).map((row, i) => (
-                                        <tr key={i}>
-                                          <td className="border border-zinc-200 p-2 font-semibold text-slate-700">{row.title}</td>
-                                          <td className="border border-zinc-200 p-2 text-center font-bold text-indigo-700">{row.role}</td>
-                                          <td className="border border-zinc-200 p-2 text-center font-bold text-emerald-700">{row.fundRequested}</td>
-                                          <td className="border border-zinc-200 p-2 text-center font-medium">{row.fundingAgencyScheme} ({row.status})</td>
-                                          {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
-                                        </tr>
-                                      ))}
-                                    </table>
+                                    <div className="flex justify-between items-center mb-2 border-b border-slate-100 pb-1">
+                                      <span style={{ fontSize: "11px" }} className="font-extrabold text-slate-800 uppercase tracking-wider">
+                                        CONTRIBUTION TOWARDS FUNDING PROPOSALS / TESTING / CONSULTANCY
+                                      </span>
+                                    </div>
+                                    <div className="overflow-x-auto rounded-xl border border-zinc-200">
+                                      <table className="w-full border-collapse text-xs">
+                                        <thead>
+                                          <tr className="bg-zinc-50/80 font-bold text-slate-900 border-b border-zinc-200">
+                                            <th className="border-r border-zinc-200 p-2 text-center w-12 font-black">Sl.No</th>
+                                            <th className="border-r border-zinc-200 p-2 text-center w-28 font-black">Role (PI / CO-I)</th>
+                                            <th className="border-r border-zinc-200 p-2 text-left font-black">Funding Agency & Scheme</th>
+                                            <th className="border-r border-zinc-200 p-2 text-left font-black">Project Title</th>
+                                            <th className="border-r border-zinc-200 p-2 text-center w-28 font-black">Fund Requested (Rs.)</th>
+                                            <th className="border-r border-zinc-200 p-2 text-center w-28 font-black">Date of Submission</th>
+                                            <th className="border-r border-zinc-200 p-2 text-left font-black">Status / Outcome</th>
+                                            {renderRowEvidenceHeader("sec_roles_department")}
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {(selectedAppraisal.formData?.fundingProposals || []).filter(r => r.title || r.fundingAgencyScheme || r.fundRequested).length === 0 ? (
+                                            <tr>
+                                              <td colSpan={10} className="p-3 text-center text-zinc-400 italic text-xs">No funding proposals recorded</td>
+                                            </tr>
+                                          ) : (
+                                            (selectedAppraisal.formData?.fundingProposals || []).map((row, i) => (
+                                              <tr key={i} className="hover:bg-zinc-50/50 border-b border-zinc-200 last:border-b-0">
+                                                <td className="border-r border-zinc-200 p-2 text-center font-black text-slate-800">{i + 1}</td>
+                                                <td className="border-r border-zinc-200 p-2 text-center font-bold text-indigo-700">{row.role || "-"}</td>
+                                                <td className="border-r border-zinc-200 p-2 font-medium text-slate-800">{row.fundingAgencyScheme || "-"}</td>
+                                                <td className="border-r border-zinc-200 p-2 font-semibold text-slate-800">{row.title || "-"}</td>
+                                                <td className="border-r border-zinc-200 p-2 text-center font-bold text-emerald-700">{row.fundRequested || "-"}</td>
+                                                <td className="border-r border-zinc-200 p-2 text-center text-slate-700">{row.dateSubmission || "-"}</td>
+                                                <td className="border-r border-zinc-200 p-2 text-slate-700">{row.status || "-"}</td>
+                                                {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
+                                              </tr>
+                                            ))
+                                          )}
+                                        </tbody>
+                                      </table>
+                                    </div>
                                   </div>
 
-                                  {/* Placement activities */}
-                                  {selectedAppraisal.formData?.involvementPlacement && selectedAppraisal.formData.involvementPlacement.length > 0 && (
-                                    <div>
-                                      <span className="text-xs font-black text-slate-800 block mb-2 uppercase">C) Placement Activities / Mentoring / Counseling</span>
-                                      <table className="w-full border-collapse border border-zinc-200 text-xs">
-                                        <tr className="bg-zinc-50 font-bold">
-                                          <th className="border border-zinc-200 p-2 text-left">Description</th>
-                                          <th className="border border-zinc-200 p-2">Role</th>
-                                          <th className="border border-zinc-200 p-2">Outcome</th>
-                                          <th className="border border-zinc-200 p-2 text-center">Records?</th>
-                                          {renderRowEvidenceHeader("sec_roles_department")}
-                                        </tr>
-                                        {selectedAppraisal.formData.involvementPlacement.map((row, i) => (
-                                          <tr key={i}>
-                                            <td className="border border-zinc-200 p-2 font-semibold text-slate-700">{row.description}</td>
-                                            <td className="border border-zinc-200 p-2 font-bold text-indigo-700">{row.role}</td>
-                                            <td className="border border-zinc-200 p-2 text-zinc-600">{row.outcome}</td>
-                                            <td className="border border-zinc-200 p-2 text-center font-bold">{row.recordsMaintained}</td>
-                                            {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
-                                          </tr>
-                                        ))}
-                                      </table>
-                                    </div>
-                                  )}
-
-                                  {/* Accreditation activities */}
-                                  {selectedAppraisal.formData?.accreditationContributions && selectedAppraisal.formData.accreditationContributions.length > 0 && (
-                                    <div>
-                                      <span className="text-xs font-black text-slate-800 block mb-2 uppercase">D) ISO / NAAC / NBA / Coordinator role</span>
-                                      <table className="w-full border-collapse border border-zinc-200 text-xs">
-                                        <tr className="bg-zinc-50 font-bold">
-                                          <th className="border border-zinc-200 p-2 text-left">Role</th>
-                                          <th className="border border-zinc-200 p-2 text-left">Description</th>
-                                          <th className="border border-zinc-200 p-2 text-left">Outcome</th>
-                                          {renderRowEvidenceHeader("sec_roles_department")}
-                                        </tr>
-                                        {selectedAppraisal.formData.accreditationContributions.map((row, i) => (
-                                          <tr key={i}>
-                                            <td className="border border-zinc-200 p-2 font-bold text-indigo-700">{row.role}</td>
-                                            <td className="border border-zinc-200 p-2 text-slate-700">{row.description}</td>
-                                            <td className="border border-zinc-200 p-2 text-zinc-655">{row.outcome}</td>
-                                            {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
-                                          </tr>
-                                        ))}
-                                      </table>
-                                    </div>
-                                  )}
-
-                                  {/* R&D Portfolios */}
-                                  {selectedAppraisal.formData?.rdContributions && selectedAppraisal.formData.rdContributions.length > 0 && (
-                                    <div>
-                                      <span className="text-xs font-black text-slate-800 block mb-2 uppercase">E) R&D / EDC / SIC / Sports Portfolios</span>
-                                      <table className="w-full border-collapse border border-zinc-200 text-xs">
-                                        <tr className="bg-zinc-50 font-bold">
-                                          <th className="border border-zinc-200 p-2 text-left">Role</th>
-                                          <th className="border border-zinc-200 p-2 text-left">Description</th>
-                                          <th className="border border-zinc-200 p-2 text-left">Outcome</th>
-                                          {renderRowEvidenceHeader("sec_roles_department")}
-                                        </tr>
-                                        {selectedAppraisal.formData.rdContributions.map((row, i) => (
-                                          <tr key={i}>
-                                            <td className="border border-zinc-200 p-2 font-bold text-indigo-700">{row.role}</td>
-                                            <td className="border border-zinc-200 p-2 text-slate-700">{row.description}</td>
-                                            <td className="border border-zinc-200 p-2 text-zinc-655">{row.outcome}</td>
-                                            {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
-                                          </tr>
-                                        ))}
-                                      </table>
-                                    </div>
-                                  )}
-
-                                  {/* Other roles contribution */}
-                                  {isSectionVisible("f_otherRolesContribution") && selectedAppraisal.formData?.otherRolesContribution && (
-                                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                                      <span className="block text-[9px] font-black text-zinc-400 uppercase mb-1">
-                                        {getSectionTitle("f_otherRolesContribution", "Other Role / Contribution Description")}:
-                                      </span>
-                                      <p className="font-semibold text-slate-850 whitespace-pre-line">{selectedAppraisal.formData.otherRolesContribution}</p>
-                                    </div>
-                                  )}
-
-                                  {/* Admissions contributed */}
+                                  {/* Placement Activities / Mentoring */}
                                   <div>
-                                    <span className="text-xs font-black text-slate-800 block mb-2 uppercase">Admissions Contributed</span>
-                                    <table className="w-full border-collapse border border-zinc-200 text-xs">
-                                      <tr className="bg-zinc-50 font-bold">
-                                        <th className="border border-zinc-200 p-2">Team No / Area</th>
-                                        <th className="border border-zinc-200 p-2 text-center">Admissions Contributed</th>
-                                        <th className="border border-zinc-200 p-2">Name of the Team Leader</th>
-                                        {renderRowEvidenceHeader("sec_roles_department")}
-                                      </tr>
-                                      {(selectedAppraisal.formData?.admissionContribution || []).map((row, i) => (
-                                        <tr key={i}>
-                                          <td className="border border-zinc-200 p-2 font-bold">{row.teamNoArea}</td>
-                                          <td className="border border-zinc-200 p-2 text-center font-black text-[#120c7a]">{row.countContributed}</td>
-                                          <td className="border border-zinc-200 p-2">{row.teamLeaderName}</td>
-                                          {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
-                                        </tr>
-                                      ))}
-                                    </table>
+                                    <div className="flex justify-between items-center mb-2 border-b border-slate-100 pb-1">
+                                      <span style={{ fontSize: "11px" }} className="font-extrabold text-slate-800 uppercase tracking-wider">
+                                        PLACEMENT ACTIVITIES / DEPARTMENT DEVELOPMENT / STUDENT WELFARE / MENTORING / COUNSELING
+                                      </span>
+                                    </div>
+                                    <div className="overflow-x-auto rounded-xl border border-zinc-200">
+                                      <table className="w-full border-collapse text-xs">
+                                        <thead>
+                                          <tr className="bg-zinc-50/80 font-bold text-slate-900 border-b border-zinc-200">
+                                            <th className="border-r border-zinc-200 p-2 text-center w-12 font-black">Sl.No</th>
+                                            <th className="border-r border-zinc-200 p-2 text-left font-black">Description of Activity</th>
+                                            <th className="border-r border-zinc-200 p-2 text-left font-black">Specify Your Role</th>
+                                            <th className="border-r border-zinc-200 p-2 text-left font-black">Outcome of this Activity</th>
+                                            <th className="border-r border-zinc-200 p-2 text-center w-40 font-black">Are Records Maintained?</th>
+                                            {renderRowEvidenceHeader("sec_roles_department")}
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {(selectedAppraisal.formData?.involvementPlacement || []).filter(r => r.description || r.role || r.outcome).length === 0 ? (
+                                            <tr>
+                                              <td colSpan={10} className="p-3 text-center text-zinc-400 italic text-xs">No placement or mentoring activities recorded</td>
+                                            </tr>
+                                          ) : (
+                                            (selectedAppraisal.formData?.involvementPlacement || []).map((row, i) => (
+                                              <tr key={i} className="hover:bg-zinc-50/50 border-b border-zinc-200 last:border-b-0">
+                                                <td className="border-r border-zinc-200 p-2 text-center font-black text-slate-800">{i + 1}</td>
+                                                <td className="border-r border-zinc-200 p-2 font-semibold text-slate-800">{row.description || "-"}</td>
+                                                <td className="border-r border-zinc-200 p-2 font-bold text-indigo-700">{row.role || "-"}</td>
+                                                <td className="border-r border-zinc-200 p-2 text-slate-700">{row.outcome || "-"}</td>
+                                                <td className="border-r border-zinc-200 p-2 text-center font-bold text-slate-800">{row.recordsMaintained || "-"}</td>
+                                                {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
+                                              </tr>
+                                            ))
+                                          )}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </div>
+
+                                  {/* ISO / NAAC / NBA / Coordinator Role */}
+                                  <div>
+                                    <div className="flex justify-between items-center mb-2 border-b border-slate-100 pb-1">
+                                      <span style={{ fontSize: "11px" }} className="font-extrabold text-slate-800 uppercase tracking-wider">
+                                        ISO / NAAC / NBA / LAB DEVELOPMENT / CLASS ADVISOR / COORDINATOR ROLE
+                                      </span>
+                                    </div>
+                                    <div className="overflow-x-auto rounded-xl border border-zinc-200">
+                                      <table className="w-full border-collapse text-xs">
+                                        <thead>
+                                          <tr className="bg-zinc-50/80 font-bold text-slate-900 border-b border-zinc-200">
+                                            <th className="border-r border-zinc-200 p-2 text-center w-12 font-black">Sl.No</th>
+                                            <th className="border-r border-zinc-200 p-2 text-left w-48 font-black">Specify Your Role</th>
+                                            <th className="border-r border-zinc-200 p-2 text-left font-black">Description</th>
+                                            <th className="border-r border-zinc-200 p-2 text-left font-black">Highlight the Outcome</th>
+                                            {renderRowEvidenceHeader("sec_roles_department")}
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {(selectedAppraisal.formData?.accreditationContributions || []).filter(r => r.role || r.description || r.outcome).length === 0 ? (
+                                            <tr>
+                                              <td colSpan={10} className="p-3 text-center text-zinc-400 italic text-xs">No accreditation or coordinator contributions recorded</td>
+                                            </tr>
+                                          ) : (
+                                            (selectedAppraisal.formData?.accreditationContributions || []).map((row, i) => (
+                                              <tr key={i} className="hover:bg-zinc-50/50 border-b border-zinc-200 last:border-b-0">
+                                                <td className="border-r border-zinc-200 p-2 text-center font-black text-slate-800">{i + 1}</td>
+                                                <td className="border-r border-zinc-200 p-2 font-bold text-indigo-700">{row.role || "-"}</td>
+                                                <td className="border-r border-zinc-200 p-2 text-slate-800">{row.description || "-"}</td>
+                                                <td className="border-r border-zinc-200 p-2 text-slate-700">{row.outcome || "-"}</td>
+                                                {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
+                                              </tr>
+                                            ))
+                                          )}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </div>
+
+                                  {/* Contribution towards R&D / Portfolios */}
+                                  <div>
+                                    <div className="flex justify-between items-center mb-2 border-b border-slate-100 pb-1">
+                                      <span style={{ fontSize: "11px" }} className="font-extrabold text-slate-800 uppercase tracking-wider">
+                                        CONTRIBUTION TOWARDS R&D / EDC / SIC / ALUMNI / IIPC / SPORTS / NSS PORTFOLIOS
+                                      </span>
+                                    </div>
+                                    <div className="overflow-x-auto rounded-xl border border-zinc-200">
+                                      <table className="w-full border-collapse text-xs">
+                                        <thead>
+                                          <tr className="bg-zinc-50/80 font-bold text-slate-900 border-b border-zinc-200">
+                                            <th className="border-r border-zinc-200 p-2 text-center w-12 font-black">Sl.No</th>
+                                            <th className="border-r border-zinc-200 p-2 text-left w-48 font-black">Specify Your Role</th>
+                                            <th className="border-r border-zinc-200 p-2 text-left font-black">Description</th>
+                                            <th className="border-r border-zinc-200 p-2 text-left font-black">Highlight the Outcome</th>
+                                            {renderRowEvidenceHeader("sec_roles_department")}
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {(selectedAppraisal.formData?.rdContributions || []).filter(r => r.role || r.description || r.outcome).length === 0 ? (
+                                            <tr>
+                                              <td colSpan={10} className="p-3 text-center text-zinc-400 italic text-xs">No portfolio contributions recorded</td>
+                                            </tr>
+                                          ) : (
+                                            (selectedAppraisal.formData?.rdContributions || []).map((row, i) => (
+                                              <tr key={i} className="hover:bg-zinc-50/50 border-b border-zinc-200 last:border-b-0">
+                                                <td className="border-r border-zinc-200 p-2 text-center font-black text-slate-800">{i + 1}</td>
+                                                <td className="border-r border-zinc-200 p-2 font-bold text-indigo-700">{row.role || "-"}</td>
+                                                <td className="border-r border-zinc-200 p-2 text-slate-800">{row.description || "-"}</td>
+                                                <td className="border-r border-zinc-200 p-2 text-slate-700">{row.outcome || "-"}</td>
+                                                {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
+                                              </tr>
+                                            ))
+                                          )}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </div>
+
+                                  {/* Other Role / Contribution Description */}
+                                  {isSectionVisible("f_otherRolesContribution") && (
+                                    <div>
+                                      <div className="flex justify-between items-center mb-1">
+                                        <label className="block text-xs font-extrabold text-slate-800 uppercase tracking-wider">
+                                          OTHER ROLE / CONTRIBUTION DESCRIPTION
+                                        </label>
+                                      </div>
+                                      <p className="text-[10px] text-zinc-400 font-semibold mb-2 uppercase">
+                                        OTHER ADMINISTRATIVE ROLES OR INSTITUTIONAL CONTRIBUTIONS.
+                                      </p>
+                                      <div className="w-full rounded-2xl border border-zinc-200 bg-slate-50 p-4 text-xs font-semibold text-slate-850 whitespace-pre-line leading-relaxed">
+                                        {selectedAppraisal.formData?.otherRolesContribution || <span className="text-zinc-400 italic">No additional roles or contributions recorded.</span>}
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  {/* Number of Admissions Contributed */}
+                                  <div>
+                                    <div className="flex justify-between items-center mb-2 border-b border-slate-100 pb-1">
+                                      <span style={{ fontSize: "11px" }} className="font-extrabold text-slate-800 uppercase tracking-wider">
+                                        NUMBER OF ADMISSIONS CONTRIBUTED TO THE INSTITUTIONS FOR AY {selectedAppraisal.academicYear || "2024-25"}
+                                      </span>
+                                    </div>
+                                    <div className="overflow-x-auto rounded-xl border border-zinc-200">
+                                      <table className="w-full border-collapse text-xs">
+                                        <thead>
+                                          <tr className="bg-zinc-50/80 font-bold text-slate-900 border-b border-zinc-200">
+                                            <th className="border-r border-zinc-200 p-2 text-center w-12 font-black">Sl.No</th>
+                                            <th className="border-r border-zinc-200 p-2 text-left font-black">Team No & Area</th>
+                                            <th className="border-r border-zinc-200 p-2 text-center w-40 font-black">No of Admissions contributed</th>
+                                            <th className="border-r border-zinc-200 p-2 text-left font-black">Name of the Team Leader</th>
+                                            {renderRowEvidenceHeader("sec_roles_department")}
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {(selectedAppraisal.formData?.admissionContribution || []).filter(r => r.teamNoArea || r.countContributed || r.teamLeaderName).length === 0 ? (
+                                            <tr>
+                                              <td colSpan={10} className="p-3 text-center text-zinc-400 italic text-xs">No admissions contributions recorded</td>
+                                            </tr>
+                                          ) : (
+                                            (selectedAppraisal.formData?.admissionContribution || []).map((row, i) => (
+                                              <tr key={i} className="hover:bg-zinc-50/50 border-b border-zinc-200 last:border-b-0">
+                                                <td className="border-r border-zinc-200 p-2 text-center font-black text-slate-800">{i + 1}</td>
+                                                <td className="border-r border-zinc-200 p-2 font-bold text-slate-800">{row.teamNoArea || "-"}</td>
+                                                <td className="border-r border-zinc-200 p-2 text-center font-black text-[#120c7a]">{row.countContributed ?? "-"}</td>
+                                                <td className="border-r border-zinc-200 p-2 text-slate-800">{row.teamLeaderName || "-"}</td>
+                                                {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
+                                              </tr>
+                                            ))
+                                          )}
+                                        </tbody>
+                                      </table>
+                                    </div>
                                   </div>
                                 </>
                               ) : (
-                                /* NON-CKCOE SPECIFIC SUB-SECTIONS */
+                                /* ── NON-CKCOE SPECIFIC SUB-SECTIONS (STANDARD ENGINEERING) ── */
                                 <>
                                   <div>
-                                    <span className="text-xs font-black text-slate-800 block mb-2 uppercase">Department & College Level Roles</span>
-                                    <table className="w-full border-collapse border border-zinc-200 text-xs">
-                                      <tr className="bg-zinc-50 font-bold">
-                                        <th className="border border-zinc-200 p-2 text-left">Title of Workshop / Special Program Organized</th>
-                                        <th className="border border-zinc-200 p-2 text-center">Dates & Duration</th>
-                                        <th className="border border-zinc-200 p-2 text-left">Sponsoring Agency & Grant</th>
-                                        {renderRowEvidenceHeader("sec_roles_department")}
-                                      </tr>
-                                      {(selectedAppraisal.formData?.departmentRoles || []).map((row, i) => (
-                                        <tr key={i}>
-                                          <td className="border border-zinc-200 p-2 font-semibold text-slate-700">{row.programTitle}</td>
-                                          <td className="border border-zinc-200 p-2 text-center">{row.datesDuration}</td>
-                                          <td className="border border-zinc-200 p-2 font-medium text-zinc-655">{row.agencyGrant}</td>
-                                          {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
-                                        </tr>
-                                      ))}
-                                    </table>
+                                    <div className="flex justify-between items-center mb-2 border-b border-slate-100 pb-1">
+                                      <span style={{ fontSize: "11px" }} className="font-extrabold text-slate-800 uppercase tracking-wider">
+                                        4.1 DEPARTMENT & COLLEGE LEVEL ROLES
+                                      </span>
+                                    </div>
+                                    <p className="text-[10px] text-zinc-400 font-semibold mb-3 uppercase">
+                                      RESPONSIBILITIES HELD LIKE LAB COORDINATOR, PLACEMENT COORDINATOR, ETC.
+                                    </p>
+                                    <div className="overflow-x-auto rounded-xl border border-zinc-200">
+                                      <table className="w-full border-collapse text-xs">
+                                        <thead>
+                                          <tr className="bg-zinc-50/80 font-bold text-slate-900 border-b border-zinc-200">
+                                            <th className="border-r border-zinc-200 p-2 text-center w-12 font-black">Sl.No</th>
+                                            <th className="border-r border-zinc-200 p-2 text-left font-black">{getSectionTitle("f_roles_program", "Title of Workshop / Special Program Organized")}</th>
+                                            <th className="border-r border-zinc-200 p-2 text-center w-36 font-black">{getSectionTitle("f_roles_dates", "Dates & Duration")}</th>
+                                            <th className="border-r border-zinc-200 p-2 text-left font-black">{getSectionTitle("f_roles_agency", "Sponsoring Agency & Grant")}</th>
+                                            {renderRowEvidenceHeader("sec_roles_department")}
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {(selectedAppraisal.formData?.departmentRoles || []).filter(r => r.programTitle || r.datesDuration || r.agencyGrant).length === 0 ? (
+                                            <tr>
+                                              <td colSpan={10} className="p-3 text-center text-zinc-400 italic text-xs">No department / college roles recorded</td>
+                                            </tr>
+                                          ) : (
+                                            (selectedAppraisal.formData?.departmentRoles || []).map((row, i) => (
+                                              <tr key={i} className="hover:bg-zinc-50/50 border-b border-zinc-200 last:border-b-0">
+                                                <td className="border-r border-zinc-200 p-2 text-center font-black text-slate-800">{i + 1}</td>
+                                                <td className="border-r border-zinc-200 p-2 font-semibold text-slate-800">{row.programTitle || "-"}</td>
+                                                <td className="border-r border-zinc-200 p-2 text-center text-slate-700">{row.datesDuration || "-"}</td>
+                                                <td className="border-r border-zinc-200 p-2 text-slate-800">{row.agencyGrant || "-"}</td>
+                                                {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
+                                              </tr>
+                                            ))
+                                          )}
+                                        </tbody>
+                                      </table>
+                                    </div>
                                   </div>
 
                                   {/* HOD exclusive results */}
@@ -3561,12 +4231,19 @@ export default function AppraisalReviews() {
                                   )}
 
                                   {/* Other roles contribution */}
-                                  {isSectionVisible("f_otherRolesContribution") && selectedAppraisal.formData?.otherRolesContribution && (
-                                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                                      <span className="block text-[9px] font-black text-zinc-400 uppercase mb-1">
-                                        {getSectionTitle("f_otherRolesContribution", "Other Role / Contribution Description")}:
-                                      </span>
-                                      <p className="font-semibold text-slate-850 whitespace-pre-line">{selectedAppraisal.formData.otherRolesContribution}</p>
+                                  {isSectionVisible("f_otherRolesContribution") && (
+                                    <div>
+                                      <div className="flex justify-between items-center mb-1">
+                                        <label className="block text-xs font-extrabold text-slate-800 uppercase tracking-wider">
+                                          OTHER ROLE / CONTRIBUTION DESCRIPTION
+                                        </label>
+                                      </div>
+                                      <p className="text-[10px] text-zinc-400 font-semibold mb-2 uppercase">
+                                        OTHER ADMINISTRATIVE ROLES OR INSTITUTIONAL CONTRIBUTIONS.
+                                      </p>
+                                      <div className="w-full rounded-2xl border border-zinc-200 bg-slate-50 p-4 text-xs font-semibold text-slate-850 whitespace-pre-line leading-relaxed">
+                                        {selectedAppraisal.formData?.otherRolesContribution || <span className="text-zinc-400 italic">No additional roles or contributions recorded.</span>}
+                                      </div>
                                     </div>
                                   )}
                                 </>
@@ -3574,58 +4251,93 @@ export default function AppraisalReviews() {
                             </>
                           )}
 
-                          {/* Professional body memberships */}
-                          {isSectionVisible("sec_professional_memberships") && selectedAppraisal.formData?.professionalMembership && selectedAppraisal.formData.professionalMembership.length > 0 && (
-                            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
-                              <span className="text-xs font-black text-slate-800 block uppercase">
-                                {getSectionTitle("sec_professional_memberships", "4.2 Membership in Professional Bodies")}
-                              </span>
-                              {getSectionDescription("sec_professional_memberships") && (
-                                <p className="text-[10px] text-zinc-400 font-semibold uppercase">{getSectionDescription("sec_professional_memberships")}</p>
-                              )}
-                              <div className="space-y-1">
-                                {selectedAppraisal.formData.professionalMembership.map((row, idx) => (
-                                  <div key={idx} className="bg-white p-2.5 rounded-lg border border-zinc-150 flex justify-between text-xs items-center">
-                                    <span className="font-bold text-slate-700">{row.name}</span>
-                                    <div className="flex items-center gap-2">
-                                      <span className="font-semibold text-zinc-500">{row.type} (No: {row.membershipNo})</span>
-                                      {isSectionEvidenceRequired("sec_professional_memberships") && row.fileUrl && (
-                                        <a href={row.fileUrl} target="_blank" rel="noreferrer" className="text-[10px] font-extrabold text-blue-600 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded hover:bg-blue-100 transition-all">Proof</a>
-                                      )}
+                          {/* 4.2 PROFESSIONAL BODY MEMBERSHIPS */}
+                          {isSectionVisible("sec_professional_memberships") && (
+                            <div className="bg-slate-50/70 border border-slate-200/80 rounded-2xl p-5 space-y-4">
+                              <div className="flex justify-between items-center mb-1 border-b border-zinc-200/80 pb-1">
+                                <div>
+                                  <span style={{ fontSize: "11px" }} className="font-extrabold text-indigo-950 block uppercase tracking-wider flex items-center gap-1.5">
+                                    <Award size={12} />
+                                    {getSectionTitle("sec_professional_memberships", "4.2 PROFESSIONAL BODY MEMBERSHIPS")}
+                                  </span>
+                                  <p className="text-[10px] text-zinc-400 font-semibold uppercase mt-0.5">
+                                    {getSectionDescription("sec_professional_memberships") || "MEMBERSHIPS IN TECHNICAL BODIES LIKE ISTE, IEEE, CSI, ACM, ETC."}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="space-y-2">
+                                {(selectedAppraisal.formData?.professionalMembership || []).filter(r => r.name || r.membershipNo).length === 0 ? (
+                                  <p className="text-xs text-zinc-400 italic py-1">No professional body memberships recorded.</p>
+                                ) : (
+                                  (selectedAppraisal.formData?.professionalMembership || []).map((row, idx) => (
+                                    <div key={idx} className="bg-white p-3 rounded-xl border border-zinc-200 flex justify-between text-xs items-center">
+                                      <span className="font-bold text-slate-800">{row.name}</span>
+                                      <div className="flex items-center gap-3">
+                                        <span className="font-semibold text-zinc-500 bg-slate-50 border border-zinc-200 px-2 py-0.5 rounded text-[11px]">{row.type}</span>
+                                        <span className="font-semibold text-slate-700">No: {row.membershipNo || "-"}</span>
+                                        {isSectionEvidenceRequired("sec_professional_memberships") && row.fileUrl && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => handleViewProof(e, row.fileUrl, row.fileName || `Membership_${idx + 1}`)}
+                                            className="text-[10px] font-extrabold text-blue-600 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded hover:bg-blue-100 transition-all cursor-pointer"
+                                          >
+                                            Proof
+                                          </button>
+                                        )}
+                                      </div>
                                     </div>
-                                  </div>
-                                ))}
+                                  ))
+                                )}
                               </div>
                             </div>
                           )}
 
-                          {/* Awards & Honors */}
-                          {isSectionVisible("sec_awards_honors") && selectedAppraisal.formData?.awardsHonors && selectedAppraisal.formData.awardsHonors.length > 0 && (
-                            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
-                              <span className="text-xs font-black text-slate-800 block uppercase">
-                                {getSectionTitle("sec_awards_honors", "4.3 Awards & Recognitions")}
-                              </span>
-                              {getSectionDescription("sec_awards_honors") && (
-                                <p className="text-[10px] text-zinc-400 font-semibold uppercase">{getSectionDescription("sec_awards_honors")}</p>
-                              )}
-                              <table className="w-full border-collapse border border-zinc-200 text-xs bg-white">
-                                <tr className="bg-zinc-50 font-bold">
-                                  <th className="border border-zinc-200 p-2">Award Title</th>
-                                  <th className="border border-zinc-200 p-2">Organization</th>
-                                  <th className="border border-zinc-200 p-2 text-center">Year</th>
-                                  <th className="border border-zinc-200 p-2 text-center">Level</th>
-                                  {renderRowEvidenceHeader("sec_awards_honors")}
-                                </tr>
-                                {selectedAppraisal.formData.awardsHonors.map((row, idx) => (
-                                  <tr key={idx}>
-                                    <td className="border border-zinc-200 p-2 font-bold text-slate-750">{row.awardName}</td>
-                                    <td className="border border-zinc-200 p-2 font-medium text-zinc-655">{row.organization}</td>
-                                    <td className="border border-zinc-200 p-2 text-center font-semibold">{row.year}</td>
-                                    <td className="border border-zinc-200 p-2 text-center font-bold text-indigo-750">{row.level}</td>
-                                    {renderRowEvidenceCellReadOnly(row, "sec_awards_honors")}
-                                  </tr>
-                                ))}
-                              </table>
+                          {/* 4.3 AWARDS & RECOGNITIONS */}
+                          {isSectionVisible("sec_awards_honors") && (
+                            <div className="bg-slate-50/70 border border-slate-200/80 rounded-2xl p-5 space-y-4">
+                              <div className="flex justify-between items-center mb-1 border-b border-zinc-200/80 pb-1">
+                                <div>
+                                  <span style={{ fontSize: "11px" }} className="font-extrabold text-indigo-950 block uppercase tracking-wider flex items-center gap-1.5">
+                                    <Award size={12} />
+                                    {getSectionTitle("sec_awards_honors", "4.3 AWARDS & RECOGNITIONS")}
+                                  </span>
+                                  <p className="text-[10px] text-zinc-400 font-semibold uppercase mt-0.5">
+                                    {getSectionDescription("sec_awards_honors") || "PRIZES, HONORS, AND PROFESSIONAL RECOGNITION RECEIVED."}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
+                                <table className="w-full border-collapse text-xs">
+                                  <thead>
+                                    <tr className="bg-zinc-50/80 font-bold text-slate-900 border-b border-zinc-200">
+                                      <th className="border-r border-zinc-200 p-2 text-center w-12 font-black">Sl.No</th>
+                                      <th className="border-r border-zinc-200 p-2 text-left font-black">{getSectionTitle("f_awards_title", "Award Title")}</th>
+                                      <th className="border-r border-zinc-200 p-2 text-left font-black">{getSectionTitle("f_awards_body", "Organization")}</th>
+                                      <th className="border-r border-zinc-200 p-2 text-center w-24 font-black">{getSectionTitle("f_awards_year", "Year")}</th>
+                                      <th className="border-r border-zinc-200 p-2 text-center w-28 font-black">Level</th>
+                                      {renderRowEvidenceHeader("sec_awards_honors")}
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {(selectedAppraisal.formData?.awardsHonors || []).filter(r => r.awardName || r.organization || r.year).length === 0 ? (
+                                      <tr>
+                                        <td colSpan={10} className="p-3 text-center text-zinc-400 italic text-xs">No awards or recognitions recorded</td>
+                                      </tr>
+                                    ) : (
+                                      (selectedAppraisal.formData?.awardsHonors || []).map((row, idx) => (
+                                        <tr key={idx} className="hover:bg-zinc-50/50 border-b border-zinc-200 last:border-b-0">
+                                          <td className="border-r border-zinc-200 p-2 text-center font-black text-slate-800">{idx + 1}</td>
+                                          <td className="border-r border-zinc-200 p-2 font-bold text-slate-800">{row.awardName || "-"}</td>
+                                          <td className="border-r border-zinc-200 p-2 text-slate-700">{row.organization || "-"}</td>
+                                          <td className="border-r border-zinc-200 p-2 text-center font-semibold text-slate-700">{row.year || "-"}</td>
+                                          <td className="border-r border-zinc-200 p-2 text-center font-bold text-indigo-700">{row.level || "-"}</td>
+                                          {renderRowEvidenceCellReadOnly(row, "sec_awards_honors")}
+                                        </tr>
+                                      ))
+                                    )}
+                                  </tbody>
+                                </table>
+                              </div>
                             </div>
                           )}
 
@@ -3843,14 +4555,13 @@ export default function AppraisalReviews() {
                                 {field.evidenceRequired && entry.fileUrl && (
                                   <div className="flex items-center gap-2 mt-2">
                                     <span className="text-zinc-400 font-semibold uppercase text-[9px]">Proof Attachment:</span>
-                                    <a
-                                      href={entry.fileUrl}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      className="text-blue-600 font-extrabold hover:underline inline-flex items-center gap-1 bg-blue-50 border border-blue-100 px-2.5 py-1 rounded-lg"
+                                    <button
+                                      type="button"
+                                      onClick={(e) => handleViewProof(e, entry.fileUrl, entry.fileName || "File")}
+                                      className="text-blue-600 font-extrabold hover:underline inline-flex items-center gap-1 bg-blue-50 border border-blue-100 px-2.5 py-1 rounded-lg cursor-pointer text-xs"
                                     >
                                       View Evidence ({entry.fileName || "File"})
-                                    </a>
+                                    </button>
                                   </div>
                                 )}
                               </div>
@@ -3866,154 +4577,168 @@ export default function AppraisalReviews() {
                 {/* Unified source: faculty autoScore.breakdown OR teacher evaluatedScore.
                     Columns: Self (automated) | Coordinator (saved coordinatorReview) |
                     Reviewer editable (Coordinator while Submitted, else HOD/Principal). */}
-                {reviewScore && (
-                  <div className="mt-8 border border-zinc-200 rounded-2xl overflow-hidden bg-white shadow-xs">
-                    <div className="bg-indigo-50/70 px-4 py-2.5 border-b border-indigo-100 flex items-center justify-between">
-                      <span className="text-[11px] font-black text-indigo-950 uppercase tracking-widest">Performance Score (Criteria Evaluation)</span>
-                      {(() => {
-                        const p1 = reviewScore.part1Rows || [];
-                        const p2 = reviewScore.part2Rows || [];
-                        const sumHod = (rows) => rows.reduce((a, r) => a + (Number(hodFacultyScoresMap[r.id] ?? r.scored) || 0), 0);
-                        const gHodT = sumHod(p1) + sumHod(p2);
-                        const gM = reviewScore.grandMax;
-                        return (
-                          <span className="text-[10px] font-black text-emerald-800 bg-emerald-100/70 px-2.5 py-0.5 rounded-full border border-emerald-200">
-                            {(isCoordinatorRole && !selectedAppraisal.coordinatorReview) ? "Coordinator" : "HOD"} Score: {gHodT} / {gM}
-                          </span>
-                        );
-                      })()}
-                    </div>
-                    <table className="w-full border-collapse text-xs">
-                      <thead>
-                        <tr className="bg-zinc-50 text-zinc-500 font-bold border-b border-zinc-200">
-                          <th className="p-2.5 text-left">Particulars</th>
-                          <th className="p-2.5 text-center">Value</th>
-                          <th className="p-2.5 text-center">Max</th>
-                          <th className="p-2.5 text-center text-indigo-700 font-black">Self Analyse Score</th>
-                          {selectedAppraisal.coordinatorReview && (
-                            <th className="p-2.5 text-center text-amber-700 font-black">Coordinator Score</th>
+                {reviewScore && (() => {
+                  const normAppInst = normalizeInstitution(
+                    selectedAppraisal.institution ||
+                    selectedAppraisal.formData?.institution ||
+                    selectedStaff?.institution ||
+                    userInstitution ||
+                    ""
+                  );
+                  const isCKCOE = normAppInst === "CKCOE" || String(selectedAppraisal.institution || "").toUpperCase().includes("CKCOE");
+                  const isCKSPK = normAppInst === "CKSPK" || String(selectedAppraisal.institution || "").toUpperCase().includes("CKSPK");
+                  const isCKSPE = normAppInst === "CKSPE" || String(selectedAppraisal.institution || "").toUpperCase().includes("CKSPE");
+                  const isSchoolOrCOE = isCKCOE || isCKSPK || isCKSPE;
+
+                  const reviewerRoleLabel = (isCoordinatorRole && !selectedAppraisal.coordinatorReview)
+                    ? "Coordinator"
+                    : (isSchoolOrCOE || isPrincipalOrHR)
+                      ? "Principal"
+                      : "HOD";
+
+                  const p1 = reviewScore.part1Rows || [];
+                  const p2 = reviewScore.part2Rows || [];
+                  const sum = (rows, k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
+                  const sumHod = (rows) => rows.reduce((a, r) => a + (Number(hodFacultyScoresMap[r.id] ?? r.scored) || 0), 0);
+
+                  const p1T = reviewScore.part1Total;
+                  const p1M = reviewScore.part1Max;
+                  const p1HodT = sumHod(p1);
+
+                  const p2T = reviewScore.part2Total;
+                  const p2M = reviewScore.part2Max;
+                  const p2HodT = sumHod(p2);
+
+                  const gT = reviewScore.grandTotal;
+                  const gM = reviewScore.grandMax;
+                  const gHodT = p1HodT + p2HodT;
+
+                  const showCoordCol = !!selectedAppraisal.coordinatorReview;
+                  const coordScores = selectedAppraisal.coordinatorReview?.scores || {};
+                  const colSpan = showCoordCol ? 6 : 5;
+
+                  const canReview = isCoordinatorRole || isHODRole || isPrincipalOrHR;
+                  const isEditable = isPrincipalOrHR || (canReview && selectedAppraisal.status !== "Approved");
+
+                  const rowEls = (rows) => rows.map((r) => {
+                    const hodVal = hodFacultyScoresMap[r.id] ?? r.scored;
+                    const cVal = coordScores[r.id];
+                    return (
+                      <tr key={r.id} className="hover:bg-slate-50/50">
+                        <td className="p-2.5 font-semibold text-slate-700">{r.particulars}</td>
+                        <td className="p-2.5 text-center text-zinc-500">{r.value === null ? "—" : String(r.value)}</td>
+                        <td className="p-2.5 text-center font-bold text-zinc-600">{r.maxMarks}</td>
+                        <td className="p-2.5 text-center font-black text-indigo-700">{r.scored}</td>
+                        {showCoordCol && (
+                          <td className="p-2.5 text-center font-black text-amber-700">{cVal === undefined || cVal === null || cVal === "" ? "—" : cVal}</td>
+                        )}
+                        <td className="p-2.5 text-center font-black">
+                          {isEditable ? (
+                            <input
+                              type="number"
+                              step="0.5"
+                              min="0"
+                              max={r.maxMarks}
+                              value={hodVal === undefined || hodVal === null ? "" : hodVal}
+                              onChange={(e) => {
+                                const inputVal = e.target.value;
+                                const parsed = inputVal === "" ? "" : Math.min(Number(r.maxMarks), Math.max(0, Number(inputVal)));
+                                const updatedScores = {
+                                  ...hodFacultyScoresMap,
+                                  [r.id]: parsed
+                                };
+                                setHodFacultyScoresMap(updatedScores);
+
+                                // Recalculate cumulative score across Part 1 & Part 2 and place into Final Rating
+                                const allScoreRows = [...(reviewScore.part1Rows || []), ...(reviewScore.part2Rows || [])];
+                                const newCumulativeTotal = allScoreRows.reduce((acc, row) => {
+                                  const val = (row.id === r.id) ? parsed : (updatedScores[row.id] ?? row.scored);
+                                  return acc + (Number(val) || 0);
+                                }, 0);
+                                setFinalRating(String(Math.round(newCumulativeTotal * 100) / 100));
+                              }}
+                              className="w-16 text-center font-black text-emerald-900 bg-white border-2 border-emerald-400 rounded-lg py-1 px-1.5 shadow-xs focus:ring-2 focus:ring-emerald-500 focus:border-emerald-600 focus:outline-none"
+                            />
+                          ) : (
+                            <span className="text-emerald-700 font-bold">{hodVal}</span>
                           )}
-                          <th className="p-2.5 text-center text-emerald-700 font-black">{(isCoordinatorRole && !selectedAppraisal.coordinatorReview) ? "Coordinator Score" : "HOD Score"}</th>
-                        </tr>
-                      </thead>
-                      {(() => {
-                        const p1 = reviewScore.part1Rows || [];
-                        const p2 = reviewScore.part2Rows || [];
-                        const sum = (rows, k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
-                        const sumHod = (rows) => rows.reduce((a, r) => a + (Number(hodFacultyScoresMap[r.id] ?? r.scored) || 0), 0);
+                        </td>
+                      </tr>
+                    );
+                  });
 
-                        const p1T = reviewScore.part1Total;
-                        const p1M = reviewScore.part1Max;
-                        const p1HodT = sumHod(p1);
-
-                        const p2T = reviewScore.part2Total;
-                        const p2M = reviewScore.part2Max;
-                        const p2HodT = sumHod(p2);
-
-                        const gT = reviewScore.grandTotal;
-                        const gM = reviewScore.grandMax;
-                        const gHodT = p1HodT + p2HodT;
-
-                        const showCoordCol = !!selectedAppraisal.coordinatorReview;
-                        const coordScores = selectedAppraisal.coordinatorReview?.scores || {};
-                        const colSpan = showCoordCol ? 6 : 5;
-
-                        const canReview = isCoordinatorRole || isHODRole || isPrincipalOrHR;
-                        const isEditable = isPrincipalOrHR || (canReview && selectedAppraisal.status !== "Approved");
-
-                        const rowEls = (rows) => rows.map((r) => {
-                          const hodVal = hodFacultyScoresMap[r.id] ?? r.scored;
-                          const cVal = coordScores[r.id];
-                          return (
-                            <tr key={r.id} className="hover:bg-slate-50/50">
-                              <td className="p-2.5 font-semibold text-slate-700">{r.particulars}</td>
-                              <td className="p-2.5 text-center text-zinc-500">{r.value === null ? "—" : String(r.value)}</td>
-                              <td className="p-2.5 text-center font-bold text-zinc-600">{r.maxMarks}</td>
-                              <td className="p-2.5 text-center font-black text-indigo-700">{r.scored}</td>
-                              {showCoordCol && (
-                                <td className="p-2.5 text-center font-black text-amber-700">{cVal === undefined || cVal === null || cVal === "" ? "—" : cVal}</td>
-                              )}
-                              <td className="p-2.5 text-center font-black">
-                                {isEditable ? (
-                                  <input
-                                    type="number"
-                                    step="0.5"
-                                    min="0"
-                                    max={r.maxMarks}
-                                    value={hodVal === undefined || hodVal === null ? "" : hodVal}
-                                    onChange={(e) => {
-                                      const inputVal = e.target.value;
-                                      const parsed = inputVal === "" ? "" : Math.min(Number(r.maxMarks), Math.max(0, Number(inputVal)));
-                                      setHodFacultyScoresMap((prev) => ({
-                                        ...prev,
-                                        [r.id]: parsed
-                                      }));
-                                    }}
-                                    className="w-16 text-center font-black text-emerald-900 bg-white border-2 border-emerald-400 rounded-lg py-1 px-1.5 shadow-xs focus:ring-2 focus:ring-emerald-500 focus:border-emerald-600 focus:outline-none"
-                                  />
-                                ) : (
-                                  <span className="text-emerald-700 font-bold">{hodVal}</span>
-                                )}
-                              </td>
+                  return (
+                    <div className="mt-8 border border-zinc-200 rounded-2xl overflow-hidden bg-white shadow-xs">
+                      <div className="bg-indigo-50/70 px-4 py-2.5 border-b border-indigo-100 flex items-center justify-between">
+                        <span className="text-[11px] font-black text-indigo-950 uppercase tracking-widest">Performance Score (Criteria Evaluation)</span>
+                        <span className="text-[10px] font-black text-emerald-800 bg-emerald-100/70 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                          {reviewerRoleLabel} Score: {gHodT} / {gM}
+                        </span>
+                      </div>
+                      <table className="w-full border-collapse text-xs">
+                        <thead>
+                          <tr className="bg-zinc-50 text-zinc-500 font-bold border-b border-zinc-200">
+                            <th className="p-2.5 text-left">Particulars</th>
+                            <th className="p-2.5 text-center">Value</th>
+                            <th className="p-2.5 text-center">Max</th>
+                            <th className="p-2.5 text-center text-indigo-700 font-black">Self Analyse Score</th>
+                            {showCoordCol && (
+                              <th className="p-2.5 text-center text-amber-700 font-black">Coordinator Score</th>
+                            )}
+                            <th className="p-2.5 text-center text-emerald-700 font-black">{reviewerRoleLabel} Score</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-100">
+                          {p1.length > 0 && (
+                            <tr className="bg-slate-50/70">
+                              <td colSpan={colSpan} className="p-2 text-[10px] font-black text-zinc-500 uppercase tracking-wider">Part 1 — Academic & Feedback</td>
                             </tr>
-                          );
-                        });
-
-                        return (
-                          <>
-                            <tbody className="divide-y divide-zinc-100">
-                              {p1.length > 0 && (
-                                <tr className="bg-slate-50/70">
-                                  <td colSpan={colSpan} className="p-2 text-[10px] font-black text-zinc-500 uppercase tracking-wider">Part 1 — Academic & Feedback</td>
-                                </tr>
+                          )}
+                          {rowEls(p1)}
+                          {p1.length > 0 && (
+                            <tr className="bg-slate-50/70 font-bold">
+                              <td className="p-2 text-right text-[11px] text-zinc-600 uppercase" colSpan={2}>Part 1 Total</td>
+                              <td className="p-2 text-center text-zinc-700">{p1M}</td>
+                              <td className="p-2 text-center text-indigo-800 font-black">{p1T}</td>
+                              {showCoordCol && (
+                                <td className="p-2 text-center text-amber-800 font-black">{selectedAppraisal.coordinatorReview?.part1Total ?? "—"}</td>
                               )}
-                              {rowEls(p1)}
-                              {p1.length > 0 && (
-                                <tr className="bg-slate-50/70 font-bold">
-                                  <td className="p-2 text-right text-[11px] text-zinc-600 uppercase" colSpan={2}>Part 1 Total</td>
-                                  <td className="p-2 text-center text-zinc-700">{p1M}</td>
-                                  <td className="p-2 text-center text-indigo-800 font-black">{p1T}</td>
-                                  {showCoordCol && (
-                                    <td className="p-2 text-center text-amber-800 font-black">{selectedAppraisal.coordinatorReview?.part1Total ?? "—"}</td>
-                                  )}
-                                  <td className="p-2 text-center text-emerald-800 font-black">{p1HodT}</td>
-                                </tr>
+                              <td className="p-2 text-center text-emerald-800 font-black">{p1HodT}</td>
+                            </tr>
+                          )}
+                          {p2.length > 0 && (
+                            <tr className="bg-slate-50/70">
+                              <td colSpan={colSpan} className="p-2 text-[10px] font-black text-zinc-500 uppercase tracking-wider">Part 2 — Self & Department Contributions</td>
+                            </tr>
+                          )}
+                          {rowEls(p2)}
+                          {p2.length > 0 && (
+                            <tr className="bg-slate-50/70 font-bold">
+                              <td className="p-2 text-right text-[11px] text-zinc-600 uppercase" colSpan={2}>Part 2 Total</td>
+                              <td className="p-2 text-center text-zinc-700">{p2M}</td>
+                              <td className="p-2 text-center text-indigo-800 font-black">{p2T}</td>
+                              {showCoordCol && (
+                                <td className="p-2 text-center text-amber-800 font-black">{selectedAppraisal.coordinatorReview?.part2Total ?? "—"}</td>
                               )}
-                              {p2.length > 0 && (
-                                <tr className="bg-slate-50/70">
-                                  <td colSpan={colSpan} className="p-2 text-[10px] font-black text-zinc-500 uppercase tracking-wider">Part 2 — Self & Department Contributions</td>
-                                </tr>
-                              )}
-                              {rowEls(p2)}
-                              {p2.length > 0 && (
-                                <tr className="bg-slate-50/70 font-bold">
-                                  <td className="p-2 text-right text-[11px] text-zinc-600 uppercase" colSpan={2}>Part 2 Total</td>
-                                  <td className="p-2 text-center text-zinc-700">{p2M}</td>
-                                  <td className="p-2 text-center text-indigo-800 font-black">{p2T}</td>
-                                  {showCoordCol && (
-                                    <td className="p-2 text-center text-amber-800 font-black">{selectedAppraisal.coordinatorReview?.part2Total ?? "—"}</td>
-                                  )}
-                                  <td className="p-2 text-center text-emerald-800 font-black">{p2HodT}</td>
-                                </tr>
-                              )}
-                            </tbody>
-                            <tfoot>
-                              <tr className="bg-gradient-to-r from-indigo-700 via-emerald-700 to-teal-800 text-white font-black">
-                                <td className="p-3 text-right text-xs uppercase tracking-wider" colSpan={2}>Grand Total</td>
-                                <td className="p-3 text-center text-zinc-200">{gM}</td>
-                                <td className="p-3 text-center text-base">{gT}</td>
-                                {showCoordCol && (
-                                  <td className="p-3 text-center text-base text-amber-200">{selectedAppraisal.coordinatorReview?.totalScore ?? "—"}</td>
-                                )}
-                                <td className="p-3 text-center text-base text-emerald-200">{gHodT}</td>
-                              </tr>
-                            </tfoot>
-                          </>
-                        );
-                      })()}
-                    </table>
-                  </div>
-                )}
+                              <td className="p-2 text-center text-emerald-800 font-black">{p2HodT}</td>
+                            </tr>
+                          )}
+                        </tbody>
+                        <tfoot>
+                          <tr className="bg-gradient-to-r from-indigo-700 via-emerald-700 to-teal-800 text-white font-black">
+                            <td className="p-3 text-right text-xs uppercase tracking-wider" colSpan={2}>Grand Total</td>
+                            <td className="p-3 text-center text-zinc-200">{gM}</td>
+                            <td className="p-3 text-center text-base">{gT}</td>
+                            {showCoordCol && (
+                              <td className="p-3 text-center text-base text-amber-200">{selectedAppraisal.coordinatorReview?.totalScore ?? "—"}</td>
+                            )}
+                            <td className="p-3 text-center text-base text-emerald-200">{gHodT}</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  );
+                })()}
 
                 {/* ── NON-TEACHING PERFORMANCE EVALUATION SHEET (RATING & MARKS) ── */}
                 {(selectedAppraisal.formType === "non_teaching" || selectedAppraisal.collectionName === "non_teaching_appraisals") && (
@@ -4062,7 +4787,12 @@ export default function AppraisalReviews() {
                                         key={mVal}
                                         type="button"
                                         disabled={!isPrincipalOrHR && selectedAppraisal.status === "Approved"}
-                                        onClick={() => setNonTeachingEvalMarks({ ...nonTeachingEvalMarks, [cat.id]: mVal })}
+                                        onClick={() => {
+                                          const updatedMarks = { ...nonTeachingEvalMarks, [cat.id]: mVal };
+                                          setNonTeachingEvalMarks(updatedMarks);
+                                          const newTotal = Object.values(updatedMarks).reduce((a, b) => a + (Number(b) || 0), 0);
+                                          setFinalRating(String(newTotal));
+                                        }}
                                         className={`w-7 h-7 rounded-lg text-xs font-black transition-all cursor-pointer ${currentScore === mVal
                                             ? "bg-indigo-600 text-white shadow-md scale-105"
                                             : "bg-zinc-100 hover:bg-zinc-200 text-zinc-700"
@@ -4198,22 +4928,40 @@ export default function AppraisalReviews() {
                 )}
 
                 {/* HOD Recommendations (shown to Principal/Admin) */}
-                {selectedAppraisal.hodReview && userRole !== "HOD" && (
-                  <div className="bg-blue-50 border border-blue-150 p-4 rounded-2xl space-y-2">
-                    <span className="text-[10px] font-black text-blue-900 uppercase tracking-widest block border-b border-blue-200 pb-1">HOD Review Recommendations</span>
-                    <div>
-                      <span className="block text-[9px] font-black text-blue-700 uppercase tracking-wider">Evaluated Grade:</span>
-                      <span className="text-xs font-black text-blue-900">{selectedAppraisal.hodReview.grade}</span>
+                {selectedAppraisal.hodReview && userRole !== "HOD" && (() => {
+                  const normAppInst = normalizeInstitution(
+                    selectedAppraisal.institution ||
+                    selectedAppraisal.formData?.institution ||
+                    selectedStaff?.institution ||
+                    userInstitution ||
+                    ""
+                  );
+                  const isSchoolOrCOE = normAppInst === "CKCOE" || normAppInst === "CKSPK" || normAppInst === "CKSPE" ||
+                    String(selectedAppraisal.institution || "").toUpperCase().includes("CKCOE") ||
+                    String(selectedAppraisal.institution || "").toUpperCase().includes("CKSPK") ||
+                    String(selectedAppraisal.institution || "").toUpperCase().includes("CKSPE");
+
+                  const cardTitle = isSchoolOrCOE
+                    ? (selectedAppraisal.coordinatorReview ? "Coordinator Review Recommendations" : "Principal Review Recommendations")
+                    : "HOD Review Recommendations";
+
+                  return (
+                    <div className="bg-blue-50 border border-blue-150 p-4 rounded-2xl space-y-2">
+                      <span className="text-[10px] font-black text-blue-900 uppercase tracking-widest block border-b border-blue-200 pb-1">{cardTitle}</span>
+                      <div>
+                        <span className="block text-[9px] font-black text-blue-700 uppercase tracking-wider">Evaluated Grade:</span>
+                        <span className="text-xs font-black text-blue-900">{selectedAppraisal.hodReview.grade}</span>
+                      </div>
+                      <div>
+                        <span className="block text-[9px] font-black text-blue-700 uppercase tracking-wider">Remarks:</span>
+                        <p className="text-xs text-blue-950 font-medium">{selectedAppraisal.hodReview.comments}</p>
+                      </div>
+                      <div className="text-[10px] text-blue-500 italic">
+                        - {isSchoolOrCOE ? "Reviewed" : "Recommended"} by {selectedAppraisal.hodReview.reviewedBy}
+                      </div>
                     </div>
-                    <div>
-                      <span className="block text-[9px] font-black text-blue-700 uppercase tracking-wider">Remarks:</span>
-                      <p className="text-xs text-blue-950 font-medium">{selectedAppraisal.hodReview.comments}</p>
-                    </div>
-                    <div className="text-[10px] text-blue-500 italic">
-                      - Recommended by {selectedAppraisal.hodReview.reviewedBy}
-                    </div>
-                  </div>
-                )}
+                  );
+                })()}
 
                 {/* Grade Selection */}
                 <div>
@@ -4314,32 +5062,28 @@ export default function AppraisalReviews() {
 
                 {/* Interactive Action Buttons */}
                 <div className="space-y-2.5 pt-4">
-                  {(selectedAppraisal.formType === "teacher" || selectedAppraisal.formType === "non_teaching" || selectedAppraisal.formType === "hod" || selectedAppraisal.formType === "faculty") && (
-                    <button
-                      type="button"
-                      onClick={() => handleOpenAttitudeModal(selectedAppraisal)}
-                      className={`w-full py-2.5 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer ${
-                        isPrincipalOrHR
-                          ? selectedAppraisal.attitudeForm?.principalMarks && Object.keys(selectedAppraisal.attitudeForm.principalMarks).length > 0
-                            ? "bg-indigo-750 hover:bg-indigo-850 text-white"
-                            : selectedAppraisal.attitudeForm?.submittedToPrincipal
+                  {(selectedAppraisal.formType === "teacher" || selectedAppraisal.formType === "non_teaching" || selectedAppraisal.formType === "hod" || selectedAppraisal.formType === "faculty") && (() => {
+                    const attInfo = getAttitudeScoreInfo(selectedAppraisal);
+                    const isEvaluated = attInfo.totalScore > 0 || attInfo.hasMarks;
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenAttitudeModal(selectedAppraisal)}
+                        className={`w-full py-2.5 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer ${
+                          isEvaluated
+                            ? "bg-teal-700 hover:bg-teal-800 text-white"
+                            : attInfo.isSubmitted
                               ? "bg-amber-600 hover:bg-amber-700 text-white animate-pulse"
                               : "bg-slate-700 hover:bg-slate-800 text-white"
-                          : selectedAppraisal.attitudeForm?.ratings && Object.keys(selectedAppraisal.attitudeForm.ratings).length > 0
-                            ? "bg-teal-700 hover:bg-teal-800 text-white"
-                            : "bg-amber-600 hover:bg-amber-700 text-white"
-                      }`}
-                    >
-                      <Award size={14} />
-                      {isPrincipalOrHR
-                        ? selectedAppraisal.attitudeForm?.principalMarks && Object.keys(selectedAppraisal.attitudeForm.principalMarks).length > 0
-                          ? `Review Principal Attitude Marks (${selectedAppraisal.attitudeForm.principalTotalScore}/${selectedAppraisal.attitudeForm.principalMaxScore || (getAttitudeQuestions(selectedAppraisal).length * 5)})`
-                          : `Evaluate Attitude Form (${getAttitudeQuestions(selectedAppraisal).length} Items)`
-                        : selectedAppraisal.attitudeForm?.ratings && Object.keys(selectedAppraisal.attitudeForm.ratings).length > 0
-                          ? `Edit Attitude Form (${selectedAppraisal.attitudeForm.totalScore}/${selectedAppraisal.attitudeForm.maxScore || (getAttitudeQuestions(selectedAppraisal).length * 5)})`
-                          : `Fill Attitude Form (${getAttitudeQuestions(selectedAppraisal).length} Items)`}
-                    </button>
-                  )}
+                        }`}
+                      >
+                        <Award size={14} />
+                        {isEvaluated
+                          ? `Review Attitude Form (${attInfo.totalScore}/${attInfo.maxScore})`
+                          : `Evaluate Attitude Form (${getAttitudeQuestions(selectedAppraisal).length} Items)`}
+                      </button>
+                    );
+                  })()}
 
                   {(userRole === "HOD" || isCoordinatorRole) && selectedAppraisal.status === "Submitted" && (
                     <>
@@ -4538,36 +5282,63 @@ export default function AppraisalReviews() {
                             ) : (
                               <span className="text-zinc-300">-</span>
                             )}
-                            {app.attitudeForm?.totalScore !== undefined && (
-                              <div className="text-[10px] font-bold text-teal-700 mt-1 flex flex-col items-center justify-center gap-0.5">
-                                <span className="flex items-center gap-1">
-                                  <Award size={10} /> Attitude: {app.attitudeForm.totalScore}/{app.attitudeForm.maxScore || (getAttitudeQuestions(app).length * 5)}
-                                </span>
-                                {app.attitudeForm.submittedToPrincipal && (
-                                  <span className="text-[9px] text-emerald-800 bg-emerald-50 border border-emerald-200 px-1.5 py-0.2 rounded-full font-bold">
-                                    ✓ To Principal
-                                  </span>
-                                )}
-                              </div>
-                            )}
+                            {(() => {
+                              const attInfo = getAttitudeScoreInfo(app);
+                              if (attInfo.hodScore > 0 || attInfo.totalScore > 0) {
+                                const scoreVal = attInfo.hodScore > 0 ? attInfo.hodScore : attInfo.totalScore;
+                                return (
+                                  <div className="text-[10px] font-bold text-teal-700 mt-1 flex flex-col items-center justify-center gap-0.5">
+                                    <span className="flex items-center gap-1">
+                                      <Award size={10} /> Attitude: {scoreVal}/{attInfo.hodMax}
+                                    </span>
+                                    {attInfo.isSubmitted && (
+                                      <span className="text-[9px] text-emerald-800 bg-emerald-50 border border-emerald-200 px-1.5 py-0.2 rounded-full font-bold">
+                                        ✓ To Principal
+                                      </span>
+                                    )}
+                                  </div>
+                                );
+                              }
+                              return null;
+                            })()}
                           </td>
                           <td className="p-4 text-center font-bold text-emerald-950">
-                            {(app.principalReview?.finalRating !== undefined && app.principalReview?.finalRating !== null && app.principalReview?.finalRating !== "") ? (
-                              <span className="inline-flex items-center justify-center gap-1 text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full text-xs font-black border border-emerald-200 shadow-sm">
-                                <Star size={11} className="fill-amber-400 text-amber-400" /> {app.principalReview.finalRating}
-                              </span>
-                            ) : app.principalReview?.grade ? (
-                              <span className="flex items-center justify-center gap-1">
-                                <Star size={10} className="fill-amber-400 text-amber-400" /> {app.principalReview.grade}
-                              </span>
-                            ) : (
-                              <span className="text-zinc-300">-</span>
-                            )}
-                            {app.attitudeForm?.principalTotalScore !== undefined && (
-                              <div className="text-[10px] font-bold text-amber-700 mt-1 flex items-center justify-center gap-1">
-                                <Sparkles size={10} /> Attitude: {app.attitudeForm.principalTotalScore}/{app.attitudeForm.principalMaxScore || (getAttitudeQuestions(app).length * 5)}
-                              </div>
-                            )}
+                            {(() => {
+                              const pRating = (app.principalReview?.finalRating !== undefined && app.principalReview?.finalRating !== null && app.principalReview?.finalRating !== "")
+                                ? app.principalReview.finalRating
+                                : (app.principalReview?.principalTotalScore !== undefined && app.principalReview?.principalTotalScore !== null && Number(app.principalReview?.principalTotalScore) > 0)
+                                  ? app.principalReview.principalTotalScore
+                                  : (app.finalRating !== undefined && app.finalRating !== null && app.finalRating !== "")
+                                    ? app.finalRating
+                                    : null;
+
+                              if (pRating !== null) {
+                                return (
+                                  <span className="inline-flex items-center justify-center gap-1 text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full text-xs font-black border border-emerald-200 shadow-sm">
+                                    <Star size={11} className="fill-amber-400 text-amber-400" /> {pRating}
+                                  </span>
+                                );
+                              }
+                              if (app.principalReview?.grade) {
+                                return (
+                                  <span className="flex items-center justify-center gap-1">
+                                    <Star size={10} className="fill-amber-400 text-amber-400" /> {app.principalReview.grade}
+                                  </span>
+                                );
+                              }
+                              return <span className="text-zinc-300">-</span>;
+                            })()}
+                            {(() => {
+                              const attInfo = getAttitudeScoreInfo(app);
+                              if (attInfo.principalScore > 0) {
+                                return (
+                                  <div className="text-[10px] font-bold text-amber-700 mt-1 flex items-center justify-center gap-1">
+                                    <Sparkles size={10} /> Attitude: {attInfo.principalScore}/{attInfo.principalMax}
+                                  </div>
+                                );
+                              }
+                              return null;
+                            })()}
                           </td>
                           <td className="p-4 text-center">
                             <div className="flex items-center justify-center gap-1.5 flex-wrap min-w-[170px]">
@@ -4589,34 +5360,30 @@ export default function AppraisalReviews() {
                                   </>
                                 )}
                               </button>
-                              {(app.formType === "teacher" || app.formType === "non_teaching" || app.formType === "hod" || app.formType === "faculty") && (
-                                <button
-                                  onClick={() => handleOpenAttitudeModal(app)}
-                                  className={`px-3 py-1.5 rounded-lg text-[10px] font-bold tracking-wide uppercase transition-all inline-flex items-center gap-1 cursor-pointer shadow-xs ${
-                                    isPrincipalOrHR
-                                      ? app.attitudeForm?.principalMarks && Object.keys(app.attitudeForm.principalMarks).length > 0
-                                        ? "bg-indigo-750 hover:bg-indigo-850 text-white"
-                                        : app.attitudeForm?.submittedToPrincipal
+                              {(app.formType === "teacher" || app.formType === "non_teaching" || app.formType === "hod" || app.formType === "faculty") && (() => {
+                                const attInfo = getAttitudeScoreInfo(app);
+                                const isEvaluated = attInfo.totalScore > 0 || attInfo.hasMarks;
+                                return (
+                                  <button
+                                    onClick={() => handleOpenAttitudeModal(app)}
+                                    className={`px-3 py-1.5 rounded-lg text-[10px] font-bold tracking-wide uppercase transition-all inline-flex items-center gap-1 cursor-pointer shadow-xs ${
+                                      isEvaluated
+                                        ? "bg-teal-700 hover:bg-teal-800 text-white"
+                                        : attInfo.isSubmitted
                                           ? "bg-amber-600 hover:bg-amber-700 text-white"
                                           : "bg-slate-700 hover:bg-slate-800 text-white"
-                                      : app.attitudeForm?.ratings && Object.keys(app.attitudeForm.ratings).length > 0
-                                        ? "bg-teal-700 hover:bg-teal-800 text-white"
-                                        : "bg-amber-600 hover:bg-amber-700 text-white"
-                                  }`}
-                                  title="Attitude & Competency Evaluation Form"
-                                >
-                                  <Award size={12} /> Attitude Form
-                                  {isPrincipalOrHR && app.attitudeForm?.principalTotalScore !== undefined ? (
-                                    <span className="ml-0.5 bg-black/25 text-white px-1.5 py-0.2 rounded text-[9px]">
-                                      {app.attitudeForm.principalTotalScore}/{app.attitudeForm.principalMaxScore || (getAttitudeQuestions(app).length * 5)}
-                                    </span>
-                                  ) : app.attitudeForm?.totalScore !== undefined ? (
-                                    <span className="ml-0.5 bg-black/25 text-white px-1.5 py-0.2 rounded text-[9px]">
-                                      {app.attitudeForm.totalScore}/{app.attitudeForm.maxScore || (getAttitudeQuestions(app).length * 5)}
-                                    </span>
-                                  ) : null}
-                                </button>
-                              )}
+                                    }`}
+                                    title="Attitude & Competency Evaluation Form"
+                                  >
+                                    <Award size={12} /> Attitude Form
+                                    {isEvaluated ? (
+                                      <span className="ml-0.5 bg-black/25 text-white px-1.5 py-0.2 rounded text-[9px] font-mono">
+                                        {attInfo.totalScore}/{attInfo.maxScore}
+                                      </span>
+                                    ) : null}
+                                  </button>
+                                );
+                              })()}
                             </div>
                           </td>
                         </tr>
@@ -4761,7 +5528,28 @@ export default function AppraisalReviews() {
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => handleSetAllAttitudeRatings(5)}
+                          className="px-2.5 py-1 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-800 text-[11px] font-bold transition-all cursor-pointer shadow-xs"
+                        >
+                          Set all 5 (Outstanding)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSetAllAttitudeRatings(4)}
+                          className="px-2.5 py-1 rounded-lg bg-blue-100 hover:bg-blue-200 text-blue-800 text-[11px] font-bold transition-all cursor-pointer shadow-xs"
+                        >
+                          Set all 4 (Exceeds Expectations)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSetAllAttitudeRatings("")}
+                          className="px-2.5 py-1 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-700 text-[11px] font-bold transition-all cursor-pointer shadow-xs"
+                        >
+                          Clear All
+                        </button>
                         {isPrincipalOrHR && (
                           <button
                             type="button"
@@ -4896,20 +5684,18 @@ export default function AppraisalReviews() {
                                     </div>
                                   </td>
                                   {[1, 2, 3, 4, 5].map((val) => {
-                                    const isChecked = currentVal === val;
+                                    const principalVal = principalAttitudeMarks[q.id];
+                                    const currentVal = (principalVal !== undefined && principalVal !== "") ? principalVal : attitudeRatings[q.id];
+                                    const isChecked = Number(currentVal) === val;
                                     const rubricItem = ATTITUDE_RATING_OPTIONS.find(o => o.value === val);
                                     return (
                                       <td
                                         key={val}
                                         onClick={() => {
-                                          if (!isPrincipalOrHR) {
-                                            handleSelectAttitudeRating(q.id, val);
-                                          }
+                                          handleSelectAttitudeRating(q.id, val);
                                         }}
-                                        className={`p-3.5 text-center select-none ${
-                                          !isPrincipalOrHR ? "cursor-pointer" : "cursor-default"
-                                        } transition-colors ${
-                                          isChecked ? "bg-indigo-50/80" : !isPrincipalOrHR ? "hover:bg-slate-100/70" : ""
+                                        className={`p-3.5 text-center select-none cursor-pointer transition-colors ${
+                                          isChecked ? "bg-indigo-50/80" : "hover:bg-slate-100/70"
                                         }`}
                                         title={`Score ${val}: ${rubricItem?.title || val}`}
                                       >
@@ -4935,11 +5721,15 @@ export default function AppraisalReviews() {
                                           min="1"
                                           max="5"
                                           step="0.5"
-                                          value={principalVal !== undefined ? principalVal : ""}
+                                          value={principalAttitudeMarks[q.id] !== undefined ? principalAttitudeMarks[q.id] : (attitudeRatings[q.id] !== undefined ? attitudeRatings[q.id] : "")}
                                           onChange={(e) => {
                                             const raw = e.target.value;
                                             const num = raw === "" ? "" : Math.min(5, Math.max(0, Number(raw)));
                                             setPrincipalAttitudeMarks(prev => ({
+                                              ...prev,
+                                              [q.id]: num
+                                            }));
+                                            setAttitudeRatings(prev => ({
                                               ...prev,
                                               [q.id]: num
                                             }));
@@ -5052,6 +5842,117 @@ export default function AppraisalReviews() {
             </>
           );
         })()}
+            </div>
+          </div>
+        )}
+
+        {/* Proof Preview Executive Modal */}
+        {viewingProof && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn"
+            onClick={() => setViewingProof(null)}
+          >
+            <div
+              className="bg-white rounded-3xl border border-slate-200 shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden animate-scaleUp"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="px-6 py-4 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white flex items-center justify-between border-b border-white/10 shrink-0">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center text-indigo-300 shrink-0">
+                    <FileText size={18} />
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-bold truncate max-w-md text-white">
+                      {viewingProof.name}
+                    </h3>
+                    <span className="text-[10px] text-slate-300 font-semibold uppercase tracking-wider block">
+                      Institutional Evidence Verification
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (viewingProof.url) {
+                        window.open(viewingProof.url, "_blank", "noopener,noreferrer");
+                      }
+                    }}
+                    className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+                    title="Open in new window"
+                  >
+                    <ExternalLink size={13} />
+                    <span className="hidden sm:inline">Open New Tab</span>
+                  </button>
+                  <a
+                    href={viewingProof.url}
+                    download={viewingProof.name}
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
+                    title="Download File"
+                  >
+                    <Download size={13} />
+                    <span className="hidden sm:inline">Download</span>
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => setViewingProof(null)}
+                    className="w-8 h-8 rounded-xl bg-white/10 hover:bg-rose-500 hover:text-white text-slate-300 transition-all flex items-center justify-center cursor-pointer ml-1"
+                    title="Close Preview"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Content Body */}
+              <div className="p-4 sm:p-6 overflow-y-auto flex-1 flex flex-col items-center justify-center bg-slate-50 min-h-[50vh]">
+                {viewingProof.mime === "application/pdf" || viewingProof.name?.toLowerCase().endsWith(".pdf") ? (
+                  <iframe
+                    src={viewingProof.url}
+                    className="w-full h-[70vh] rounded-2xl border border-slate-200 bg-white shadow-inner"
+                    title={viewingProof.name}
+                  />
+                ) : viewingProof.mime?.startsWith("image/") || /\.(jpg|jpeg|png|webp|gif|svg)$/i.test(viewingProof.name) ? (
+                  <div className="max-h-[70vh] flex items-center justify-center overflow-auto p-2">
+                    <img
+                      src={viewingProof.url}
+                      alt={viewingProof.name}
+                      className="max-h-[68vh] max-w-full rounded-2xl shadow-md object-contain border border-slate-200 bg-white"
+                    />
+                  </div>
+                ) : (
+                  <div className="text-center p-8 bg-white rounded-2xl border border-slate-200 shadow-sm max-w-md">
+                    <FileText size={48} className="mx-auto text-indigo-500 mb-3" />
+                    <h4 className="text-sm font-bold text-slate-800 mb-1">{viewingProof.name}</h4>
+                    <p className="text-xs text-slate-500 mb-4">
+                      This file format cannot be rendered directly in the embedded frame.
+                    </p>
+                    <a
+                      href={viewingProof.url}
+                      download={viewingProof.name}
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-md"
+                    >
+                      <Download size={14} /> Download Document
+                    </a>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="px-6 py-3 bg-white border-t border-slate-200 flex items-center justify-between text-xs text-slate-500 shrink-0">
+                <span className="font-semibold text-[11px]">
+                  Preview Mode • Secure Appraisal Document
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setViewingProof(null)}
+                  className="px-4 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-all cursor-pointer"
+                >
+                  Close Preview
+                </button>
+              </div>
             </div>
           </div>
         )}

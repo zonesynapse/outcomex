@@ -464,6 +464,46 @@ export default function AppraisalReviews() {
   const [attitudeRemarks, setAttitudeRemarks] = useState("");
   const [attitudeSaving, setAttitudeSaving] = useState(false);
 
+  // Helper to determine if an appraisal's attitude form is evaluated/submitted
+  const isAttitudeSubmittedToPrincipal = (app) => {
+    if (!app) return false;
+    if (app.attitudeSubmittedToPrincipal === true || app.attitudeEvaluation?.submittedToPrincipal === true) return true;
+    if (app.attitudeDraft || app.attitudeEvaluation?.isDraft === true) return false;
+    const evalObj = app.attitudeEvaluation || app.attitudeForm;
+    if (evalObj && evalObj.totalScore !== undefined && Number(evalObj.totalScore) > 0) return true;
+    if (evalObj && evalObj.ratings && Object.keys(evalObj.ratings).length > 0) return true;
+    return false;
+  };
+
+  const isAttitudeDraftStatus = (app) => {
+    if (!app) return false;
+    if (isAttitudeSubmittedToPrincipal(app)) return false;
+    return Boolean(app.attitudeDraft || app.attitudeEvaluation?.isDraft === true);
+  };
+
+  const getAttitudeScoreInfo = (app) => {
+    if (!app) return { isSubmitted: false, isDraft: false, totalScore: 0, maxScore: 0 };
+    const isSubmitted = isAttitudeSubmittedToPrincipal(app);
+    const isDraft = isAttitudeDraftStatus(app);
+    const evalObj = app.attitudeEvaluation || app.attitudeForm || {};
+    let totalScore = evalObj.totalScore;
+    if (totalScore === undefined || totalScore === null) {
+      const ratings = evalObj.ratings || evalObj.hodRatings || evalObj.principalRatings || {};
+      const ratingVals = Object.values(ratings);
+      if (ratingVals.length > 0) {
+        totalScore = ratingVals.reduce((sum, v) => sum + (Number(v) || 0), 0);
+      }
+    }
+    const questions = getAttitudeQuestions(app);
+    const maxScore = evalObj.maxScore || (questions.length * 5);
+    return {
+      isSubmitted,
+      isDraft,
+      totalScore: Number(totalScore) || 0,
+      maxScore: Number(maxScore) || (questions.length * 5)
+    };
+  };
+
   const handleOpenAttitudeModal = (app) => {
     setAttitudeAppraisal(app);
     const existing = app.attitudeEvaluation || app.attitudeForm || {};
@@ -505,6 +545,7 @@ export default function AppraisalReviews() {
       const average = evaluatedCount > 0 ? (totalScore / evaluatedCount).toFixed(2) : "0.0";
 
       const isNonTeaching = attitudeAppraisal.formType === "non_teaching" || attitudeAppraisal.collectionName === "non_teaching_appraisals";
+      const isSubmitToPrincipal = isPrincipalOrHR || attitudeAppraisal.formType === "hod" || evaluatedCount > 0;
 
       const evalPayload = {
         ...(attitudeAppraisal.attitudeEvaluation || {}),
@@ -530,7 +571,10 @@ export default function AppraisalReviews() {
         totalQuestions: activeQuestions.length,
         evaluatedAt: new Date().toISOString(),
         evaluatedBy: currentUser?.displayName || currentUser?.email || (isPrincipalOrHR ? "Principal" : "Reviewer"),
-        evaluatedByRole: userRole || (isPrincipalOrHR ? "Principal" : "Reviewer")
+        evaluatedByRole: userRole || (isPrincipalOrHR ? "Principal" : "Reviewer"),
+        submittedToPrincipal: isSubmitToPrincipal,
+        isDraft: !isSubmitToPrincipal,
+        submittedToPrincipalAt: isSubmitToPrincipal ? new Date().toISOString() : null
       };
 
       const targetColl = attitudeAppraisal.formType === "hod"
@@ -539,18 +583,22 @@ export default function AppraisalReviews() {
         ? "non_teaching_appraisals"
         : "faculty_appraisals";
 
-      await updateDoc(doc(db, targetColl, attitudeAppraisal.id), {
+      const updateData = {
         attitudeEvaluation: evalPayload,
-        attitudeForm: evalPayload
-      });
+        attitudeForm: evalPayload,
+        attitudeSubmittedToPrincipal: isSubmitToPrincipal,
+        attitudeSubmittedAt: isSubmitToPrincipal ? new Date().toISOString() : null,
+        attitudeDraft: isSubmitToPrincipal ? null : evalPayload
+      };
+
+      await updateDoc(doc(db, targetColl, attitudeAppraisal.id), updateData);
 
       // Update state locally
-      setAppraisals(prev => prev.map(a => a.id === attitudeAppraisal.id ? { ...a, attitudeEvaluation: evalPayload, attitudeForm: evalPayload } : a));
+      setAppraisals(prev => prev.map(a => a.id === attitudeAppraisal.id ? { ...a, ...updateData } : a));
       if (selectedAppraisal?.id === attitudeAppraisal.id) {
         setSelectedAppraisal(prev => ({
           ...prev,
-          attitudeEvaluation: evalPayload,
-          attitudeForm: evalPayload
+          ...updateData
         }));
       }
 
@@ -707,12 +755,13 @@ export default function AppraisalReviews() {
     setActiveDetailsTab(1);
 
     // Initialize HOD faculty criteria scores map
+    const bd = app.autoScore?.breakdown;
+    const allRows = bd ? [...(bd.part1Rows || []), ...(bd.part2Rows || [])] : [];
+
     const initialHodScores = {};
     if (app.hodReview?.hodScores) {
       Object.assign(initialHodScores, app.hodReview.hodScores);
-    } else if (app.autoScore?.breakdown) {
-      const bd = app.autoScore.breakdown;
-      const allRows = [...(bd.part1Rows || []), ...(bd.part2Rows || [])];
+    } else if (allRows.length > 0) {
       allRows.forEach((r) => {
         initialHodScores[r.id] = r.scored ?? 0;
       });
@@ -740,11 +789,13 @@ export default function AppraisalReviews() {
     };
     setPrincipalHodScoresMap(initHodKraScores);
 
-    const bd = app.autoScore?.breakdown;
-    const allRows = bd ? [...(bd.part1Rows || []), ...(bd.part2Rows || [])] : [];
     const initPrincipalTotal = allRows.length > 0
       ? allRows.reduce((a, r) => a + (Number(initialPrincipalScores[r.id] ?? initialHodScores[r.id] ?? r.scored) || 0), 0)
-      : (app.formType === "hod" ? (app.principalReview?.finalRating ?? app.totalScore ?? Object.values(initHodKraScores).reduce((a, b) => a + Number(b || 0), 0)) : "");
+      : (app.formType === "hod" 
+          ? (app.principalReview?.finalRating ?? app.totalScore ?? Object.values(initHodKraScores).reduce((a, b) => a + Number(b || 0), 0))
+          : (app.formType === "non_teaching" || app.collectionName === "non_teaching_appraisals")
+            ? (app.principalReview?.finalRating ?? app.performanceEvaluation?.totalMarks ?? 100)
+            : "");
 
     // Initialize non-teaching performance evaluation rating states
     const existingEval = app.performanceEvaluation;
@@ -859,16 +910,20 @@ export default function AppraisalReviews() {
       updatePayload.principalReview.principalScores = principalFacultyScoresMap;
       updatePayload.principalReview.principalPart1Total = p1PrincipalT;
       updatePayload.principalReview.principalPart2Total = p2PrincipalT;
-      updatePayload.principalReview.principalTotalScore = gPrincipalT;
-      if (!updatePayload.principalReview.finalRating) {
-        updatePayload.principalReview.finalRating = finalRating !== "" ? String(finalRating) : String(gPrincipalT);
-      }
+      updatePayload.principalReview.principalTotalScore = finalRating !== "" ? Number(finalRating) : gPrincipalT;
+      updatePayload.principalReview.finalRating = finalRating !== "" ? String(finalRating) : String(gPrincipalT);
     }
 
     if (isNonTeaching) {
+      const resolvedRatingNum = finalRating !== "" ? Number(finalRating) : totalScore;
+      if (updatePayload.principalReview) {
+        updatePayload.principalReview.principalTotalScore = resolvedRatingNum;
+        updatePayload.principalReview.finalRating = String(resolvedRatingNum);
+      }
       updatePayload.performanceEvaluation = {
         marks: nonTeachingEvalMarks,
         totalMarks: totalScore,
+        finalRating: resolvedRatingNum,
         gradeSecured: derivedGrade,
         specificComments: nonTeachingSpecificComment.trim(),
         recommendation: nonTeachingRecommendation,
@@ -1234,34 +1289,39 @@ export default function AppraisalReviews() {
                 >
                   <Printer size={14} /> Print PDF
                 </button>
-                <button
-                  onClick={() => handleOpenAttitudeModal(selectedAppraisal)}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border ${
-                    (selectedAppraisal.attitudeSubmittedToPrincipal === true || selectedAppraisal.attitudeEvaluation?.submittedToPrincipal === true)
-                      ? "bg-teal-50 hover:bg-teal-100 border-teal-200 text-teal-700"
-                      : (selectedAppraisal.attitudeDraft || selectedAppraisal.attitudeEvaluation?.isDraft)
-                      ? "bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-700"
-                      : "bg-indigo-50 hover:bg-indigo-100 border-indigo-200 text-indigo-700"
-                  }`}
-                  title={
-                    (selectedAppraisal.attitudeSubmittedToPrincipal === true || selectedAppraisal.attitudeEvaluation?.submittedToPrincipal === true)
-                      ? "Attitude Form (Submitted by HOD)"
-                      : (selectedAppraisal.attitudeDraft || selectedAppraisal.attitudeEvaluation?.isDraft)
-                      ? "Attitude Form (Draft on HOD end - Not yet submitted to Principal)"
-                      : "Attitude Form"
-                  }
-                >
-                  <Award size={14} /> Attitude Form
-                  {(selectedAppraisal.attitudeSubmittedToPrincipal === true || selectedAppraisal.attitudeEvaluation?.submittedToPrincipal === true) ? (
-                    <span className="ml-1 bg-teal-200 text-teal-900 px-1.5 py-0.2 rounded-full text-[10px] font-black">
-                      {selectedAppraisal.attitudeEvaluation?.totalScore ?? selectedAppraisal.attitudeForm?.totalScore}/{selectedAppraisal.attitudeEvaluation?.maxScore || selectedAppraisal.attitudeForm?.maxScore || (getAttitudeQuestions(selectedAppraisal).length * 5)}
-                    </span>
-                  ) : (selectedAppraisal.attitudeDraft || selectedAppraisal.attitudeEvaluation?.isDraft) ? (
-                    <span className="ml-1 bg-amber-200 text-amber-900 px-1.5 py-0.2 rounded-full text-[10px] font-black">
-                      Draft (HOD)
-                    </span>
-                  ) : null}
-                </button>
+                {(() => {
+                  const attInfo = getAttitudeScoreInfo(selectedAppraisal);
+                  return (
+                    <button
+                      onClick={() => handleOpenAttitudeModal(selectedAppraisal)}
+                      className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer border ${
+                        attInfo.isSubmitted
+                          ? "bg-teal-50 hover:bg-teal-100 border-teal-200 text-teal-700"
+                          : attInfo.isDraft
+                          ? "bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-700"
+                          : "bg-indigo-50 hover:bg-indigo-100 border-indigo-200 text-indigo-700"
+                      }`}
+                      title={
+                        attInfo.isSubmitted
+                          ? `Attitude Form (${selectedAppraisal.formType === "hod" ? "Evaluated" : "Submitted to Principal"}) - ${attInfo.totalScore}/${attInfo.maxScore}`
+                          : attInfo.isDraft
+                          ? "Attitude Form (Draft on HOD end - Not yet submitted to Principal)"
+                          : "Attitude Form"
+                      }
+                    >
+                      <Award size={14} /> Attitude Form
+                      {attInfo.isSubmitted ? (
+                        <span className="ml-1 bg-teal-200 text-teal-900 px-1.5 py-0.2 rounded-full text-[10px] font-black">
+                          {attInfo.totalScore}/{attInfo.maxScore}
+                        </span>
+                      ) : attInfo.isDraft ? (
+                        <span className="ml-1 bg-amber-200 text-amber-900 px-1.5 py-0.2 rounded-full text-[10px] font-black">
+                          Draft (HOD)
+                        </span>
+                      ) : null}
+                    </button>
+                  );
+                })()}
                 <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${selectedAppraisal.status === "Approved" ? "bg-emerald-500/20 text-emerald-700 border border-emerald-500/30" :
                     selectedAppraisal.status === "HOD_Approved" ? "bg-blue-500/20 text-blue-700 border border-blue-500/30" :
                       selectedAppraisal.status === "Submitted" ? "bg-amber-500/20 text-amber-700 border border-amber-500/30" :
@@ -4000,34 +4060,39 @@ export default function AppraisalReviews() {
                                   </>
                                 )}
                               </button>
-                              <button
-                                onClick={() => handleOpenAttitudeModal(app)}
-                                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold tracking-wide uppercase transition-all inline-flex items-center gap-1 cursor-pointer shadow-xs ${
-                                  (app.attitudeSubmittedToPrincipal === true || app.attitudeEvaluation?.submittedToPrincipal === true)
-                                    ? "bg-teal-700 hover:bg-teal-800 text-white"
-                                    : (app.attitudeDraft || app.attitudeEvaluation?.isDraft)
-                                    ? "bg-amber-600 hover:bg-amber-700 text-white"
-                                    : "bg-indigo-600 hover:bg-indigo-700 text-white"
-                                }`}
-                                title={
-                                  (app.attitudeSubmittedToPrincipal === true || app.attitudeEvaluation?.submittedToPrincipal === true)
-                                    ? "Attitude Form (Submitted by HOD)"
-                                    : (app.attitudeDraft || app.attitudeEvaluation?.isDraft)
-                                    ? "Attitude Form (Draft on HOD end - Not yet submitted to Principal)"
-                                    : "Attitude Form"
-                                }
-                              >
-                                <Award size={12} /> Attitude Form
-                                {(app.attitudeSubmittedToPrincipal === true || app.attitudeEvaluation?.submittedToPrincipal === true) ? (
-                                  <span className="ml-0.5 bg-black/25 text-white px-1.5 py-0.2 rounded text-[9px] font-black">
-                                    {app.attitudeEvaluation?.totalScore ?? app.attitudeForm?.totalScore}/{app.attitudeEvaluation?.maxScore || app.attitudeForm?.maxScore || (getAttitudeQuestions(app).length * 5)}
-                                  </span>
-                                ) : (app.attitudeDraft || app.attitudeEvaluation?.isDraft) ? (
-                                  <span className="ml-0.5 bg-amber-950/40 text-amber-100 px-1.5 py-0.2 rounded text-[9px] font-black">
-                                    Draft (HOD)
-                                  </span>
-                                ) : null}
-                              </button>
+                              {(() => {
+                                const attInfo = getAttitudeScoreInfo(app);
+                                return (
+                                  <button
+                                    onClick={() => handleOpenAttitudeModal(app)}
+                                    className={`px-3 py-1.5 rounded-lg text-[10px] font-bold tracking-wide uppercase transition-all inline-flex items-center gap-1 cursor-pointer shadow-xs ${
+                                      attInfo.isSubmitted
+                                        ? "bg-teal-700 hover:bg-teal-800 text-white"
+                                        : attInfo.isDraft
+                                        ? "bg-amber-600 hover:bg-amber-700 text-white"
+                                        : "bg-indigo-600 hover:bg-indigo-700 text-white"
+                                    }`}
+                                    title={
+                                      attInfo.isSubmitted
+                                        ? `Attitude Form (${app.formType === "hod" ? "Evaluated" : "Submitted to Principal"}) - ${attInfo.totalScore}/${attInfo.maxScore}`
+                                        : attInfo.isDraft
+                                        ? "Attitude Form (Draft on HOD end - Not yet submitted to Principal)"
+                                        : "Attitude Form"
+                                    }
+                                  >
+                                    <Award size={12} /> Attitude Form
+                                    {attInfo.isSubmitted ? (
+                                      <span className="ml-0.5 bg-black/25 text-white px-1.5 py-0.2 rounded text-[9px] font-black">
+                                        {attInfo.totalScore}/{attInfo.maxScore}
+                                      </span>
+                                    ) : attInfo.isDraft ? (
+                                      <span className="ml-0.5 bg-amber-950/40 text-amber-100 px-1.5 py-0.2 rounded text-[9px] font-black">
+                                        Draft (HOD)
+                                      </span>
+                                    ) : null}
+                                  </button>
+                                );
+                              })()}
                             </div>
                           </td>
                         </tr>
@@ -4152,15 +4217,33 @@ export default function AppraisalReviews() {
                   </div>
                 </div>
 
-                {/* Pending / Draft Banner */}
-                {(!attitudeAppraisal.attitudeSubmittedToPrincipal && !attitudeAppraisal.attitudeEvaluation?.submittedToPrincipal) && (
-                  <div className="bg-amber-50 border-b border-amber-200 px-6 py-2.5 flex items-center justify-between text-xs text-amber-900">
-                    <span className="font-bold flex items-center gap-1.5">
-                      <Clock size={14} className="text-amber-600" />
-                      Status: {attitudeAppraisal.attitudeDraft ? "Draft Saved on HOD end (Pending final submission to Principal)" : "Pending evaluation by HOD (Not yet submitted to Principal)"}
-                    </span>
-                  </div>
-                )}
+                {/* Evaluated / Pending / Draft Banner */}
+                {(() => {
+                  const attInfo = getAttitudeScoreInfo(attitudeAppraisal);
+                  const isSubmitted = attInfo.isSubmitted || (evaluatedCount > 0 && evaluatedCount === activeQuestions.length);
+                  return isSubmitted ? (
+                    <div className="bg-emerald-50 border-b border-emerald-200 px-6 py-2.5 flex items-center justify-between text-xs text-emerald-900">
+                      <span className="font-bold flex items-center gap-1.5">
+                        <CheckCircle2 size={14} className="text-emerald-600" />
+                        Status: {attitudeAppraisal.formType === "hod" ? "Evaluated & Recorded by Principal" : "Evaluated & Submitted to Principal"}
+                      </span>
+                      <span className="text-[11px] font-medium text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full">
+                        Completed ({currentTotal} / {maxScore})
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="bg-amber-50 border-b border-amber-200 px-6 py-2.5 flex items-center justify-between text-xs text-amber-900">
+                      <span className="font-bold flex items-center gap-1.5">
+                        <Clock size={14} className="text-amber-600" />
+                        Status: {attitudeAppraisal.attitudeDraft || attitudeAppraisal.attitudeEvaluation?.isDraft
+                          ? "Draft Saved (Pending final submission to Principal)"
+                          : attitudeAppraisal.formType === "hod"
+                          ? "Pending evaluation by Principal"
+                          : "Pending evaluation by HOD (Not yet submitted to Principal)"}
+                      </span>
+                    </div>
+                  );
+                })()}
 
                 {/* Quick Actions & Legend Bar */}
                 <div className="bg-blue-50/60 border-b border-blue-100 px-6 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs">

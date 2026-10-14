@@ -71,35 +71,38 @@ export default function HRLayout({ children }) {
   const isPrincipalHR = normalizedRole.includes("principal") || normalizedRole.includes("hr") || normalizedRole.includes("admin");
   const isCKCOE = userInst.toUpperCase().includes("CKCOE") || userInst.toUpperCase().includes("ENGINEERING");
 
-  let navItems = [];
+  let navItems = [
+    { id: "dashboard", label: "Dashboard", path: "/dashboard", icon: LayoutDashboard }
+  ];
+
   if (isPrincipalHR) {
-    navItems = [
+    navItems.push(
       { id: "appraisal-reviews", label: "Appraisal Reviews", path: "/reviews", icon: CheckCircle2 },
       { id: "gross-analytics", label: "Gross Analytics", path: "/gross-analytics", icon: BarChart3 },
       { id: "user-management", label: "User Management", path: "/users", icon: Users },
       { id: "appraisal-settings", label: "Appraisal Settings", path: "/settings", icon: Settings2 }
-    ];
+    );
   } else if (isCenterHead) {
     // Center Head (CKSPK only) — exclusive access to Coordinator HOD Appraisal form
-    navItems = [
+    navItems.push(
       { id: "coordinator-appraisal", label: "Coordinator Appraisal Request", path: "/coordinator-appraisal", icon: Award }
-    ];
+    );
   } else if (isCKCOE) {
-    navItems = [
+    navItems.push(
       { id: "faculty-appraisal", label: "Faculty Appraisal Request", path: "/faculty-appraisal", icon: GraduationCap },
       { id: "non-teaching-appraisal", label: "Non-Teaching Appraisal Request", path: "/non-teaching-appraisal", icon: FileText }
-    ];
+    );
   } else if (isCoordinator) {
-    navItems = [
+    navItems.push(
       { id: "coordinator-appraisal", label: "Coordinator Appraisal Request", path: "/coordinator-appraisal", icon: Award },
       { id: "appraisal-reviews", label: "Appraisal Reviews", path: "/reviews", icon: CheckCircle2 }
-    ];
+    );
   } else {
     // Default: School Teacher / Non-Teaching
-    navItems = [
+    navItems.push(
       { id: "teacher-appraisal", label: "Teacher Appraisal Request", path: "/teacher-appraisal", icon: GraduationCap },
       { id: "non-teaching-appraisal", label: "Non-Teaching Appraisal Request", path: "/non-teaching-appraisal", icon: FileText }
-    ];
+    );
   }
 
   return (

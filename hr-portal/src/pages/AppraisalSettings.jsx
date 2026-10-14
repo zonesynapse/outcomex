@@ -83,12 +83,11 @@ const defaultFields = [
   { id: "f_evenOther", title: "D) OTHER ACTIVITY (HRS)", description: "Other activity workload hours.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
   { id: "f_evenTotal", title: "EVEN TOTAL HOURS", description: "Even semester total workload.", type: "number", tabId: 1, tabName: "Profile & Workload", visible: true, parentId: "sec_profile_workload" },
 
-  // Tab 2: Subjects & Results
-  { id: "sec_subjects_results", title: "2.1 Subjects Handled & Pass Percentage", description: "Tabular evaluation of result percentages and student feedback targets.", type: "section_subjects_results", tabId: 2, tabName: "Subjects & Results", visible: true, evidenceRequired: false, evidenceMandatory: false },
-  { id: "f_subjects_odd_theory_title", title: "THEORY : Quarterly Examination", description: "Title header for Table 1 in 2.1", type: "text", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
-  { id: "f_subjects_odd_practical_title", title: "THEORY: Half Yearly Examination", description: "Title header for Table 2 in 2.1", type: "text", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
-  { id: "f_subjects_even_theory_title", title: "THEORY: Annual Examination", description: "Title header for Table 3 in 2.1", type: "text", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
-  { id: "f_subjects_even_practical_title", title: "PRACTICALS – Annual Examination", description: "Title header for Table 4 in 2.1", type: "text", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
+  { id: "sec_subjects_results", title: "2.1 Subjects Handled & Exam Pass Targets", description: "Tabular evaluation of result percentages and student feedback targets.", type: "section_subjects_results", tabId: 2, tabName: "Subjects & Results", visible: true, evidenceRequired: false, evidenceMandatory: false },
+  { id: "f_subjects_odd_theory_title", title: "THEORY Subjects (Odd Semester)", description: "Title header for Odd Semester Theory Subjects in 2.1", type: "text", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
+  { id: "f_subjects_odd_practical_title", title: "PRACTICAL / PROJECT Subjects (Odd Semester)", description: "Title header for Odd Semester Practical/Project Subjects in 2.1", type: "text", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
+  { id: "f_subjects_even_theory_title", title: "THEORY Subjects (Even Semester)", description: "Title header for Even Semester Theory Subjects in 2.1", type: "text", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
+  { id: "f_subjects_even_practical_title", title: "PRACTICAL / PROJECT Subjects (Even Semester)", description: "Title header for Even Semester Practical/Project Subjects in 2.1", type: "text", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
   { id: "f_subjects_class", title: "Class", description: "Class / Year / Branch column", type: "text", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
   { id: "f_subjects_code", title: "Subject", description: "Subject name column", type: "text", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
   { id: "f_subjects_appeared", title: "Appeared", description: "Appeared student count column", type: "number", tabId: 2, tabName: "Subjects & Results", visible: true, parentId: "sec_subjects_results" },
@@ -249,6 +248,30 @@ export default function AppraisalSettings() {
         if (f.id === "f_nptel_title" && (f.title?.includes("Workshop") || f.title?.includes("Program"))) {
           needsSave = true;
           return { ...f, title: "Title of the Course", visible: true };
+        }
+        if (f.id === "f_nptel_weeks" && (f.title?.includes("Days") || f.title?.includes("Day"))) {
+          needsSave = true;
+          return { ...f, title: "Weeks", visible: true };
+        }
+        if (f.id === "f_nptel_platform" && (f.title?.includes("Organization") || f.title?.includes("Institute"))) {
+          needsSave = true;
+          return { ...f, title: "Platform", visible: true };
+        }
+        if (f.id === "f_subjects_odd_theory_title" && (f.title?.includes("Quarterly") || f.title?.includes("THEORY : Quarterly"))) {
+          needsSave = true;
+          return { ...f, title: "THEORY Subjects (Odd Semester)", description: "Title header for Odd Semester Theory Subjects in 2.1" };
+        }
+        if (f.id === "f_subjects_odd_practical_title" && (f.title?.includes("Half Yearly") || f.title?.includes("THEORY: Half Yearly"))) {
+          needsSave = true;
+          return { ...f, title: "PRACTICAL / PROJECT Subjects (Odd Semester)", description: "Title header for Odd Semester Practical/Project Subjects in 2.1" };
+        }
+        if (f.id === "f_subjects_even_theory_title" && (f.title?.includes("Annual Examination") || f.title?.includes("THEORY: Annual"))) {
+          needsSave = true;
+          return { ...f, title: "THEORY Subjects (Even Semester)", description: "Title header for Even Semester Theory Subjects in 2.1" };
+        }
+        if (f.id === "f_subjects_even_practical_title" && (f.title?.includes("Annual Examination") || f.title?.includes("PRACTICALS – Annual"))) {
+          needsSave = true;
+          return { ...f, title: "PRACTICAL / PROJECT Subjects (Even Semester)", description: "Title header for Even Semester Practical/Project Subjects in 2.1" };
         }
         const coreMainSections = new Set([
           "sec_roles_department",
