@@ -7,7 +7,7 @@ import {
 import {
   Lock, Eye, EyeOff, CheckCircle2, XCircle, FileText, Upload, Sparkles, AlertCircle,
   Send, Edit3, BookOpen, Layers, RefreshCw, ChevronRight, Landmark, X, Printer,
-  ShieldCheck, Award, FileCheck, Building2, Check, ArrowLeft, Info, HelpCircle,
+  ShieldCheck, Award, FileCheck, Building2, Check, ArrowLeft, ArrowRight, Info, HelpCircle,
   ClipboardCheck, Mail, Camera, ExternalLink, Split
 } from "lucide-react";
 import { uploadFile } from "../../utils/fileUpload";
@@ -253,8 +253,52 @@ export default function ExternalSetterWorkbench() {
   const [authenticating, setAuthenticating] = useState(false);
 
   // Assignment details
+  const [activeAssignmentId, setActiveAssignmentId] = useState(urlAssignmentId || "");
   const [assignment, setAssignment] = useState(null);
   const [loadingAssignment, setLoadingAssignment] = useState(true);
+
+  // Synchronize activeAssignmentId from URL query param
+  useEffect(() => {
+    if (urlAssignmentId) {
+      setActiveAssignmentId(urlAssignmentId);
+    }
+  }, [urlAssignmentId]);
+
+  // Automatic assignment discovery when authenticatedSetter is logged in without urlAssignmentId in URL
+  useEffect(() => {
+    if (activeAssignmentId || !authenticatedSetter?.email) return;
+
+    const resolveSetterAssignment = async () => {
+      try {
+        setLoadingAssignment(true);
+        const q = query(
+          collection(db, "coe_setter_assignments"),
+          where("setterEmail", "==", authenticatedSetter.email.toLowerCase().trim())
+        );
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          const active = docs.find((d) => d.status !== "declined") || docs[0];
+          if (active) setActiveAssignmentId(active.id);
+        } else if (authenticatedSetter.id) {
+          const q2 = query(
+            collection(db, "coe_setter_assignments"),
+            where("setterId", "==", authenticatedSetter.id)
+          );
+          const snap2 = await getDocs(q2);
+          if (!snap2.empty) {
+            setActiveAssignmentId(snap2.docs[0].id);
+          }
+        }
+      } catch (err) {
+        console.warn("Error discovering setter assignment:", err);
+      } finally {
+        setLoadingAssignment(false);
+      }
+    };
+
+    resolveSetterAssignment();
+  }, [authenticatedSetter, activeAssignmentId]);
 
   // Active Exam Session fallback from coe_exam_sessions
   const [activeExamSessionName, setActiveExamSessionName] = useState("Nov./Dec. 2026");
@@ -326,7 +370,8 @@ export default function ExternalSetterWorkbench() {
     { id: "bank_details", text: "Whether the bank account details in the claim bill are provided correctly?" }
   ], []);
 
-  const [checklistResponses, setChecklistResponses] = useState({});
+  const [checklistResponsesA, setChecklistResponsesA] = useState({});
+  const [checklistResponsesB, setChecklistResponsesB] = useState({});
   const [examMonthYear, setExamMonthYear] = useState("Nov./Dec. 2026");
 
   useEffect(() => {
@@ -334,14 +379,6 @@ export default function ExternalSetterWorkbench() {
       setExamMonthYear(effectiveExamSession);
     }
   }, [effectiveExamSession]);
-
-  const isChecklistComplete = useMemo(() => {
-    return CHECKLIST_ITEMS.every(item => checklistResponses[item.id] === "YES");
-  }, [CHECKLIST_ITEMS, checklistResponses]);
-
-  const verifiedCount = useMemo(() => {
-    return CHECKLIST_ITEMS.filter(item => checklistResponses[item.id] === "YES").length;
-  }, [CHECKLIST_ITEMS, checklistResponses]);
 
   // Claim Bill Modal & Form States
   const [showClaimBillModal, setShowClaimBillModal] = useState(false);
@@ -470,27 +507,88 @@ export default function ExternalSetterWorkbench() {
   const currentQp = isSetB ? qpDataB : qpData;
   const setCurrentQp = isSetB ? setQpDataB : setQpData;
 
+  const isNumSetsTwo = Number(assignment?.numSets) === 2;
+
+  const isChecklistCompleteA = useMemo(() => {
+    return CHECKLIST_ITEMS.every(item => checklistResponsesA[item.id] === "YES");
+  }, [CHECKLIST_ITEMS, checklistResponsesA]);
+
+  const isChecklistCompleteB = useMemo(() => {
+    return CHECKLIST_ITEMS.every(item => checklistResponsesB[item.id] === "YES");
+  }, [CHECKLIST_ITEMS, checklistResponsesB]);
+
+  const verifiedCountA = useMemo(() => {
+    return CHECKLIST_ITEMS.filter(item => checklistResponsesA[item.id] === "YES").length;
+  }, [CHECKLIST_ITEMS, checklistResponsesA]);
+
+  const verifiedCountB = useMemo(() => {
+    return CHECKLIST_ITEMS.filter(item => checklistResponsesB[item.id] === "YES").length;
+  }, [CHECKLIST_ITEMS, checklistResponsesB]);
+
+  // Contextual checklist for the active tab (Set A vs Set B)
+  const isChecklistComplete = isSetB ? isChecklistCompleteB : isChecklistCompleteA;
+  const verifiedCount = isSetB ? verifiedCountB : verifiedCountA;
+  const checklistResponses = isSetB ? checklistResponsesB : checklistResponsesA;
+  const setChecklistResponses = isSetB ? setChecklistResponsesB : setChecklistResponsesA;
+
+  // Whether all required sets have their checklists verified
+  const areAllSetsChecklistComplete = isNumSetsTwo
+    ? (isChecklistCompleteA && isChecklistCompleteB)
+    : isChecklistCompleteA;
+
   const [submittingToCoe, setSubmittingToCoe] = useState(false);
   const [submittedSuccess, setSubmittedSuccess] = useState(false);
 
+  // Unified submission state: true if freshly submitted or already stored in Firestore
+  const isSubmitted = Boolean(submittedSuccess || assignment?.status === "submitted");
+  const isClaimBillReadOnly = Boolean(isSubmitted || claimBillStep === "verify");
+
   // 1. Fetch Assignment Document & Pattern Data dynamically from Firestore
   useEffect(() => {
-    if (!urlAssignmentId) {
+    if (!activeAssignmentId) {
       setLoadingAssignment(false);
       return;
     }
 
-    const unsub = onSnapshot(doc(db, "coe_setter_assignments", urlAssignmentId), async (snap) => {
+    const unsub = onSnapshot(doc(db, "coe_setter_assignments", activeAssignmentId), async (snap) => {
       if (snap.exists()) {
         const data = snap.data();
         setAssignment({ id: snap.id, ...data });
 
+        const isPaperSubmitted = data.status === "submitted" || !!data.paperSubmittedAt;
+        const isAccepted = data.acceptanceStatus === "Interested" || data.status === "accepted" || !!data.signatureUrl;
+
         if (data.acceptanceStatus) {
           setInterestStatus(data.acceptanceStatus);
-          setAcceptanceSubmitted(true);
         }
         if (data.signatureUrl) {
           setSignatureUrl(data.signatureUrl);
+        }
+        if (isAccepted) {
+          setAcceptanceSubmitted(true);
+        }
+
+        if (data.checklistResponsesA) {
+          setChecklistResponsesA(data.checklistResponsesA);
+        } else if (data.checklistResponses) {
+          setChecklistResponsesA(data.checklistResponses);
+        }
+        if (data.checklistResponsesB) {
+          setChecklistResponsesB(data.checklistResponsesB);
+        }
+        if (data.claimBillData) {
+          setClaimBillData((prev) => ({ ...prev, ...data.claimBillData }));
+        }
+
+        // Automatic smart view routing upon login/reload:
+        // 1. If question paper is already submitted, lock workbench directly to "preview"
+        // 2. Else if acceptance form is already submitted, advance directly to "editor"
+        //    (Never ask for acceptance or signature again!)
+        if (data.status === "submitted") {
+          setSubmittedSuccess(true);
+          setViewState("preview");
+        } else if (isAccepted) {
+          setViewState((prev) => (prev === "acceptance" ? "editor" : prev));
         }
 
         // If paper was already saved/submitted, use stored paper
@@ -569,7 +667,14 @@ export default function ExternalSetterWorkbench() {
     });
 
     return () => unsub();
-  }, [urlAssignmentId]);
+  }, [activeAssignmentId]);
+
+  // Guard: If question paper is already submitted, editing questions is strictly locked
+  useEffect(() => {
+    if ((submittedSuccess || assignment?.status === "submitted") && viewState === "editor") {
+      setViewState("preview");
+    }
+  }, [submittedSuccess, assignment?.status, viewState]);
 
   // 2. Fetch Syllabus for Assigned Subject dynamically from Firestore
   useEffect(() => {
@@ -799,6 +904,12 @@ export default function ExternalSetterWorkbench() {
 
   // 5. Submit Acceptance Form
   const handleSubmitAcceptance = async () => {
+    const targetAssignmentId = assignment?.id || activeAssignmentId || urlAssignmentId;
+    if (!targetAssignmentId) {
+      alert("Assignment record not found. Please ensure you are logged in with the official link sent by COE.");
+      return;
+    }
+
     if (interestStatus === "Interested" && !signatureUrl) {
       alert("Please upload your digital signature before accepting.");
       return;
@@ -806,16 +917,25 @@ export default function ExternalSetterWorkbench() {
 
     setUploadingSig(true);
     try {
-      await updateDoc(doc(db, "coe_setter_assignments", assignment.id), removeUndefinedFields({
+      const acceptancePayload = removeUndefinedFields({
         acceptanceStatus: interestStatus,
         signatureUrl: signatureUrl || null,
         status: interestStatus === "Interested" ? "accepted" : "declined",
         updatedAt: serverTimestamp()
+      });
+
+      await setDoc(doc(db, "coe_setter_assignments", targetAssignmentId), acceptancePayload, { merge: true });
+
+      setAssignment((prev) => ({
+        ...(prev || {}),
+        ...acceptancePayload,
+        id: targetAssignmentId
       }));
 
       setAcceptanceSubmitted(true);
       if (interestStatus === "Interested") {
-        alert("Acceptance form submitted successfully! You can now start preparing the question paper.");
+        alert("Acceptance form submitted successfully! Proceeding to Question Paper Editor.");
+        setViewState("editor");
       } else {
         alert("Your response ('Not Interested') has been communicated to the Controller of Examinations.");
       }
@@ -826,13 +946,28 @@ export default function ExternalSetterWorkbench() {
     }
   };
 
-  // 6. Click "Move to COE" -> Validate Checklist -> Open Claim Bill Form Modal
+  // 6. Click "Move to COE" -> Validate Checklists for all sets -> Open Claim Bill Form Modal
   const handleMoveToCoe = () => {
     if (!validateAllSplitQuestions()) return;
-    if (!isChecklistComplete) {
-      alert("Please complete all 12 items of the Question Paper Setting Verification Checklist before submitting to COE.");
-      setShowChecklistModal(true);
-      return;
+    if (isNumSetsTwo) {
+      if (!isChecklistCompleteA) {
+        alert("Please complete the 12-point Question Paper Setting Verification Checklist for Set A before submitting to COE.");
+        setActiveSet("setA");
+        setShowChecklistModal(true);
+        return;
+      }
+      if (!isChecklistCompleteB) {
+        alert("Please complete the 12-point Question Paper Setting Verification Checklist for Set B before submitting to COE.");
+        setActiveSet("setB");
+        setShowChecklistModal(true);
+        return;
+      }
+    } else {
+      if (!isChecklistCompleteA) {
+        alert("Please complete all 12 items of the Question Paper Setting Verification Checklist before submitting to COE.");
+        setShowChecklistModal(true);
+        return;
+      }
     }
 
     setClaimBillStep("form");
@@ -961,13 +1096,23 @@ export default function ExternalSetterWorkbench() {
   const handleFinalSubmitToCoe = async () => {
     setSubmittingToCoe(true);
     try {
+      const targetAssignmentId = assignment?.id || activeAssignmentId || urlAssignmentId;
+      if (!targetAssignmentId) {
+        throw new Error("Assignment identifier not found. Please reload or use the link provided by COE.");
+      }
+
       const numSetsToSubmit = Number(assignment?.numSets) || 1;
       const sanitizedPaperA = removeUndefinedFields(qpData);
       const sanitizedPaperB = numSetsToSubmit === 2 && qpDataB ? removeUndefinedFields(qpDataB) : null;
-      const sanitizedChecklist = removeUndefinedFields(checklistResponses);
+      const sanitizedChecklistA = removeUndefinedFields(checklistResponsesA);
+      const sanitizedChecklistB = numSetsToSubmit === 2 ? removeUndefinedFields(checklistResponsesB) : null;
       const remuneration = numSetsToSubmit === 2 ? 3000 : 2000;
       const sanitizedClaimBill = removeUndefinedFields({
         ...claimBillData,
+        setterName: authenticatedSetter?.name || assignment?.setterName || claimBillData.setterName || "",
+        departmentInstitution: authenticatedSetter?.collegeName || assignment?.setterCollege || claimBillData.departmentInstitution || "",
+        emailId: authenticatedSetter?.email || assignment?.setterEmail || claimBillData.emailId || "",
+        accHolderName: claimBillData.accHolderName || authenticatedSetter?.name || assignment?.setterName || "",
         subjectCode: assignment?.subjectCode || "",
         subjectTitle: assignment?.subjectTitle || "",
         numSets: numSetsToSubmit,
@@ -977,23 +1122,37 @@ export default function ExternalSetterWorkbench() {
 
       const updatePayload = {
         status: "submitted",
+        paperSubmittedAt: new Date().toISOString(),
         submittedPaper: sanitizedPaperA,
+        submittedPaperA: sanitizedPaperA,
         checklistVerified: true,
-        checklistResponses: sanitizedChecklist,
-        examMonthYear: examMonthYear || "",
+        checklistResponses: sanitizedChecklistA,
+        checklistResponsesA: sanitizedChecklistA,
+        examMonthYear: examMonthYear || assignment?.examSession || "",
         claimBillData: sanitizedClaimBill,
-        submittedAt: serverTimestamp()
+        submittedAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
       };
 
       if (sanitizedPaperB) {
         updatePayload.submittedPaperB = sanitizedPaperB;
+        updatePayload.checklistResponsesB = sanitizedChecklistB;
       }
 
-      await updateDoc(doc(db, "coe_setter_assignments", assignment.id), updatePayload);
+      await setDoc(doc(db, "coe_setter_assignments", targetAssignmentId), updatePayload, { merge: true });
+
+      setAssignment((prev) => ({
+        ...(prev || {}),
+        ...updatePayload,
+        id: targetAssignmentId
+      }));
 
       setShowClaimBillModal(false);
       setSubmittedSuccess(true);
+      setViewState("preview");
+      alert("Question Paper(s), Verification Checklist and Remuneration Claim Bill submitted successfully to COE!");
     } catch (err) {
+      console.error("Submission error:", err);
       alert("Failed to submit question paper: " + err.message);
     } finally {
       setSubmittingToCoe(false);
@@ -1614,7 +1773,7 @@ export default function ExternalSetterWorkbench() {
             {/* UNLOCK START TO PREPARE QUESTION PAPER BUTTON */}
             <div className="flex justify-center pt-4">
               <button
-                onClick={() => setViewState("editor")}
+                onClick={() => setViewState(assignment?.status === "submitted" ? "preview" : "editor")}
                 disabled={!acceptanceSubmitted || interestStatus !== "Interested"}
                 className={`px-8 py-4 rounded-2xl font-black text-sm transition-all flex items-center gap-3 shadow-xl cursor-pointer ${acceptanceSubmitted && interestStatus === "Interested"
                   ? "bg-[#120c7a] hover:bg-[#0e0a60] text-white shadow-indigo-900/30 active:scale-95"
@@ -1622,7 +1781,11 @@ export default function ExternalSetterWorkbench() {
                   }`}
               >
                 <Sparkles className="h-5 w-5 text-amber-400" />
-                <span>Start to Prepare Question Paper</span>
+                <span>
+                  {assignment?.status === "submitted"
+                    ? "View Submitted Question Paper"
+                    : "Start to Prepare Question Paper"}
+                </span>
                 <ChevronRight className="h-5 w-5" />
               </button>
             </div>
@@ -1633,118 +1796,9 @@ export default function ExternalSetterWorkbench() {
         {/* VIEW 2: QUESTION PAPER PREPARATION WORKBENCH */}
         {/* ========================================================================= */}
         {viewState === "editor" && (
-          <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 w-full">
+          <div className="w-full max-w-7xl mx-auto space-y-6">
 
-            {/* Left Sidebar: Course Syllabus Viewer (CO1 to CO5) */}
-            <div className="xl:col-span-3 bg-white border border-zinc-200 rounded-3xl p-5 shadow-sm h-fit space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-zinc-100">
-                <div className="flex items-center gap-2 text-[#120c7a] font-black text-xs uppercase tracking-wider">
-                  <BookOpen className="h-4 w-4" />
-                  <span>Subject Syllabus</span>
-                </div>
-                <span className="text-[10px] font-black bg-blue-50 text-[#120c7a] border border-blue-100 px-2 py-0.5 rounded-md">
-                  {assignment.subjectCode}
-                </span>
-              </div>
-
-              {(assignment?.syllabusUrl || assignment?.syllabusFileUrl) ? (
-                <div className="space-y-3">
-                  <div className="p-2.5 bg-blue-50 border border-blue-200/90 rounded-2xl text-[11px] font-bold text-[#120c7a] flex items-center justify-between">
-                    <span className="truncate max-w-[200px]">📄 {assignment.syllabusFileName || "Course Syllabus Document"}</span>
-                    <button
-                      type="button"
-                      onClick={() => setShowSyllabusDrawer(true)}
-                      className="text-[10px] text-blue-700 font-extrabold hover:text-blue-900 bg-white px-2 py-0.5 rounded-md border border-blue-200 shadow-2xs shrink-0 cursor-pointer"
-                    >
-                      Expand Viewer
-                    </button>
-                  </div>
-                  <DocumentEmbedViewer
-                    docUrl={assignment.syllabusUrl || assignment.syllabusFileUrl}
-                    rawLink={assignment.syllabusRawLink}
-                    title={`${assignment?.subjectCode} - Course Syllabus`}
-                    fileName={assignment.syllabusFileName}
-                    minHeight="580px"
-                  />
-                </div>
-              ) : syllabusData ? (
-                <div className="space-y-3 max-h-[75vh] overflow-y-auto pr-1">
-                  {syllabusData.units?.map((u, idx) => (
-                    <div key={idx} className="p-3.5 rounded-2xl bg-zinc-50 border border-zinc-200 space-y-1">
-                      <span className="font-extrabold text-[#120c7a] text-xs block">
-                        {u.title || `Unit ${u.unit || idx + 1}`}
-                      </span>
-                      <p className="text-zinc-600 text-[11px] leading-relaxed font-medium">
-                        {u.topics}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="py-8 text-center text-zinc-500 text-xs font-semibold">
-                  No syllabus document or unit details available.
-                </div>
-              )}
-            </div>
-
-            {/* Right Main Editor: ESE Question Paper Generator */}
-            <div className="xl:col-span-9 space-y-6">
-
-              {/* OFFICIAL COE QUESTION PAPER SETTING GUIDELINES BANNER CARD */}
-              <div className="bg-gradient-to-r from-blue-900 via-[#120c7a] to-indigo-900 rounded-3xl p-5 text-white shadow-md border border-blue-800/40 space-y-3">
-                <div className="flex items-center justify-between border-b border-white/15 pb-2.5">
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-2 rounded-xl bg-amber-400 text-slate-950 font-black shadow-xs">
-                      <BookOpen className="h-4.5 w-4.5" />
-                    </div>
-                    <div>
-                      <h3 className="font-black text-white text-sm tracking-tight flex items-center gap-2">
-                        Question Paper Setting Guidelines & Instructions
-                        <span className="px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-300 text-[10px] font-extrabold uppercase border border-amber-400/30">
-                          Official COE Regulations
-                        </span>
-                      </h3>
-                      <p className="text-[11px] text-blue-200/90 font-medium">
-                        Mandatory rules configured by the Controller of Examinations for question paper setting.
-                      </p>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => setShowGuidelinesCollapse(!showGuidelinesCollapse)}
-                    className="text-xs font-extrabold text-blue-200 hover:text-white bg-white/10 hover:bg-white/20 px-3 py-1 rounded-xl border border-white/20 transition-all cursor-pointer flex items-center gap-1.5"
-                  >
-                    <span>{showGuidelinesCollapse ? "Hide Rules" : "Show Rules"}</span>
-                  </button>
-                </div>
-
-                {showGuidelinesCollapse && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 text-xs text-blue-50 font-medium pt-1">
-                    {(qpGuidelines.length > 0 ? qpGuidelines : [
-                      { id: "g1", text: "Ensure all questions strictly align with the designated Bloom's Taxonomy cognitive levels (K1 to K6).", category: "Mandatory" },
-                      { id: "g2", text: "Each question must map directly to its corresponding Course Outcome (CO1 to CO5).", category: "CO Mapping" },
-                      { id: "g3", text: "For Either-OR choice questions (Part B/C), maintain equal difficulty and mark distribution across Option (a) and Option (b).", category: "Format" },
-                      { id: "g4", text: "Use the built-in CKEditor MathJax tool for mathematical formulas and upload clear vector/image diagrams.", category: "Formatting" },
-                      { id: "g5", text: "Strictly maintain absolute secrecy and confidentiality of the question paper framed.", category: "Confidential" }
-                    ]).map((g, idx) => (
-                      <div key={g.id || idx} className="flex items-start gap-2.5 bg-white/10 p-3 rounded-2xl border border-white/10">
-                        <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0 mt-0.5" />
-                        <div className="space-y-0.5">
-                          {g.category && (
-                            <span className="text-[9px] font-black uppercase tracking-wider text-amber-300 bg-amber-400/20 px-1.5 py-0.5 rounded mr-1.5">
-                              {g.category}
-                            </span>
-                          )}
-                          <span className="leading-relaxed text-white font-serif text-[11.5px]">{g.text}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="bg-white border border-zinc-200 rounded-3xl p-6 shadow-sm space-y-6">
+            <div className="bg-white border border-zinc-200 rounded-3xl p-6 shadow-sm space-y-6">
                 {/* Image Limit Guideline Banner matching Image 1 */}
                 <div className="p-3.5 rounded-2xl bg-blue-50/80 border border-blue-200/90 text-blue-900 text-xs font-semibold flex items-center gap-2.5 shadow-2xs">
                   <div className="p-1.5 rounded-lg bg-blue-600 text-white shrink-0">
@@ -1762,44 +1816,84 @@ export default function ExternalSetterWorkbench() {
                       ESE Question Paper Editor
                     </h2>
                     <p className="text-zinc-500 text-xs font-semibold mt-0.5">
-                      Structured text editor according to ESE Pattern ({currentQp.maxMarks} Marks).
+                      Structured text editor according to ESE Pattern ({currentQp.maxMarks} Marks). Fill questions and proceed to Preview below.
                     </p>
                   </div>
 
-                  <button
-                    onClick={() => setViewState("preview")}
-                    className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs flex items-center gap-2 shadow-md transition-all cursor-pointer"
-                  >
-                    <Eye className="h-4 w-4" />
-                    <span>Preview Question Paper</span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-extrabold text-[#120c7a] bg-blue-50 border border-blue-200 px-3 py-1.5 rounded-xl shadow-2xs">
+                      Regulation: {assignment?.regulation || "AU - R2021"}
+                    </span>
+                  </div>
                 </div>
 
                 {/* Dual Paper Switcher for Editor (Set A vs Set B) */}
-                {Number(assignment?.numSets) === 2 && (
-                  <div className="flex flex-wrap items-center gap-2 p-2 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl border border-blue-200 shadow-2xs">
-                    <span className="text-xs font-black text-[#120c7a] px-2 flex items-center gap-1.5">
-                      <Layers className="h-4 w-4" /> Active Question Paper:
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setActiveSet("setA")}
-                      className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${activeSet === "setA" ? "bg-[#120c7a] text-white shadow-sm ring-2 ring-blue-400/30" : "bg-white text-zinc-700 hover:bg-zinc-100 border border-zinc-200"}`}
-                    >
-                      <span>Paper Set A (Paper 1)</span>
-                      {activeSet === "setA" && <span className="h-2 w-2 rounded-full bg-emerald-400" />}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setActiveSet("setB")}
-                      className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${activeSet === "setB" ? "bg-[#120c7a] text-white shadow-sm ring-2 ring-blue-400/30" : "bg-white text-zinc-700 hover:bg-zinc-100 border border-zinc-200"}`}
-                    >
-                      <span>Paper Set B (Paper 2)</span>
-                      {activeSet === "setB" && <span className="h-2 w-2 rounded-full bg-emerald-400" />}
-                    </button>
-                    <span className="ml-auto text-[11px] font-bold text-indigo-900 bg-white px-2.5 py-1 rounded-lg border border-indigo-100">
-                      Currently Editing: <strong className="text-[#120c7a]">{activeSet === "setA" ? "Set A" : "Set B"}</strong>
-                    </span>
+                {isNumSetsTwo && (
+                  <div className="space-y-2.5">
+                    <div className="flex flex-wrap items-center gap-2 p-2 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl border border-blue-200 shadow-2xs">
+                      <span className="text-xs font-black text-[#120c7a] px-2 flex items-center gap-1.5">
+                        <Layers className="h-4 w-4" /> Active Question Paper:
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setActiveSet("setA")}
+                        className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${activeSet === "setA" ? "bg-[#120c7a] text-white shadow-sm ring-2 ring-blue-400/30" : "bg-white text-zinc-700 hover:bg-zinc-100 border border-zinc-200"}`}
+                      >
+                        <span>Paper Set A (Paper 1)</span>
+                        {isChecklistCompleteA ? (
+                          <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded font-mono">12/12 ✓</span>
+                        ) : (
+                          <span className="text-[10px] bg-amber-500/20 text-amber-700 px-1.5 py-0.5 rounded font-mono">Draft</span>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setActiveSet("setB")}
+                        className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${activeSet === "setB" ? "bg-[#120c7a] text-white shadow-sm ring-2 ring-blue-400/30" : "bg-white text-zinc-700 hover:bg-zinc-100 border border-zinc-200"}`}
+                      >
+                        <span>Paper Set B (Paper 2)</span>
+                        {isChecklistCompleteB ? (
+                          <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded font-mono">12/12 ✓</span>
+                        ) : (
+                          <span className="text-[10px] bg-amber-500/20 text-amber-700 px-1.5 py-0.5 rounded font-mono">Draft</span>
+                        )}
+                      </button>
+                      <span className="ml-auto text-[11px] font-bold text-indigo-900 bg-white px-2.5 py-1 rounded-lg border border-indigo-100">
+                        Currently Editing: <strong className="text-[#120c7a]">{activeSet === "setA" ? "Set A" : "Set B"}</strong>
+                      </span>
+                    </div>
+
+                    {/* Guidance banner for dual sets */}
+                    {activeSet === "setB" && isChecklistCompleteA && (
+                      <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs font-bold text-emerald-900 flex items-center justify-between gap-3 shadow-2xs">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                          <span>Question Paper Set A is verified (12/12) ✓. Currently generating & preparing <strong>Question Paper Set B</strong>.</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setActiveSet("setA")}
+                          className="text-[11px] underline text-[#120c7a] font-extrabold hover:text-indigo-800 cursor-pointer shrink-0"
+                        >
+                          Switch back to Edit Set A
+                        </button>
+                      </div>
+                    )}
+                    {activeSet === "setA" && isChecklistCompleteA && (
+                      <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 text-xs font-bold text-[#120c7a] flex items-center justify-between gap-3 shadow-2xs">
+                        <div className="flex items-center gap-2">
+                          <Info className="h-4 w-4 text-[#120c7a] shrink-0" />
+                          <span>Set A checklist is verified ✓. You can modify Set A questions anytime before final submission to COE.</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setActiveSet("setB")}
+                          className="px-3 py-1 bg-[#120c7a] text-white rounded-lg text-xs font-black shadow-xs hover:bg-[#0e0a60] cursor-pointer shrink-0"
+                        >
+                          Switch to Set B →
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -1875,21 +1969,10 @@ export default function ExternalSetterWorkbench() {
                               </div>
                             </div>
 
-                            {/* Question Text Area with CKEditor */}
+                            {/* Question Text Area / Sub-parts Area */}
                             <div className="space-y-3">
-                              <QuestionCKEditor
-                                id={`sec_${activeSet}_${secIdx}_q_${qIdx}_main`}
-                                value={q.text || ""}
-                                onChange={(val) => {
-                                  const updated = JSON.parse(JSON.stringify(currentQp));
-                                  updated.sections[secIdx].questions[qIdx].text = val;
-                                  setCurrentQp(updated);
-                                }}
-                                placeholder={`Enter text for Question ${q.qNo}${q.optionB !== undefined ? '(a)' : ''}...`}
-                              />
-
                               {/* Split Question Toggle & Controls for Option A */}
-                              <div className="p-3 bg-blue-50/60 border border-blue-200/80 rounded-xl space-y-3 font-sans">
+                              <div className="p-3.5 bg-blue-50/60 border border-blue-200/80 rounded-2xl space-y-3 font-sans">
                                 <div className="flex flex-wrap items-center justify-between gap-2">
                                   <label className="text-xs font-black text-[#120c7a] uppercase flex items-center gap-1.5">
                                     <Split className="h-3.5 w-3.5 text-[#120c7a]" />
@@ -1916,19 +1999,17 @@ export default function ExternalSetterWorkbench() {
                                   </div>
                                 </div>
 
-                                {q.isSplit && (
+                                {q.isSplit ? (
                                   <div className="space-y-4 pt-2.5 border-t border-blue-200/70">
                                     <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-2.5 rounded-lg border border-blue-200">
                                       <span className="text-xs font-bold text-zinc-800">Select Number of Sub-Parts:</span>
                                       <select
                                         value={q.subCount || q.subParts?.length || 2}
                                         onChange={(e) => handleChangeSubCount(secIdx, qIdx, false, Number(e.target.value))}
-                                        className="bg-blue-50 border border-blue-300 text-xs font-bold text-[#120c7a] rounded-lg px-2.5 py-1"
+                                        className="bg-blue-50 border border-blue-300 text-xs font-bold text-[#120c7a] rounded-lg px-2.5 py-1 cursor-pointer"
                                       >
                                         <option value={2}>2 Sub-Parts (i, ii)</option>
                                         <option value={3}>3 Sub-Parts (i, ii, iii)</option>
-                                        <option value={4}>4 Sub-Parts (i, ii, iii, iv)</option>
-                                        <option value={5}>5 Sub-Parts (i, ii, iii, iv, v)</option>
                                       </select>
                                     </div>
 
@@ -1971,6 +2052,19 @@ export default function ExternalSetterWorkbench() {
                                       </div>
                                     )}
                                   </div>
+                                ) : (
+                                  <div className="pt-1">
+                                    <QuestionCKEditor
+                                      id={`sec_${activeSet}_${secIdx}_q_${qIdx}_main`}
+                                      value={q.text || ""}
+                                      onChange={(val) => {
+                                        const updated = JSON.parse(JSON.stringify(currentQp));
+                                        updated.sections[secIdx].questions[qIdx].text = val;
+                                        setCurrentQp(updated);
+                                      }}
+                                      placeholder={`Enter text for Question ${q.qNo}${q.optionB !== undefined ? '(a)' : ''}...`}
+                                    />
+                                  </div>
                                 )}
                               </div>
                             </div>
@@ -1981,19 +2075,9 @@ export default function ExternalSetterWorkbench() {
                                 <span className="text-xs font-black text-amber-800 uppercase tracking-wider block bg-amber-50 border border-amber-200 px-3 py-1 rounded-lg w-fit">
                                   OR Choice - Option (b) Question Text:
                                 </span>
-                                <QuestionCKEditor
-                                  id={`sec_${activeSet}_${secIdx}_q_${qIdx}_optB`}
-                                  value={q.optionB || ""}
-                                  onChange={(val) => {
-                                    const updated = JSON.parse(JSON.stringify(currentQp));
-                                    updated.sections[secIdx].questions[qIdx].optionB = val;
-                                    setCurrentQp(updated);
-                                  }}
-                                  placeholder={`Enter Option (b) text for Question ${q.qNo}...`}
-                                />
 
                                 {/* Split Question Toggle & Controls for Option B */}
-                                <div className="p-3 bg-amber-50/60 border border-amber-200/80 rounded-xl space-y-3 font-sans">
+                                <div className="p-3.5 bg-amber-50/60 border border-amber-200/80 rounded-2xl space-y-3 font-sans">
                                   <div className="flex flex-wrap items-center justify-between gap-2">
                                     <label className="text-xs font-black text-amber-900 uppercase flex items-center gap-1.5">
                                       <Split className="h-3.5 w-3.5 text-amber-700" />
@@ -2020,19 +2104,17 @@ export default function ExternalSetterWorkbench() {
                                     </div>
                                   </div>
 
-                                  {q.isSplitOptionB && (
+                                  {q.isSplitOptionB ? (
                                     <div className="space-y-4 pt-2.5 border-t border-amber-200/70">
                                       <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-2.5 rounded-lg border border-amber-200">
                                         <span className="text-xs font-bold text-zinc-800">Select Number of Sub-Parts:</span>
                                         <select
                                           value={q.subCountOptionB || q.subPartsOptionB?.length || 2}
                                           onChange={(e) => handleChangeSubCount(secIdx, qIdx, true, Number(e.target.value))}
-                                          className="bg-amber-50 border border-amber-300 text-xs font-bold text-amber-900 rounded-lg px-2.5 py-1"
+                                          className="bg-amber-50 border border-amber-300 text-xs font-bold text-amber-900 rounded-lg px-2.5 py-1 cursor-pointer"
                                         >
                                           <option value={2}>2 Sub-Parts (i, ii)</option>
                                           <option value={3}>3 Sub-Parts (i, ii, iii)</option>
-                                          <option value={4}>4 Sub-Parts (i, ii, iii, iv)</option>
-                                          <option value={5}>5 Sub-Parts (i, ii, iii, iv, v)</option>
                                         </select>
                                       </div>
 
@@ -2075,6 +2157,19 @@ export default function ExternalSetterWorkbench() {
                                         </div>
                                       )}
                                     </div>
+                                  ) : (
+                                    <div className="pt-1">
+                                      <QuestionCKEditor
+                                        id={`sec_${activeSet}_${secIdx}_q_${qIdx}_optB`}
+                                        value={q.optionB || ""}
+                                        onChange={(val) => {
+                                          const updated = JSON.parse(JSON.stringify(currentQp));
+                                          updated.sections[secIdx].questions[qIdx].optionB = val;
+                                          setCurrentQp(updated);
+                                        }}
+                                        placeholder={`Enter Option (b) text for Question ${q.qNo}...`}
+                                      />
+                                    </div>
                                   )}
                                 </div>
                               </div>
@@ -2086,20 +2181,47 @@ export default function ExternalSetterWorkbench() {
                   ))}
                 </div>
 
-                <div className="flex justify-end pt-4">
+                {/* Bottom Navigation: Back to Acceptance & Preview Question Paper */}
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-6 border-t border-zinc-200 mt-6 font-sans">
                   <button
-                    onClick={() => {
-                      if (!validateAllSplitQuestions()) return;
-                      setViewState("preview");
-                    }}
-                    className="px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs flex items-center gap-2 shadow-md cursor-pointer"
+                    type="button"
+                    onClick={() => setViewState("acceptance")}
+                    className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer"
                   >
-                    <Eye className="h-4 w-4" />
-                    <span>Preview & Proceed to Submit</span>
+                    <ArrowLeft className="h-4 w-4" />
+                    <span>Review Acceptance & Order</span>
                   </button>
+
+                  <div className="flex items-center gap-3 w-full sm:w-auto justify-end flex-wrap">
+                    {isNumSetsTwo && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!validateAllSplitQuestions()) return;
+                          setActiveSet(activeSet === "setA" ? "setB" : "setA");
+                        }}
+                        className="w-full sm:w-auto px-4 py-3 rounded-2xl bg-zinc-100 hover:bg-zinc-200 text-zinc-800 text-xs font-bold flex items-center justify-center gap-2 border border-zinc-300 transition-all cursor-pointer shadow-2xs"
+                      >
+                        <Layers className="h-4 w-4 text-[#120c7a]" />
+                        <span>Switch to {activeSet === "setA" ? "Set B" : "Set A"}</span>
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!validateAllSplitQuestions()) return;
+                        setViewState("preview");
+                      }}
+                      className="w-full sm:w-auto px-8 py-3.5 rounded-2xl bg-[#120c7a] hover:bg-[#0e0a60] text-white font-black text-xs flex items-center justify-center gap-2.5 shadow-xl transition-all cursor-pointer active:scale-95"
+                    >
+                      <Eye className="h-4 w-4 text-emerald-400" />
+                      <span>Preview {isNumSetsTwo ? (isSetB ? "Set B" : "Set A") : "Question Paper"}</span>
+                      <ChevronRight className="h-4 w-4 text-white" />
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
           </div>
         )}
 
@@ -2115,64 +2237,57 @@ export default function ExternalSetterWorkbench() {
                   Official ESE Question Paper Preview
                 </h2>
                 <p className="text-zinc-500 text-xs font-semibold mt-0.5">
-                  Verify questions formatting. Click 'Move to COE' to submit or 'Edit' to return.
+                  {(submittedSuccess || assignment?.status === "submitted")
+                    ? "Question paper is submitted and locked. You can preview Set A/B and print below."
+                    : "Verify questions formatting. Review checklist to unlock 'Move to COE'."}
                 </p>
               </div>
 
               <div className="flex items-center gap-3 flex-wrap">
-                <button
-                  onClick={() => setShowChecklistModal(true)}
-                  className={`px-4 py-2.5 rounded-xl text-xs font-extrabold flex items-center gap-2 transition-all cursor-pointer border ${isChecklistComplete
-                    ? "bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100 shadow-xs"
-                    : "bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100 animate-pulse shadow-xs"
-                    }`}
-                >
-                  <ClipboardCheck className={`h-4 w-4 ${isChecklistComplete ? "text-emerald-600" : "text-amber-600"}`} />
-                  <span>
-                    {isChecklistComplete
-                      ? "Checklist Verified (12/12) ✓"
-                      : `Verify QP Checklist (${verifiedCount}/12)`}
-                  </span>
-                </button>
+                {/* When Already Submitted: Show read-only status and action buttons, completely removing Edit Question Paper option */}
+                {(submittedSuccess || assignment?.status === "submitted") ? (
+                  <>
+                    <span className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-900 text-xs font-extrabold">
+                      <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                      <span>Submitted & Locked</span>
+                    </span>
 
-                <button
-                  onClick={() => setViewState("editor")}
-                  className="px-4 py-2.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-800 text-xs font-bold flex items-center gap-1.5 border border-zinc-200 cursor-pointer"
-                >
-                  <Edit3 className="h-4 w-4" />
-                  <span>Edit Question Paper</span>
-                </button>
+                    <button
+                      type="button"
+                      onClick={() => window.print()}
+                      className="px-4 py-2.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-800 text-xs font-extrabold flex items-center gap-1.5 border border-zinc-200 cursor-pointer transition-all shadow-2xs"
+                    >
+                      <Printer className="h-4 w-4 text-indigo-700" />
+                      <span>Print Question Paper</span>
+                    </button>
 
-                {isChecklistComplete ? (
-                  <button
-                    onClick={handleMoveToCoe}
-                    disabled={submittingToCoe || submittedSuccess}
-                    className="px-6 py-2.5 rounded-xl bg-[#120c7a] hover:bg-[#0e0a60] text-white text-xs font-extrabold flex items-center gap-2 shadow-lg shadow-[#120c7a]/20 cursor-pointer disabled:opacity-50 transition-all transform hover:scale-102"
-                  >
-                    {submittingToCoe ? (
-                      <>
-                        <RefreshCw className="h-4 w-4 animate-spin text-amber-300" />
-                        <span>Submitting to COE...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Send className="h-4 w-4 text-emerald-300" />
-                        <span>Move to COE</span>
-                      </>
-                    )}
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setClaimBillStep("verify");
+                        setShowClaimBillModal(true);
+                      }}
+                      className="px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-slate-950 text-xs font-black flex items-center gap-1.5 shadow-md cursor-pointer transition-all active:scale-95"
+                    >
+                      <Landmark className="h-4 w-4 text-slate-950" />
+                      <span>View Claim Bill</span>
+                    </button>
+                  </>
                 ) : (
-                  <button
-                    onClick={() => {
-                      alert("Please complete the Question Paper Setting Verification Checklist before submitting to COE.");
-                      setShowChecklistModal(true);
-                    }}
-                    className="px-5 py-2.5 rounded-xl bg-zinc-200 text-zinc-500 border border-zinc-300 text-xs font-bold flex items-center gap-2 cursor-pointer hover:bg-zinc-300 transition-all"
-                    title="Complete Checklist to Unlock 'Move to COE'"
-                  >
-                    <Lock className="h-4 w-4 text-zinc-400" />
-                    <span>Move to COE (Locked)</span>
-                  </button>
+                  <>
+                    {/* Return to Editor (only visible before submission) */}
+                    <button
+                      type="button"
+                      onClick={() => setViewState("editor")}
+                      className="px-4 py-2.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-800 text-xs font-bold flex items-center gap-1.5 border border-zinc-200 cursor-pointer transition-all"
+                    >
+                      <Edit3 className="h-4 w-4" />
+                      <span>Edit Question Paper</span>
+                    </button>
+                    <span className="text-[11px] font-bold text-zinc-500 bg-zinc-100 px-3 py-2 rounded-xl border border-zinc-200 hidden sm:inline-block">
+                      Review questions below • Verify checklist at bottom ↓
+                    </span>
+                  </>
                 )}
               </div>
             </div>
@@ -2218,8 +2333,12 @@ export default function ExternalSetterWorkbench() {
                 {/* Quick Action Buttons */}
                 <div className="relative z-10 flex items-center justify-center gap-4 flex-wrap pt-2 font-sans">
                   <button
-                    onClick={() => setShowClaimBillModal(true)}
-                    className="px-5 py-3 rounded-2xl bg-amber-400 hover:bg-amber-300 text-zinc-950 font-black text-xs flex items-center gap-2 shadow-xl cursor-pointer transition-all"
+                    type="button"
+                    onClick={() => {
+                      setClaimBillStep("verify");
+                      setShowClaimBillModal(true);
+                    }}
+                    className="px-5 py-3 rounded-2xl bg-amber-400 hover:bg-amber-300 text-zinc-950 font-black text-xs flex items-center gap-2 shadow-xl cursor-pointer transition-all active:scale-95"
                   >
                     <FileText className="h-4 w-4 text-zinc-950" />
                     <span>View Submitted Claim Bill</span>
@@ -2237,25 +2356,40 @@ export default function ExternalSetterWorkbench() {
             )}
 
             {/* Dual Paper Switcher for Preview (Set A vs Set B) */}
-            {Number(assignment?.numSets) === 2 && (
-              <div className="flex items-center justify-center gap-3 print:hidden">
-                <div className="p-1.5 bg-zinc-100 rounded-2xl border border-zinc-200 flex items-center gap-2">
-                  <span className="text-xs font-black text-[#120c7a] px-2 flex items-center gap-1.5">
-                    <Layers className="h-4 w-4" /> Preview Paper:
-                  </span>
+            {isNumSetsTwo && (
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 p-3 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl border border-blue-200 print:hidden">
+                <div className="flex items-center gap-2">
+                  <Layers className="h-4 w-4 text-[#120c7a]" />
+                  <span className="text-xs font-black text-[#120c7a]">Previewing Question Paper:</span>
+                </div>
+                <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => setActiveSet("setA")}
-                    className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${activeSet === "setA" ? "bg-[#120c7a] text-white shadow-xs" : "bg-white text-zinc-700 hover:bg-zinc-200/60"}`}
+                    className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${
+                      activeSet === "setA" ? "bg-[#120c7a] text-white shadow-xs" : "bg-white text-zinc-700 hover:bg-zinc-100 border border-zinc-200"
+                    }`}
                   >
-                    Question Paper Set A
+                    <span>Question Paper Set A</span>
+                    {isChecklistCompleteA ? (
+                      <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded font-mono">12/12 ✓</span>
+                    ) : (
+                      <span className="text-[10px] bg-amber-500/20 text-amber-700 px-1.5 py-0.5 rounded font-mono">Pending</span>
+                    )}
                   </button>
                   <button
                     type="button"
                     onClick={() => setActiveSet("setB")}
-                    className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${activeSet === "setB" ? "bg-[#120c7a] text-white shadow-xs" : "bg-white text-zinc-700 hover:bg-zinc-200/60"}`}
+                    className={`px-4 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-2 cursor-pointer ${
+                      activeSet === "setB" ? "bg-[#120c7a] text-white shadow-xs" : "bg-white text-zinc-700 hover:bg-zinc-100 border border-zinc-200"
+                    }`}
                   >
-                    Question Paper Set B
+                    <span>Question Paper Set B</span>
+                    {isChecklistCompleteB ? (
+                      <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded font-mono">12/12 ✓</span>
+                    ) : (
+                      <span className="text-[10px] bg-amber-500/20 text-amber-700 px-1.5 py-0.5 rounded font-mono">Pending</span>
+                    )}
                   </button>
                 </div>
               </div>
@@ -2457,6 +2591,135 @@ export default function ExternalSetterWorkbench() {
                 </div>
               </div>
             </div>
+
+            {/* BOTTOM VERIFICATION & CONFIDENTIAL COE HANDOFF BAR */}
+            {!(submittedSuccess || assignment?.status === "submitted") && (
+              <div className="bg-gradient-to-r from-blue-50 via-indigo-50 to-slate-50 border border-blue-200/90 rounded-3xl p-6 sm:p-8 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-6 print:hidden mt-6">
+                <div className="space-y-1 text-center sm:text-left">
+                  <div className="flex items-center justify-center sm:justify-start gap-2">
+                    <span className="h-2 w-2 rounded-full bg-indigo-600 animate-pulse" />
+                    <span className="text-xs font-black uppercase tracking-wider text-[#120c7a]">
+                      Step 4: Quality Control & Confidential COE Handoff
+                    </span>
+                  </div>
+                  <h3 className="text-base font-black text-zinc-900">
+                    {isNumSetsTwo
+                      ? (isSetB
+                          ? (areAllSetsChecklistComplete
+                              ? "Both Set A & Set B Verified (12/12)!"
+                              : "Question Paper Set B Review & Verification")
+                          : (isChecklistCompleteA
+                              ? (isChecklistCompleteB
+                                  ? "Both Set A & Set B Verified (12/12)!"
+                                  : "Set A Verified (12/12)! Now Prepare Set B")
+                              : "Question Paper Set A Review & Verification"))
+                      : (isChecklistComplete
+                          ? "12-Point Quality Checklist Verified!"
+                          : "Question Paper Review Completed?")}
+                  </h3>
+                  <p className="text-xs text-zinc-600 font-medium max-w-lg">
+                    {isNumSetsTwo
+                      ? (isSetB
+                          ? (areAllSetsChecklistComplete
+                              ? "Both Question Paper Set A and Set B are 100% verified! Click 'Move to COE' to fill remuneration details and submit both sets."
+                              : (isChecklistCompleteB
+                                  ? "Set B is verified, but Set A checklist is pending. Please verify Set A before submitting to COE."
+                                  : "Please verify the 12-point quality checklist for Set B."))
+                          : (isChecklistCompleteA
+                              ? (isChecklistCompleteB
+                                  ? "Both Question Paper Set A and Set B are 100% verified! Click 'Move to COE' to submit both sets."
+                                  : "Question Paper Set A is verified and saved! Please click 'Proceed to Prepare Set B' to generate and edit Set B questions.")
+                              : "Please verify the 12-point question paper setting checklist for Set A before proceeding to Set B."))
+                      : (isChecklistComplete
+                          ? "12-point quality checklist verified! Click 'Move to COE' to fill remuneration bank details and submit."
+                          : "Please verify the 12-point question paper setting checklist before submitting to the Controller of Examinations.")}
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3 flex-wrap justify-center sm:justify-end shrink-0">
+                  {/* Edit Questions button - ALWAYS available before final submit so setter can edit either set anytime */}
+                  <button
+                    type="button"
+                    onClick={() => setViewState("editor")}
+                    className="px-4 py-3 rounded-2xl bg-white hover:bg-zinc-100 text-zinc-700 text-xs font-bold flex items-center gap-1.5 border border-zinc-300 transition-all cursor-pointer shadow-2xs"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                    <span>Edit {isNumSetsTwo ? (isSetB ? "Set B" : "Set A") : "Questions"}</span>
+                  </button>
+
+                  {/* Verify QP Checklist Button at bottom */}
+                  <button
+                    type="button"
+                    onClick={() => setShowChecklistModal(true)}
+                    className={`px-6 py-3.5 rounded-2xl text-xs font-black flex items-center gap-2.5 transition-all cursor-pointer shadow-md ${
+                      isChecklistComplete
+                        ? "bg-emerald-50 text-emerald-900 border-2 border-emerald-400 hover:bg-emerald-100"
+                        : "bg-amber-400 hover:bg-amber-300 text-slate-950 shadow-amber-400/30 animate-pulse border-2 border-amber-500"
+                    }`}
+                  >
+                    <ClipboardCheck className={`h-4.5 w-4.5 ${isChecklistComplete ? "text-emerald-600" : "text-slate-950"}`} />
+                    <span>
+                      {isChecklistComplete
+                        ? `Checklist Verified (12/12) ✓`
+                        : `Verify ${isNumSetsTwo ? (isSetB ? "Set B" : "Set A") : "QP"} Checklist (${verifiedCount}/12)`}
+                    </span>
+                  </button>
+
+                  {/* If 2 sets and Set A is complete but Set B is not yet done -> Show prominent 'Proceed to Prepare Set B' button */}
+                  {isNumSetsTwo && !isSetB && !isChecklistCompleteB && isChecklistCompleteA && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveSet("setB");
+                        setViewState("editor");
+                      }}
+                      className="px-6 py-3.5 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-700 hover:from-emerald-700 hover:to-indigo-800 text-white text-xs font-black flex items-center gap-2 shadow-xl shadow-emerald-700/25 cursor-pointer transition-all active:scale-95 animate-pulse"
+                    >
+                      <Sparkles className="h-4 w-4 text-amber-300" />
+                      <span>Proceed to Prepare Set B</span>
+                      <ArrowRight className="h-4 w-4 text-white" />
+                    </button>
+                  )}
+
+                  {/* If on Set B and Set A is not complete -> allow switching to Set A */}
+                  {isNumSetsTwo && isSetB && !isChecklistCompleteA && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveSet("setA");
+                      }}
+                      className="px-5 py-3 rounded-2xl bg-amber-100 hover:bg-amber-200 text-amber-900 text-xs font-bold flex items-center gap-1.5 border border-amber-300 cursor-pointer"
+                    >
+                      <span>Switch to Set A (Checklist Pending)</span>
+                      <ArrowRight className="h-4 w-4" />
+                    </button>
+                  )}
+
+                  {/* Move to COE Button (Only unlocked AFTER ALL assigned sets are 12/12 verified) */}
+                  {areAllSetsChecklistComplete && (
+                    <button
+                      type="button"
+                      onClick={handleMoveToCoe}
+                      disabled={submittingToCoe || submittedSuccess}
+                      className="px-7 py-3.5 rounded-2xl bg-[#120c7a] hover:bg-[#0e0a60] text-white text-xs font-black flex items-center gap-2.5 shadow-xl shadow-indigo-950/20 cursor-pointer disabled:opacity-50 transition-all active:scale-95"
+                    >
+                      {submittingToCoe ? (
+                        <>
+                          <RefreshCw className="h-4 w-4 animate-spin text-amber-300" />
+                          <span>Submitting to COE...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Send className="h-4 w-4 text-emerald-300" />
+                          <span>Move to COE {isNumSetsTwo ? "(Both Sets)" : ""}</span>
+                          <ChevronRight className="h-4 w-4 text-white" />
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -2562,7 +2825,7 @@ export default function ExternalSetterWorkbench() {
       {/* ========================================================================= */}
       {showQbDrawer && (
         <div className="fixed inset-0 z-50 flex justify-end bg-zinc-900/60 backdrop-blur-xs">
-          <div className="w-full max-w-3xl lg:max-w-4xl bg-white border-l border-zinc-200 h-full p-6 shadow-2xl flex flex-col space-y-4 overflow-y-auto animate-in slide-in-from-right duration-300">
+          <div className="w-full max-w-4xl lg:max-w-5xl xl:max-w-6xl bg-white border-l border-zinc-200 h-full p-6 shadow-2xl flex flex-col space-y-4 overflow-y-auto animate-in slide-in-from-right duration-300">
 
             <div className="flex items-center justify-between pb-3.5 border-b border-zinc-100 shrink-0">
               <div className="flex items-center gap-2 text-amber-900 font-black text-sm">
@@ -2612,7 +2875,7 @@ export default function ExternalSetterWorkbench() {
       {/* ========================================================================= */}
       {showSyllabusDrawer && (
         <div className="fixed inset-0 z-50 flex justify-end bg-zinc-900/60 backdrop-blur-xs">
-          <div className="w-full max-w-3xl lg:max-w-4xl bg-white border-l border-zinc-200 h-full p-6 shadow-2xl flex flex-col space-y-4 overflow-y-auto animate-in slide-in-from-right duration-300">
+          <div className="w-full max-w-4xl lg:max-w-5xl xl:max-w-6xl bg-white border-l border-zinc-200 h-full p-6 shadow-2xl flex flex-col space-y-4 overflow-y-auto animate-in slide-in-from-right duration-300">
 
             <div className="flex items-center justify-between pb-3.5 border-b border-zinc-100 shrink-0">
               <div className="flex items-center gap-2 text-[#120c7a] font-black text-sm">
@@ -2684,8 +2947,14 @@ export default function ExternalSetterWorkbench() {
                   <ClipboardCheck className="h-6 w-6 text-amber-300" />
                 </div>
                 <div>
-                  <h3 className="text-base font-black tracking-tight">Question Paper Setting Verification Checklist</h3>
-                  <p className="text-xs text-blue-200 font-medium">Verify all 12 quality control criteria to unlock "Move to COE" submission</p>
+                  <h3 className="text-base font-black tracking-tight">
+                    Question Paper Setting Verification Checklist {isNumSetsTwo ? (isSetB ? "– Set B (Paper 2)" : "– Set A (Paper 1)") : ""}
+                  </h3>
+                  <p className="text-xs text-blue-200 font-medium">
+                    {isNumSetsTwo
+                      ? `Verify all 12 quality criteria for ${isSetB ? "Question Paper Set B" : "Question Paper Set A"}`
+                      : "Verify all 12 quality control criteria to unlock 'Move to COE' submission"}
+                  </p>
                 </div>
               </div>
 
@@ -2715,21 +2984,30 @@ export default function ExternalSetterWorkbench() {
             </div>
 
             {/* Progress Bar */}
-            <div className="bg-blue-50 px-6 py-2.5 border-b border-blue-100 flex items-center justify-between shrink-0 print:hidden">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-black text-[#120c7a]">Checklist Progress:</span>
+            <div className="bg-blue-50 px-6 py-2.5 border-b border-blue-100 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 shrink-0 print:hidden">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-black text-[#120c7a]">
+                  {isNumSetsTwo ? (isSetB ? "Set B Checklist:" : "Set A Checklist:") : "Checklist Progress:"}
+                </span>
                 <span className="text-xs font-bold px-2.5 py-0.5 rounded-md bg-white border border-blue-200 text-blue-900 font-mono">
                   {verifiedCount} / 12 Verified (YES)
                 </span>
+                {isNumSetsTwo && (
+                  <span className="text-[11px] text-zinc-600 font-semibold ml-2">
+                    (Set A: <strong className={isChecklistCompleteA ? "text-emerald-700 font-mono" : "text-amber-700 font-mono"}>{verifiedCountA}/12 {isChecklistCompleteA ? "✓" : ""}</strong> | Set B: <strong className={isChecklistCompleteB ? "text-emerald-700 font-mono" : "text-amber-700 font-mono"}>{verifiedCountB}/12 {isChecklistCompleteB ? "✓" : ""}</strong>)
+                  </span>
+                )}
               </div>
               {isChecklistComplete ? (
                 <span className="text-xs font-black text-emerald-700 bg-emerald-100 border border-emerald-300 px-3 py-0.5 rounded-full inline-flex items-center gap-1">
                   <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-                  Checklist Fully Verified! Click "Confirm & Unlock" below
+                  {isNumSetsTwo
+                    ? (isSetB ? "Set B Fully Verified!" : "Set A Fully Verified! Click 'Save Set A & Proceed to Set B' below")
+                    : "Checklist Fully Verified! Click 'Confirm & Unlock' below"}
                 </span>
               ) : (
                 <span className="text-xs font-bold text-amber-800 bg-amber-100 border border-amber-300 px-3 py-0.5 rounded-full">
-                  Select "YES" for all 12 items to unlock submission
+                  Select "YES" for all 12 items to verify {isNumSetsTwo ? (isSetB ? "Set B" : "Set A") : "this paper"}
                 </span>
               )}
             </div>
@@ -2741,7 +3019,9 @@ export default function ExternalSetterWorkbench() {
               <div className="text-center space-y-1 border-b pb-4">
                 <h2 className="text-sm font-bold tracking-wider uppercase text-zinc-900">Office of the Controller of Examinations</h2>
                 <h1 className="text-base font-black uppercase tracking-wider text-[#120c7a]">QUESTION PAPER SETTING – CHECK LIST</h1>
-                <p className="text-xs font-bold text-zinc-700">B.E. / B.Tech. / M.E.– End Semester Examinations {effectiveExamSession}</p>
+                <p className="text-xs font-bold text-zinc-700">
+                  B.E. / B.Tech. / M.E.– End Semester Examinations {effectiveExamSession} {isNumSetsTwo ? (isSetB ? "– (SET B)" : "– (SET A)") : ""}
+                </p>
               </div>
 
               {/* Header Fields Table */}
@@ -2753,6 +3033,14 @@ export default function ExternalSetterWorkbench() {
                       {assignment?.subjectCode} - {assignment?.subjectTitle}
                     </td>
                   </tr>
+                  {isNumSetsTwo && (
+                    <tr>
+                      <td className="border border-zinc-900 p-2.5 font-bold bg-zinc-50">Question Paper Set:</td>
+                      <td className="border border-zinc-900 p-2.5 font-black text-[#120c7a]">
+                        {isSetB ? "Set B (Paper 2)" : "Set A (Paper 1)"}
+                      </td>
+                    </tr>
+                  )}
                   <tr>
                     <td className="border border-zinc-900 p-2.5 font-bold bg-zinc-50">Month and Year of Examination:</td>
                     <td className="border border-zinc-900 p-2 font-semibold">
@@ -2839,7 +3127,7 @@ export default function ExternalSetterWorkbench() {
                       <tr>
                         <td className="border border-zinc-900 p-1.5 font-bold text-left px-2 bg-zinc-50">CO</td>
                         {Array.from({ length: 10 }, (_, i) => {
-                          const q = qpData.sections[0]?.questions?.[i];
+                          const q = currentQp.sections[0]?.questions?.[i];
                           return (
                             <td key={i} className="border border-zinc-900 p-1.5 font-bold text-indigo-900">
                               {q?.co || `CO${(i % 5) + 1}`}
@@ -2850,7 +3138,7 @@ export default function ExternalSetterWorkbench() {
                       <tr>
                         <td className="border border-zinc-900 p-1.5 font-bold text-left px-2 bg-zinc-50">KL-Level</td>
                         {Array.from({ length: 10 }, (_, i) => {
-                          const q = qpData.sections[0]?.questions?.[i];
+                          const q = currentQp.sections[0]?.questions?.[i];
                           return (
                             <td key={i} className="border border-zinc-900 p-1.5 font-bold text-emerald-900">
                               {q?.blooms || `K${(i % 4) + 1}`}
@@ -2886,7 +3174,7 @@ export default function ExternalSetterWorkbench() {
                       <tr>
                         <td className="border border-zinc-900 p-1.5 font-bold text-left px-2 bg-zinc-50">CO</td>
                         {[0, 1, 2, 3, 4].map(idx => {
-                          const q = qpData.sections[1]?.questions?.[idx];
+                          const q = currentQp.sections[1]?.questions?.[idx];
                           return (
                             <React.Fragment key={idx}>
                               <td className="border border-zinc-900 p-1 font-bold text-indigo-900">{q?.co || `CO${idx + 1}`}</td>
@@ -2898,7 +3186,7 @@ export default function ExternalSetterWorkbench() {
                       <tr>
                         <td className="border border-zinc-900 p-1.5 font-bold text-left px-2 bg-zinc-50">KL-Level</td>
                         {[0, 1, 2, 3, 4].map(idx => {
-                          const q = qpData.sections[1]?.questions?.[idx];
+                          const q = currentQp.sections[1]?.questions?.[idx];
                           return (
                             <React.Fragment key={idx}>
                               <td className="border border-zinc-900 p-1 font-bold text-emerald-900">{q?.blooms || `K3`}</td>
@@ -2952,11 +3240,18 @@ export default function ExternalSetterWorkbench() {
               <div className="text-xs font-semibold text-zinc-600">
                 {isChecklistComplete ? (
                   <span className="text-emerald-700 font-extrabold flex items-center gap-1.5">
-                    <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" /> All 12 Checklist Items Verified! "Move to COE" button is now unlocked.
+                    <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                    {isNumSetsTwo
+                      ? (isSetB
+                          ? (isChecklistCompleteA
+                              ? "All 12 Checklist Items for Set B Verified! Both sets ready for COE handoff."
+                              : "Set B Verified (12/12)! Please ensure Set A checklist is also verified.")
+                          : "Set A Checklist Verified (12/12)! Please proceed to generate & prepare Question Paper Set B.")
+                      : "All 12 Checklist Items Verified! 'Move to COE' button is now unlocked."}
                   </span>
                 ) : (
                   <span className="text-amber-800 font-bold">
-                    {12 - verifiedCount} item(s) remaining. Select "YES" for all criteria to unlock submission.
+                    {12 - verifiedCount} item(s) remaining for {isNumSetsTwo ? (isSetB ? "Set B" : "Set A") : "this paper"}. Select "YES" for all criteria.
                   </span>
                 )}
               </div>
@@ -2970,23 +3265,58 @@ export default function ExternalSetterWorkbench() {
                   Close / Return to Preview
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowChecklistModal(false);
-                    if (isChecklistComplete) {
-                      handleMoveToCoe();
-                    }
-                  }}
-                  disabled={!isChecklistComplete}
-                  className={`flex-1 sm:flex-none px-4 sm:px-5 py-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-2 transition-all cursor-pointer whitespace-nowrap shrink-0 ${isChecklistComplete
-                    ? "bg-[#120c7a] hover:bg-[#0e0a60] text-white shadow-lg shadow-[#120c7a]/20"
-                    : "bg-zinc-300 text-zinc-500 cursor-not-allowed border border-zinc-300"
+                {/* In 2-sets mode, if Set A is complete and we are on Set A, direct user to Set B */}
+                {isNumSetsTwo && !isSetB ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowChecklistModal(false);
+                      if (isChecklistCompleteA) {
+                        setActiveSet("setB");
+                        setViewState("editor");
+                      }
+                    }}
+                    disabled={!isChecklistCompleteA}
+                    className={`flex-1 sm:flex-none px-4 sm:px-5 py-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-2 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                      isChecklistCompleteA
+                        ? "bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white shadow-lg shadow-emerald-700/20 active:scale-95"
+                        : "bg-zinc-300 text-zinc-500 cursor-not-allowed border border-zinc-300"
                     }`}
-                >
-                  <Send className="h-4 w-4 shrink-0" />
-                  <span>Confirm & Unlock 'Move to COE'</span>
-                </button>
+                  >
+                    <span>Save Set A & Proceed to Set B</span>
+                    <ArrowRight className="h-4 w-4 shrink-0" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowChecklistModal(false);
+                      if (areAllSetsChecklistComplete) {
+                        handleMoveToCoe();
+                      } else if (isNumSetsTwo && !isChecklistCompleteA) {
+                        setActiveSet("setA");
+                      }
+                    }}
+                    disabled={!isChecklistComplete}
+                    className={`flex-1 sm:flex-none px-4 sm:px-5 py-2.5 rounded-xl font-black text-xs flex items-center justify-center gap-2 transition-all cursor-pointer whitespace-nowrap shrink-0 ${
+                      (areAllSetsChecklistComplete || (!isNumSetsTwo && isChecklistComplete))
+                        ? "bg-[#120c7a] hover:bg-[#0e0a60] text-white shadow-lg shadow-[#120c7a]/20 active:scale-95"
+                        : "bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs"
+                    }`}
+                  >
+                    {areAllSetsChecklistComplete || (!isNumSetsTwo && isChecklistComplete) ? (
+                      <>
+                        <Send className="h-4 w-4 shrink-0" />
+                        <span>Confirm & Move to COE</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle2 className="h-4 w-4 shrink-0" />
+                        <span>Confirm & Save Checklist</span>
+                      </>
+                    )}
+                  </button>
+                )}
               </div>
 
             </div>
@@ -3009,7 +3339,11 @@ export default function ExternalSetterWorkbench() {
                 </div>
                 <div>
                   <h3 className="text-base font-black tracking-tight">Question Paper Setter Remuneration Claim Bill</h3>
-                  <p className="text-xs text-blue-200 font-medium">Fill in your bank account details for remuneration remittance</p>
+                  <p className="text-xs text-blue-200 font-medium">
+                    {isSubmitted
+                      ? "Official Remuneration Claim Bill submitted to COE (Read-Only Copy)"
+                      : "Fill in your bank account details for remuneration remittance"}
+                  </p>
                 </div>
               </div>
 
@@ -3032,15 +3366,27 @@ export default function ExternalSetterWorkbench() {
             </div>
 
             {/* Workflow Step Banner */}
-            <div className="bg-blue-50 px-6 py-2.5 border-b border-blue-100 flex items-center justify-between shrink-0 print:hidden text-xs font-sans">
-              <div className="flex items-center gap-2">
-                <span className="font-extrabold text-[#120c7a]">Submission Workflow:</span>
-                <span className={`px-2.5 py-0.5 rounded-full font-bold text-[11px] ${claimBillStep === "form" ? "bg-amber-100 text-amber-900 border border-amber-300" : "bg-emerald-100 text-emerald-900 border border-emerald-300"}`}>
-                  {claimBillStep === "form" ? "Step 1: Fill Remuneration & Bank Details" : "Step 2: 1-Time Verification & Final Submit"}
-                </span>
+            {isSubmitted ? (
+              <div className="bg-emerald-50 px-6 py-2.5 border-b border-emerald-100 flex items-center justify-between shrink-0 print:hidden text-xs font-sans">
+                <div className="flex items-center gap-2">
+                  <span className="font-extrabold text-emerald-950">Claim Status:</span>
+                  <span className="px-2.5 py-0.5 rounded-full font-black text-[11px] bg-emerald-100 text-emerald-900 border border-emerald-300 flex items-center gap-1">
+                    <ShieldCheck className="h-3.5 w-3.5 text-emerald-700" /> Submitted & Locked (Official Copy)
+                  </span>
+                </div>
+                <span className="text-[11px] font-semibold text-zinc-500">Subject: {assignment?.subjectCode}</span>
               </div>
-              <span className="text-[11px] font-semibold text-zinc-500">Subject: {assignment?.subjectCode}</span>
-            </div>
+            ) : (
+              <div className="bg-blue-50 px-6 py-2.5 border-b border-blue-100 flex items-center justify-between shrink-0 print:hidden text-xs font-sans">
+                <div className="flex items-center gap-2">
+                  <span className="font-extrabold text-[#120c7a]">Submission Workflow:</span>
+                  <span className={`px-2.5 py-0.5 rounded-full font-bold text-[11px] ${claimBillStep === "form" ? "bg-amber-100 text-amber-900 border border-amber-300" : "bg-emerald-100 text-emerald-900 border border-emerald-300"}`}>
+                    {claimBillStep === "form" ? "Step 1: Fill Remuneration & Bank Details" : "Step 2: 1-Time Verification & Final Submit"}
+                  </span>
+                </div>
+                <span className="text-[11px] font-semibold text-zinc-500">Subject: {assignment?.subjectCode}</span>
+              </div>
+            )}
 
             {/* Printable Document Body */}
             <div className="p-6 md:p-8 overflow-y-auto space-y-6 text-zinc-900 font-serif text-xs leading-relaxed">
@@ -3051,8 +3397,25 @@ export default function ExternalSetterWorkbench() {
                 <h1 className="text-base font-black uppercase tracking-wider text-[#120c7a]">QUESTION PAPER SETTER – CLAIM BILL</h1>
               </div>
 
-              {/* Step 2 Verification Banner */}
-              {claimBillStep === "verify" && (
+              {/* Step 2 Verification Banner / Read-Only Submitted Banner */}
+              {isSubmitted ? (
+                <div className="p-4 rounded-2xl bg-emerald-50/90 border border-emerald-200 text-emerald-950 font-sans text-xs flex items-center justify-between gap-3 shadow-xs print:hidden">
+                  <div className="flex items-center gap-3">
+                    <ShieldCheck className="h-5 w-5 text-emerald-600 shrink-0" />
+                    <div>
+                      <span className="font-black text-emerald-900 block">Submitted & Digitally Signed Remuneration Claim:</span>
+                      <span className="text-emerald-800 font-medium">This claim bill has been officially submitted to the Controller of Examinations and locked. Editing is disabled.</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className="px-3.5 py-1.5 rounded-xl bg-white text-emerald-900 border border-emerald-300 font-bold hover:bg-emerald-100 transition-all flex items-center gap-1.5 shrink-0 shadow-2xs cursor-pointer"
+                  >
+                    <Printer className="h-3.5 w-3.5" /> Print Copy
+                  </button>
+                </div>
+              ) : claimBillStep === "verify" ? (
                 <div className="p-4 rounded-2xl bg-amber-50 border-2 border-amber-300 text-amber-950 font-sans text-xs font-bold flex items-start gap-3 shadow-xs print:hidden">
                   <AlertCircle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
                   <div>
@@ -3060,7 +3423,7 @@ export default function ExternalSetterWorkbench() {
                     <span>Double-check your Bank Account Number, IFSC Code, and Holder Name below. Once verified, click "Confirm & Final Submit to COE".</span>
                   </div>
                 </div>
-              )}
+              ) : null}
 
               {/* Table 1: Personal & Paper Details */}
               <div className="space-y-2 font-sans">
@@ -3070,7 +3433,7 @@ export default function ExternalSetterWorkbench() {
                     <tr>
                       <td className="border border-zinc-900 p-2.5 font-bold w-2/5 bg-zinc-50">Name of the Paper Setter:</td>
                       <td className="border border-zinc-900 p-2 font-semibold">
-                        {claimBillStep === "verify" || submittedSuccess ? (
+                        {isClaimBillReadOnly ? (
                           <span className="font-extrabold text-zinc-900 px-1">{claimBillData.setterName}</span>
                         ) : (
                           <input
@@ -3086,7 +3449,7 @@ export default function ExternalSetterWorkbench() {
                     <tr>
                       <td className="border border-zinc-900 p-2.5 font-bold bg-zinc-50">Designation:</td>
                       <td className="border border-zinc-900 p-2 font-semibold">
-                        {claimBillStep === "verify" || submittedSuccess ? (
+                        {isClaimBillReadOnly ? (
                           <span className="font-bold text-zinc-900 px-1">{claimBillData.designation}</span>
                         ) : (
                           <input
@@ -3102,7 +3465,7 @@ export default function ExternalSetterWorkbench() {
                     <tr>
                       <td className="border border-zinc-900 p-2.5 font-bold bg-zinc-50">Department & Institution:</td>
                       <td className="border border-zinc-900 p-2 font-semibold">
-                        {claimBillStep === "verify" || submittedSuccess ? (
+                        {isClaimBillReadOnly ? (
                           <span className="font-bold text-zinc-900 px-1">{claimBillData.departmentInstitution}</span>
                         ) : (
                           <input
@@ -3118,7 +3481,7 @@ export default function ExternalSetterWorkbench() {
                     <tr>
                       <td className="border border-zinc-900 p-2.5 font-bold bg-zinc-50">Mobile Number:</td>
                       <td className="border border-zinc-900 p-2 font-semibold">
-                        {claimBillStep === "verify" || submittedSuccess ? (
+                        {isClaimBillReadOnly ? (
                           <span className="font-bold text-zinc-900 px-1">{claimBillData.mobileNumber}</span>
                         ) : (
                           <input
@@ -3134,7 +3497,7 @@ export default function ExternalSetterWorkbench() {
                     <tr>
                       <td className="border border-zinc-900 p-2.5 font-bold bg-zinc-50">Email ID:</td>
                       <td className="border border-zinc-900 p-2 font-semibold font-mono">
-                        {claimBillStep === "verify" || submittedSuccess ? (
+                        {isClaimBillReadOnly ? (
                           <span className="font-bold text-zinc-900 px-1">{claimBillData.emailId}</span>
                         ) : (
                           <input
@@ -3162,7 +3525,7 @@ export default function ExternalSetterWorkbench() {
                     <tr>
                       <td className="border border-zinc-900 p-2.5 font-bold bg-zinc-50">Date of Submission of QP:</td>
                       <td className="border border-zinc-900 p-2.5 font-bold text-zinc-900">
-                        {new Date().toLocaleDateString("en-IN")}
+                        {assignment?.paperSubmittedAt ? new Date(assignment.paperSubmittedAt).toLocaleDateString("en-IN") : new Date().toLocaleDateString("en-IN")}
                       </td>
                     </tr>
                   </tbody>
@@ -3177,7 +3540,7 @@ export default function ExternalSetterWorkbench() {
                     <tr>
                       <td className="border border-zinc-900 p-2.5 font-bold w-2/5 bg-zinc-50">Account Holder Name:</td>
                       <td className="border border-zinc-900 p-2 font-semibold">
-                        {claimBillStep === "verify" || submittedSuccess ? (
+                        {isClaimBillReadOnly ? (
                           <span className="font-extrabold text-zinc-900 px-1">{claimBillData.accHolderName}</span>
                         ) : (
                           <input
@@ -3193,7 +3556,7 @@ export default function ExternalSetterWorkbench() {
                     <tr>
                       <td className="border border-zinc-900 p-2.5 font-bold bg-zinc-50">Bank Name:</td>
                       <td className="border border-zinc-900 p-2 font-semibold">
-                        {claimBillStep === "verify" || submittedSuccess ? (
+                        {isClaimBillReadOnly ? (
                           <span className="font-extrabold text-zinc-900 px-1">{claimBillData.bankName}</span>
                         ) : (
                           <input
@@ -3209,7 +3572,7 @@ export default function ExternalSetterWorkbench() {
                     <tr>
                       <td className="border border-zinc-900 p-2.5 font-bold bg-zinc-50">Branch Name:</td>
                       <td className="border border-zinc-900 p-2 font-semibold">
-                        {claimBillStep === "verify" || submittedSuccess ? (
+                        {isClaimBillReadOnly ? (
                           <span className="font-bold text-zinc-900 px-1">{claimBillData.branchName}</span>
                         ) : (
                           <input
@@ -3225,7 +3588,7 @@ export default function ExternalSetterWorkbench() {
                     <tr>
                       <td className="border border-zinc-900 p-2.5 font-bold bg-zinc-50">Account Number:</td>
                       <td className="border border-zinc-900 p-2 font-semibold font-mono">
-                        {claimBillStep === "verify" || submittedSuccess ? (
+                        {isClaimBillReadOnly ? (
                           <span className="font-extrabold text-emerald-800 text-sm tracking-wider px-1">{claimBillData.accountNumber}</span>
                         ) : (
                           <input
@@ -3241,7 +3604,7 @@ export default function ExternalSetterWorkbench() {
                     <tr>
                       <td className="border border-zinc-900 p-2.5 font-bold bg-zinc-50">IFSC Code:</td>
                       <td className="border border-zinc-900 p-2 font-semibold font-mono">
-                        {claimBillStep === "verify" || submittedSuccess ? (
+                        {isClaimBillReadOnly ? (
                           <span className="font-extrabold text-indigo-900 text-sm tracking-wider px-1">{claimBillData.ifscCode}</span>
                         ) : (
                           <input
@@ -3257,7 +3620,7 @@ export default function ExternalSetterWorkbench() {
                     <tr>
                       <td className="border border-zinc-900 p-2.5 font-bold bg-zinc-50">Account Type (SB / CA):</td>
                       <td className="border border-zinc-900 p-2 font-semibold">
-                        {claimBillStep === "verify" || submittedSuccess ? (
+                        {isClaimBillReadOnly ? (
                           <span className="font-bold text-zinc-900 px-1">{claimBillData.accountType}</span>
                         ) : (
                           <select
@@ -3304,54 +3667,101 @@ export default function ExternalSetterWorkbench() {
                 </table>
               </div>
 
+              {/* IV. Declaration & Setter Signature */}
+              <div className="pt-6 border-t flex items-end justify-between text-xs font-sans text-zinc-700">
+                <div className="space-y-1">
+                  <span className="block font-bold">Paper Setter Signature:</span>
+                  {signatureUrl ? (
+                    <img src={signatureUrl} alt="Setter Signature" className="h-10 object-contain mt-1" />
+                  ) : (
+                    <span className="italic text-zinc-400">Digitally Verified & Signed</span>
+                  )}
+                  <span className="block text-[11px] text-zinc-500 font-semibold">{claimBillData.setterName}</span>
+                </div>
+                <div className="text-right space-y-1">
+                  <span className="block text-[11px] text-zinc-500 font-semibold">
+                    Date: {assignment?.paperSubmittedAt ? new Date(assignment.paperSubmittedAt).toLocaleDateString("en-IN") : new Date().toLocaleDateString("en-IN")}
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-[11px] font-black text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-300">
+                    <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+                    {isSubmitted ? "Transmitted to COE ✓" : "Pending Final Submission"}
+                  </span>
+                </div>
+              </div>
+
             </div>
 
             {/* Modal Footer Controls */}
-            <div className="bg-zinc-100 p-4 px-6 border-t border-zinc-300 flex items-center justify-between gap-3 shrink-0 print:hidden font-sans">
-              <button
-                type="button"
-                onClick={() => {
-                  if (claimBillStep === "verify") {
-                    setClaimBillStep("form");
-                  } else {
-                    setShowClaimBillModal(false);
-                  }
-                }}
-                className="px-4 py-2.5 rounded-xl bg-white hover:bg-zinc-200 text-zinc-800 border border-zinc-300 text-xs font-bold transition-all cursor-pointer"
-              >
-                {claimBillStep === "verify" ? "← Edit Claim Details" : "Cancel / Return"}
-              </button>
+            {isSubmitted ? (
+              <div className="bg-zinc-100 p-4 px-6 border-t border-zinc-300 flex items-center justify-between gap-3 shrink-0 print:hidden font-sans">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="h-4 w-4 text-emerald-600" />
+                  <span className="text-xs font-bold text-zinc-700">Official Claim Bill Submitted & Locked (Read-Only)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className="px-4 py-2.5 rounded-xl bg-white hover:bg-zinc-200 text-zinc-800 border border-zinc-300 text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Printer className="h-4 w-4" /> Print Bill
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowClaimBillModal(false)}
+                    className="px-6 py-2.5 rounded-xl bg-[#120c7a] hover:bg-[#0e0a60] text-white text-xs font-bold transition-all cursor-pointer shadow-md"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-zinc-100 p-4 px-6 border-t border-zinc-300 flex items-center justify-between gap-3 shrink-0 print:hidden font-sans">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (claimBillStep === "verify") {
+                      setClaimBillStep("form");
+                    } else {
+                      setShowClaimBillModal(false);
+                    }
+                  }}
+                  className="px-4 py-2.5 rounded-xl bg-white hover:bg-zinc-200 text-zinc-800 border border-zinc-300 text-xs font-bold transition-all cursor-pointer"
+                >
+                  {claimBillStep === "verify" ? "← Edit Claim Details" : "Cancel / Return"}
+                </button>
 
-              {claimBillStep === "form" ? (
-                <button
-                  type="button"
-                  onClick={handleVerifyClaimDetails}
-                  className="px-6 py-2.5 rounded-xl bg-[#120c7a] hover:bg-[#0e0a60] text-white font-black text-xs flex items-center gap-2 shadow-md cursor-pointer transition-all"
-                >
-                  <CheckCircle2 className="h-4 w-4 text-emerald-400" />
-                  <span>Verify Details & Proceed</span>
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleFinalSubmitToCoe}
-                  disabled={submittingToCoe}
-                  className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs flex items-center gap-2 shadow-lg shadow-emerald-600/20 cursor-pointer disabled:opacity-50 transition-all"
-                >
-                  {submittingToCoe ? (
-                    <>
-                      <RefreshCw className="h-4 w-4 animate-spin" />
-                      <span>Transmitting to COE...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Send className="h-4 w-4" />
-                      <span>Confirm & Final Submit to COE</span>
-                    </>
-                  )}
-                </button>
-              )}
-            </div>
+                {claimBillStep === "form" ? (
+                  <button
+                    type="button"
+                    onClick={handleVerifyClaimDetails}
+                    className="px-6 py-2.5 rounded-xl bg-[#120c7a] hover:bg-[#0e0a60] text-white font-black text-xs flex items-center gap-2 shadow-md cursor-pointer transition-all"
+                  >
+                    <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+                    <span>Verify Details & Proceed</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleFinalSubmitToCoe}
+                    disabled={submittingToCoe}
+                    className="px-6 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs flex items-center gap-2 shadow-lg shadow-emerald-600/20 cursor-pointer disabled:opacity-50 transition-all"
+                  >
+                    {submittingToCoe ? (
+                      <>
+                        <RefreshCw className="h-4 w-4 animate-spin" />
+                        <span>Transmitting to COE...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Send className="h-4 w-4" />
+                        <span>Confirm & Final Submit to COE</span>
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+            )}
 
           </div>
         </div>

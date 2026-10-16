@@ -1,9 +1,16 @@
 import { useState, useEffect, useMemo } from "react";
 import { auth, db } from "../../firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, getDoc, collection, getDocs, onSnapshot, query, where, documentId } from "firebase/firestore";
+import { doc, getDoc, collection, getDocs, onSnapshot } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
-import { formatProgDisplay, formatProgrammeKey, getAttendanceRecords, getAcademicYears, parseStudentAttendanceVal } from "../../lib/utils";
+import {
+  formatProgDisplay,
+  formatProgrammeKey,
+  getAcademicYears,
+  calculateStudentAttendanceOverview,
+  cleanStudentId,
+  extractSubjectCodeFromDocId
+} from "../../lib/utils";
 import {
   GraduationCap, CheckCircle, BarChart3, Clock, Bell,
   ArrowRight, BookOpen, FileText, CalendarDays, Library,
@@ -18,39 +25,6 @@ const sanitizeKey = (key) => {
 const normKey = (key) => {
   if (!key) return '';
   return String(key).toLowerCase().replace(/[^a-z0-9]/g, '');
-};
-
-const getStudentValFromRec = (studentsObj, studentIds) => {
-  if (!studentsObj) return undefined;
-  for (const id of studentIds) {
-    if (studentsObj[id] !== undefined) return studentsObj[id];
-  }
-  if (Array.isArray(studentsObj)) {
-    const match = studentsObj.find(item => {
-      if (!item) return false;
-      const itemReg = String(item.reg || item.regNo || item.admNo || item.admissionNo || item.id || '').trim().toLowerCase();
-      return studentIds.some(id => String(id).trim().toLowerCase() === itemReg);
-    });
-    if (match) return match;
-  }
-  if (typeof studentsObj === 'object') {
-    const keys = Object.keys(studentsObj);
-    const matchedKey = keys.find(k => {
-      const normK = String(k).trim().toLowerCase();
-      return studentIds.some(id => String(id).trim().toLowerCase() === normK);
-    });
-    if (matchedKey) return studentsObj[matchedKey];
-  }
-  return undefined;
-};
-
-const extractSubjectCode = (docId) => {
-  const parts = docId.split('_');
-  const batchIdx = parts.findIndex(p => /^\d{4}-\d{4}$/.test(p));
-  if (batchIdx >= 0 && batchIdx + 3 < parts.length) {
-    return parts.slice(batchIdx + 3).join('_').replace(/_(Sec-\w+)$/, '');
-  }
-  return parts.slice(4).join('_');
 };
 
 export default function StudentDashboard() {
@@ -81,7 +55,9 @@ export default function StudentDashboard() {
                     batch: uData.batch || idxData.batch || idxData.batchYear || '',
                   };
                 }
-              } catch (_) { }
+              } catch {
+                // ignore
+              }
             }
             setUserData(uData);
           }
@@ -138,10 +114,32 @@ export default function StudentDashboard() {
           (admissionNoForJoin ? studentsSnap?.data()?._joiningDate?.[admissionNoForJoin] : '') ||
           '';
 
+        // Extract student aliases from students document so admissionNo/rollNo from earlier months match
+        if (studentsSnap?.exists()) {
+          const sData = studentsSnap.data();
+          const targetClean = cleanStudentId(regNo || userData.admissionNo);
+          Object.entries(sData).forEach(([k, v]) => {
+            if (k.startsWith('_') || !v) return;
+            const kClean = cleanStudentId(k);
+            let vObj = typeof v === 'object' ? v : {};
+            const vReg = cleanStudentId(vObj.regNo || vObj.reg || vObj.registerNo);
+            const vAdm = cleanStudentId(vObj.admissionNo || vObj.admNo);
+            if (kClean === targetClean || vReg === targetClean || vAdm === targetClean) {
+              if (k) studentIds.push(String(k).trim());
+              if (vObj.regNo) studentIds.push(String(vObj.regNo).trim());
+              if (vObj.admissionNo) studentIds.push(String(vObj.admissionNo).trim());
+              if (vObj.admNo) studentIds.push(String(vObj.admNo).trim());
+              if (vObj.rollNo) studentIds.push(String(vObj.rollNo).trim());
+            }
+          });
+        }
+
         const facultyUidMap = {};
         if (assignSnap && assignSnap.forEach) {
           assignSnap.forEach(d => {
-            if (batchPrefix && !d.id.startsWith(batchPrefix)) return;
+            const dId = d.id;
+            const matchBatch = dId.includes(batchKey) || dId.includes(sanitizeKey(batch));
+            if (!matchBatch) return;
             const data = d.data();
             Object.entries(data).forEach(([uid, codes]) => {
               if (uid.startsWith('_') || !Array.isArray(codes)) return;
@@ -150,91 +148,47 @@ export default function StudentDashboard() {
           });
         }
 
-        const rawEntries = [];
-        attSnapshot.forEach((docSnap) => {
+        // Filter attendance docs for this student's batch and department
+        const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const batchNorm = norm(batch);
+        const batchYearMatch = String(batch).match(/\d{4}\s*[-_]\s*\d{2,4}/);
+        const bYear = batchYearMatch ? norm(batchYearMatch[0]) : '';
+        const bStartYear = String(batch).match(/\b(20\d{2})\b/)?.[1] || '';
+        const deptNorm = norm(department);
+        const matchAcronym = department.match(/\(([^)]+)\)/);
+        const deptAcronym = matchAcronym ? norm(matchAcronym[1]) : '';
+        const words = department.replace(/^(B\.?Tech\.?|B\.?E\.?|M\.?E\.?|M\.?Tech\.?|MBA|MCA)\s+/i, '').split(/[\s&/_-]+/);
+        const softAcronym = words.length > 1 ? norm(words.map(w => w[0]).join('')) : '';
+
+        const matchedAttDocs = attSnapshot.docs.filter(docSnap => {
           const id = docSnap.id;
-          const data = docSnap.data();
-          const records = getAttendanceRecords(data);
-          if (!Object.keys(records).length) return;
+          const idNorm = norm(id);
+          const hasBatch = idNorm.includes(batchNorm) || (bYear && idNorm.includes(bYear)) || (bStartYear && idNorm.includes(bStartYear));
+          if (!hasBatch) return false;
 
-          let docMatchesPrefix = batchPrefix ? id.startsWith(batchPrefix) : false;
-          if (!docMatchesPrefix && batch) {
-            const normB = normKey(batch);
-            const normD = normKey(department);
-            const normId = normKey(id);
-            if (normId.includes(normB) && (!normD || normId.includes(normD) || normD.includes(normId))) {
-              docMatchesPrefix = true;
-            }
-          }
+          const dData = docSnap.data();
+          const docDept = norm(dData._meta?.department || dData.department || '');
+          const hasDept = !department ||
+            idNorm.includes(deptNorm) ||
+            (deptAcronym && idNorm.includes(deptAcronym)) ||
+            (softAcronym && idNorm.includes(softAcronym)) ||
+            (docDept && (docDept.includes(deptNorm) || deptNorm.includes(docDept))) ||
+            (batchPrefix && id.startsWith(batchPrefix));
 
-          let hasStudentInDoc = false;
-          Object.values(records).forEach(rec => {
-            if (getStudentValFromRec(rec?.students, studentIds) !== undefined) {
-              hasStudentInDoc = true;
-            }
-          });
-
-          if (!docMatchesPrefix && !hasStudentInDoc) return;
-
-          const subjectCode = extractSubjectCode(id);
-
-          Object.entries(records).forEach(([key, rec]) => {
-            let dateStr = '';
-            let period = 1;
-            const m = key.match(/^(\d{4}-\d{2}-\d{2})_+[pP](\d+)/i);
-            if (m) {
-              dateStr = m[1];
-              period = parseInt(m[2], 10);
-            } else {
-              const dOnly = key.match(/^(\d{4}-\d{2}-\d{2})/);
-              if (dOnly) {
-                dateStr = dOnly[1];
-                period = parseInt(rec?.period, 10) || 1;
-              }
-            }
-            if (!dateStr) return;
-
-            // Lateral entry / joining date check: classes before joining date are skipped
-            if (joiningDate && dateStr < joiningDate) return;
-
-            const rawH = getStudentValFromRec(rec?.students, studentIds);
-            const parsedVal = parseStudentAttendanceVal(rawH);
-
-            let status = 'P';
-            if (parsedVal) {
-              status = parsedVal.status;
-            } else if (rec?.students && Object.keys(rec.students).length > 0 && rawH === undefined) {
-              if (hasStudentInDoc) {
-                status = 'P';
-              } else {
-                return;
-              }
-            } else if (rawH === undefined && !docMatchesPrefix) {
-              return;
-            }
-
-            rawEntries.push({
-              docId: id,
-              subjectCode,
-              recordKey: key,
-              status,
-              isEvent: rec?.isEvent || false
-            });
-          });
+          return hasDept;
         });
 
-        // Filter by course enrollment
         const uniqueEnrolKeys = new Set();
-        const enrolKeyMap = {};
-        rawEntries.forEach(e => {
-          const parts = e.docId.split('_');
+        matchedAttDocs.forEach((docSnap) => {
+          const id = docSnap.id;
+          const subjectCode = extractSubjectCodeFromDocId(id);
+          const parts = id.split('_');
           const batchIdx = parts.findIndex(p => /^\d{4}-\d{4}$/.test(p));
-          if (batchIdx < 0 || batchIdx + 3 >= parts.length) return;
+          if (batchIdx < 0 || batchIdx + 2 >= parts.length) return;
           const bKey = parts[batchIdx];
           const ayKey = parts[batchIdx + 1];
           const semNum = parts[batchIdx + 2];
-          const enrolKey = `${progKey || parts[0]}_${deptKey || parts[1]}_${sanitizeKey(bKey)}_${sanitizeKey(ayKey)}_${semNum}_${sanitizeKey(e.subjectCode)}`;
-          enrolKeyMap[e.docId] = enrolKey;
+          const enrolKey = `${progKey}_${deptKey}_${sanitizeKey(bKey)}_${sanitizeKey(ayKey)}_${semNum}_${sanitizeKey(subjectCode)}`;
           uniqueEnrolKeys.add(enrolKey);
         });
 
@@ -244,63 +198,28 @@ export default function StudentDashboard() {
             const eSnap = await getDoc(doc(db, 'course_enrolments', ek));
             if (eSnap.exists()) {
               const eData = eSnap.data();
-              enrolMap[ek] = new Set(Object.keys(eData).filter(k => eData[k]));
+              enrolMap[ek] = new Set(Object.keys(eData).filter(k => eData[k]).map(cleanStudentId));
             }
-          } catch (e) { /* enrollment doc may not exist */ }
+          } catch {
+            // enrollment doc may not exist
+          }
         }));
 
-        const filteredEntries = rawEntries.filter(e => {
-          const ek = enrolKeyMap[e.docId];
-          if (ek && enrolMap[ek]) {
-            return studentIds.some(id => enrolMap[ek].has(id) || enrolMap[ek].has(String(id).trim().toLowerCase()));
-          }
-          return Object.keys(facultyUidMap).length === 0 || !!facultyUidMap[e.subjectCode];
+        const studentSection = userData.section || userData.sec || profData.section || stuData.section || '';
+
+        const overview = calculateStudentAttendanceOverview({
+          attDocs: matchedAttDocs,
+          enrolMap,
+          studentIds,
+          studentSection,
+          joiningDate,
+          facultyUidMap,
+          facultyNames: {},
+          subjectNames: {},
+          maxPeriodsPerDay: 8
         });
 
-        // Dedup by recordKey
-        const entriesByRecordKey = {};
-        filteredEntries.forEach(e => {
-          if (!entriesByRecordKey[e.recordKey]) entriesByRecordKey[e.recordKey] = [];
-          entriesByRecordKey[e.recordKey].push(e);
-        });
-
-        const resolvedEntries = [];
-        Object.values(entriesByRecordKey).forEach(group => {
-          if (group.length === 1) {
-            resolvedEntries.push(group[0]);
-          } else if (new Set(group.map(e => e.subjectCode)).size === 1) {
-            const best = group.find(e => e.docId.includes('_Sec-')) || group[0];
-            resolvedEntries.push(best);
-          } else {
-            const enrolledInGroup = group.filter(e => {
-              const ek = enrolKeyMap[e.docId];
-              const enrolledSet = enrolMap[ek];
-              return enrolledSet && studentIds.some(id => enrolledSet.has(id) || enrolledSet.has(String(id).trim().toLowerCase()));
-            });
-            if (enrolledInGroup.length > 0) {
-              enrolledInGroup.forEach(e => resolvedEntries.push(e));
-            } else {
-              const present = group.filter(e => e.status === 'P' || e.status === 'OD');
-              if (present.length > 0) resolvedEntries.push(present[0]);
-              else resolvedEntries.push(group[0]);
-            }
-          }
-        });
-
-        let totalClasses = 0;
-        let attended = 0;
-        let odCount = 0;
-
-        resolvedEntries.forEach(entry => {
-          if (entry.isEvent) return;
-          totalClasses += 1;
-          if (entry.status === 'P') attended += 1;
-          if (entry.status === 'OD') odCount += 1;
-        });
-
-        const nonOdTotal = totalClasses - odCount;
-        const pct = nonOdTotal > 0 ? (attended / nonOdTotal) * 100 : (totalClasses > 0 ? 0 : 0);
-        setAttendancePct(pct);
+        setAttendancePct(overview.overallPercentage);
       } catch (err) {
         console.error("[StudentDashboard] fetchAttendance error:", err);
         setAttendancePct(0);

@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import HRLayout from "../components/HRLayout";
 import { getSchoolShortName, isSameInstitution, normalizeInstitution } from "../utils/appraisalScore";
-import { loadAppraisalEvidences, findEvidenceInMap } from "../utils/appraisalStorage";
+import { loadAppraisalEvidences, findEvidenceInMap, detectFileTypeAndMime, convertDataUrlToBlobUrl } from "../utils/appraisalStorage";
 import { jsPDF } from "jspdf";
 import "jspdf-autotable";
 
@@ -542,6 +542,7 @@ export default function AppraisalReviews() {
   const [selectedAppraisal, setSelectedAppraisal] = useState(null);
   const [activeDetailsTab, setActiveDetailsTab] = useState(1);
   const [viewingProof, setViewingProof] = useState(null);
+  const [useGoogleViewer, setUseGoogleViewer] = useState(false);
 
   // Scoring states (Parity with HODDashboard review modal)
   const [hodFacultyScoresMap, setHodFacultyScoresMap] = useState({});
@@ -627,8 +628,10 @@ export default function AppraisalReviews() {
     if (e && e.stopPropagation) e.stopPropagation();
 
     let targetUrl = fileUrl;
-    if (typeof targetUrl === "object" && targetUrl?.fileUrl) {
-      targetUrl = targetUrl.fileUrl;
+    let resolvedFileName = fileName || "Proof File";
+    if (targetUrl && typeof targetUrl === "object") {
+      resolvedFileName = targetUrl.fileName || targetUrl.name || fileName || "Proof File";
+      targetUrl = targetUrl.fileUrl || targetUrl.url || targetUrl.downloadUrl || targetUrl.dataUrl || targetUrl.src || "";
     }
 
     if (!targetUrl) {
@@ -647,12 +650,30 @@ export default function AppraisalReviews() {
                   || findEvidenceInMap(selectedAppraisal, refKey);
 
       // 2. On-demand query to Firestore evidence documents strictly for selectedAppraisal
+      // Includes academic-year format variants (2024-2025 vs 2024-25) so ckcoe
+      // proofs saved under either key always resolve.
       if (!foundUrl && selectedAppraisal) {
+        const ayRaw = selectedAppraisal.academicYear || "";
+        const ayM = String(ayRaw).match(/(20\d{2})\s*[-/]\s*(\d{2,4})/);
+        const ayAlt = ayM
+          ? (ayM[2].length === 2
+            ? [`${ayM[1]}-${ayM[1].slice(0, 2)}${ayM[2]}`, `${ayM[1]}-${ayM[2]}`, `${ayM[1]}/${ayM[2]}`]
+            : [`${ayM[1]}-${ayM[2].slice(2)}`, `${ayM[1]}/${ayM[2].slice(2)}`])
+          : [];
+        const uidAyIds = [];
+        if (selectedAppraisal.uid) {
+          uidAyIds.push(`appraisal_${selectedAppraisal.uid}_${ayRaw}`);
+          for (const a of ayAlt) uidAyIds.push(`appraisal_${selectedAppraisal.uid}_${a}`);
+        }
+        const fdUid = selectedAppraisal.formData?.uid;
+        if (fdUid) {
+          uidAyIds.push(`appraisal_${fdUid}_${ayRaw}`);
+          for (const a of ayAlt) uidAyIds.push(`appraisal_${fdUid}_${a}`);
+        }
         const candidateIds = Array.from(new Set([
           selectedAppraisal.id,
           selectedAppraisal.docId,
-          selectedAppraisal.uid ? `appraisal_${selectedAppraisal.uid}_${selectedAppraisal.academicYear}` : null,
-          selectedAppraisal.formData?.uid ? `appraisal_${selectedAppraisal.formData.uid}_${selectedAppraisal.academicYear}` : null,
+          ...uidAyIds,
           selectedAppraisal.uid ? `appraisal_${selectedAppraisal.uid}_2024-2025` : null,
           selectedAppraisal.uid ? `appraisal_${selectedAppraisal.uid}_2025-2026` : null,
           selectedAppraisal.uid ? `appraisal_${selectedAppraisal.uid}_2024-25` : null,
@@ -672,9 +693,13 @@ export default function AppraisalReviews() {
         const colls = Array.from(new Set([
           primaryColl,
           "faculty_appraisals_evidences",
+          "faculty_appraisals",
           "teacher_appraisals_evidences",
+          "teacher_appraisals",
           "non_teaching_appraisals_evidences",
-          "hod_appraisals_evidences"
+          "non_teaching_appraisals",
+          "hod_appraisals_evidences",
+          "hod_appraisals"
         ]));
 
         for (const targetColl of colls) {
@@ -684,7 +709,7 @@ export default function AppraisalReviews() {
               const snap = await getDoc(doc(db, targetColl, cId));
               if (snap.exists()) {
                 const data = snap.data();
-                foundUrl = findEvidenceInMap(data?.evidences || data, refKey);
+                foundUrl = findEvidenceInMap(data?.evidences || data?.formData?.evidences || data?.formData || data, refKey);
                 if (foundUrl) {
                   if (selectedAppraisal) {
                     selectedAppraisal.evidences = {
@@ -702,7 +727,7 @@ export default function AppraisalReviews() {
         }
       }
 
-      // 3. Fallback: check localStorage STRICTLY for selectedAppraisal candidate keys (NEVER iterate other users' caches)
+      // 3. Fallback: check localStorage STRICTLY for selectedAppraisal candidate keys
       if (!foundUrl && selectedAppraisal) {
         const localCandidateKeys = Array.from(new Set([
           selectedAppraisal.id ? `evidences_${selectedAppraisal.id}` : null,
@@ -726,52 +751,94 @@ export default function AppraisalReviews() {
 
       if (foundUrl) {
         targetUrl = foundUrl;
+      } else if (selectedAppraisal?.id) {
+        // Self-heal: the review may have opened before the evidence
+        // sub-document arrived — rehydrate once, then retry the lookup.
+        try {
+          const targetColl = selectedAppraisal.formType === "non_teaching" ? "non_teaching_appraisals" : selectedAppraisal.formType === "hod" ? "hod_appraisals" : selectedAppraisal.formType === "teacher" ? "teacher_appraisals" : "faculty_appraisals";
+          const fresh = await loadAppraisalEvidences(db, targetColl, selectedAppraisal.id, selectedAppraisal);
+          const retry = findEvidenceInMap(fresh?.evidences, refKey)
+            || findEvidenceInMap(fresh?.formData?.evidences, refKey)
+            || findEvidenceInMap(fresh?.formData, refKey)
+            || findEvidenceInMap(fresh, refKey);
+          if (retry) {
+            setSelectedAppraisal(fresh);
+            targetUrl = retry;
+          } else {
+            alert("Proof document is pending server synchronization. Please ask the faculty to re-attach a file under 100 KB and resubmit.");
+            return;
+          }
+        } catch (e) {
+          alert("Proof document is pending server synchronization. Please ask the faculty to re-attach a file under 100 KB and resubmit.");
+          return;
+        }
       } else {
         alert("Proof document is pending server synchronization.");
         return;
       }
     }
 
-    // Determine MIME type
-    let mime = "";
-    if (typeof targetUrl === "string") {
-      if (targetUrl.startsWith("data:")) {
-        const match = targetUrl.match(/^data:([^;]+);/);
-        mime = match ? match[1] : "";
-      } else if (fileName) {
-        const ext = String(fileName).split(".").pop().toLowerCase();
-        if (ext === "pdf") mime = "application/pdf";
-        else if (["jpg", "jpeg", "png", "webp", "gif"].includes(ext)) mime = `image/${ext === "jpg" ? "jpeg" : ext}`;
+    // Determine MIME and file classification (PDF vs Image vs Other)
+    const detected = detectFileTypeAndMime(targetUrl, resolvedFileName);
+    let mime = detected.mime;
+    let isPdf = detected.isPdf;
+    let isImage = detected.isImage;
+    let finalFileName = resolvedFileName;
+
+    // Normalize fileName extension if absent so download filenames are clean
+    if (!finalFileName.includes(".") && (isPdf || isImage)) {
+      if (isPdf) finalFileName = `${finalFileName}.pdf`;
+      else if (isImage) {
+        const ext = (mime || "").replace("image/", "") || "png";
+        finalFileName = `${finalFileName}.${ext === "jpeg" ? "jpg" : ext}`;
       }
     }
 
-    // If Base64 Data URL, convert to Blob URL so preview & new tab work without browser security blocks
+    // Convert Base64 Data URL to Blob URL to prevent browser CSP / iframe blocking
     let safeUrl = targetUrl;
     if (typeof targetUrl === "string" && targetUrl.startsWith("data:")) {
-      try {
-        const arr = targetUrl.split(",");
-        const mimeMatch = arr[0].match(/:(.*?);/);
-        const resolvedMime = mimeMatch ? mimeMatch[1] : (mime || "application/octet-stream");
-        mime = resolvedMime;
-        const bstr = atob(arr[1]);
-        let n = bstr.length;
-        const u8arr = new Uint8Array(n);
-        while (n--) {
-          u8arr[n] = bstr.charCodeAt(n);
-        }
-        const blob = new Blob([u8arr], { type: resolvedMime });
-        safeUrl = URL.createObjectURL(blob);
-      } catch (convErr) {
-        console.warn("Base64 to blob conversion failed, using raw data url:", convErr);
-      }
+      const conv = convertDataUrlToBlobUrl(targetUrl, mime);
+      safeUrl = conv.url;
+      if (conv.mime) mime = conv.mime;
+      if (mime === "application/pdf") isPdf = true;
+      if (mime.startsWith("image/")) isImage = true;
     }
 
     setViewingProof({
       url: safeUrl,
       rawUrl: targetUrl,
-      name: fileName || "Evidence Document",
-      mime: mime
+      name: finalFileName,
+      mime: mime || (isPdf ? "application/pdf" : isImage ? "image/jpeg" : ""),
+      isPdf: isPdf || (!isImage && (mime === "application/pdf" || finalFileName.toLowerCase().endsWith(".pdf"))),
+      isImage: isImage || (mime && mime.startsWith("image/")),
+      isHttp: typeof targetUrl === "string" && (targetUrl.startsWith("http://") || targetUrl.startsWith("https://"))
     });
+    setUseGoogleViewer(false);
+  };
+
+  const handleOpenInNewWindow = (proof) => {
+    if (!proof || !proof.url) return;
+    if (typeof proof.url === "string" && proof.url.startsWith("data:")) {
+      const conv = convertDataUrlToBlobUrl(proof.url, proof.mime);
+      window.open(conv.url, "_blank");
+      return;
+    }
+    window.open(proof.url, "_blank");
+  };
+
+  const handleDownloadProof = (proof) => {
+    if (!proof || !proof.url) return;
+    try {
+      const link = document.createElement("a");
+      link.href = proof.url;
+      link.download = proof.name || "Evidence_Document";
+      link.target = "_blank";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (e) {
+      window.open(proof.url, "_blank");
+    }
   };
 
   const renderRowEvidenceHeader = (sectionId, force = true) => {
@@ -779,16 +846,47 @@ export default function AppraisalReviews() {
     return <th className="border border-zinc-200 p-2 text-center w-28 text-[10px] uppercase font-bold text-zinc-600 bg-zinc-50">Evidence</th>;
   };
 
-  const renderRowEvidenceCellReadOnly = (row, sectionId, force = true) => {
-    if (!force && !isSectionEvidenceRequired(sectionId)) return null;
+  const renderRowEvidenceCellReadOnly = (row, sectionId, force = true, rowIndex = -1, tableKey = "") => {
+    let displayUrl = row?.fileUrl || row?.file || row?.url || (row?.proof && (row.proof.fileUrl || row.proof.url || row.proof));
+    const resolvedFileName = row?.fileName || row?.name || (row?.proof && (row.proof.fileName || row.proof.name)) || "Proof File";
+
+    // Fallback: if displayUrl is missing, attempt to find by tableKey and rowIndex in evidences map
+    if (!displayUrl && tableKey && rowIndex >= 0) {
+      const candidateKey = `${tableKey}.${rowIndex}.fileUrl`;
+      const candidateKeyAlt = `${tableKey}.${rowIndex}.file`;
+      displayUrl = findEvidenceInMap(selectedAppraisal?.evidences, candidateKey)
+        || findEvidenceInMap(selectedAppraisal?.evidences, candidateKeyAlt)
+        || findEvidenceInMap(selectedAppraisal?.formData?.evidences, candidateKey)
+        || findEvidenceInMap(selectedAppraisal?.formData?.evidences, candidateKeyAlt)
+        || findEvidenceInMap(selectedAppraisal?.formData, candidateKey);
+    }
+
+    if (!force && !isSectionEvidenceRequired(sectionId) && !displayUrl) return null;
+    let isUnresolvedRef = typeof displayUrl === "string" && displayUrl.startsWith("__EVIDENCE_REF__:");
+    if (isUnresolvedRef) {
+      const refKey = displayUrl.replace("__EVIDENCE_REF__:", "");
+      const resolved = findEvidenceInMap(selectedAppraisal?.evidences, refKey)
+        || findEvidenceInMap(selectedAppraisal?.formData?.evidences, refKey)
+        || findEvidenceInMap(selectedAppraisal?.formData, refKey)
+        || findEvidenceInMap(selectedAppraisal, refKey);
+      if (resolved) {
+        displayUrl = resolved;
+        isUnresolvedRef = false;
+      }
+    }
     return (
       <td className="border border-zinc-200 p-1.5 text-center min-w-[100px]">
-        {row.fileUrl ? (
+        {isUnresolvedRef ? (
+          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded" title="Evidence file is still syncing from the server">
+            <Loader2 size={10} className="animate-spin" />
+            <span>Syncing…</span>
+          </span>
+        ) : displayUrl ? (
           <button
             type="button"
-            onClick={(e) => handleViewProof(e, row.fileUrl, row.fileName || "Proof File")}
+            onClick={(e) => handleViewProof(e, displayUrl, resolvedFileName)}
             className="inline-flex items-center gap-1 text-[10px] font-extrabold text-blue-600 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded hover:bg-blue-100 transition-all cursor-pointer"
-            title={row.fileName || "View Proof"}
+            title={resolvedFileName}
           >
             <Eye size={10} />
             <span>Proof File</span>
@@ -1055,7 +1153,7 @@ export default function AppraisalReviews() {
                 {field.type !== "file_only" && savedEntry.value && (
                   <p className="font-bold text-slate-850 bg-white p-3 rounded-lg border border-zinc-100">{savedEntry.value}</p>
                 )}
-                {field.evidenceRequired && savedEntry.fileUrl && (
+                {savedEntry.fileUrl && (
                   <div className="flex items-center gap-2 mt-2">
                     <span className="text-zinc-400 font-semibold uppercase text-[9px]">Proof Attachment:</span>
                     <button
@@ -3480,7 +3578,7 @@ export default function AppraisalReviews() {
                                           {isSectionVisible("f_subjects_passPercent") && <td className="border-r border-zinc-200 p-2 text-center font-black text-[#120c7a]">{row.resultPercentage ? `${row.resultPercentage}${String(row.resultPercentage).includes('%') ? '' : '%'}` : "-"}</td>}
                                           {isSectionVisible("f_subjects_feedback") && <td className="border-r border-zinc-200 p-2 text-center font-bold text-indigo-700">{row.feedbackRating ? `${row.feedbackRating}${String(row.feedbackRating).includes('%') ? '' : '%'}` : "-"}</td>}
                                           {renderCustomGridCellsReadOnly(row, "sec_subjects_results")}
-                                          {renderRowEvidenceCellReadOnly(row, "sec_subjects_results")}
+                                          {renderRowEvidenceCellReadOnly(row, "sec_subjects_results", true, i, "oddTheorySubjects")}
                                         </tr>
                                       ))
                                     )}
@@ -3525,7 +3623,7 @@ export default function AppraisalReviews() {
                                           {isSectionVisible("f_subjects_passPercent") && <td className="border-r border-zinc-200 p-2 text-center font-black text-[#120c7a]">{row.resultPercentage ? `${row.resultPercentage}${String(row.resultPercentage).includes('%') ? '' : '%'}` : "-"}</td>}
                                           {isSectionVisible("f_subjects_feedback") && <td className="border-r border-zinc-200 p-2 text-center font-bold text-indigo-700">{row.feedbackRating ? `${row.feedbackRating}${String(row.feedbackRating).includes('%') ? '' : '%'}` : "-"}</td>}
                                           {renderCustomGridCellsReadOnly(row, "sec_subjects_results")}
-                                          {renderRowEvidenceCellReadOnly(row, "sec_subjects_results")}
+                                          {renderRowEvidenceCellReadOnly(row, "sec_subjects_results", true, i, "oddPracticalSubjects")}
                                         </tr>
                                       ))
                                     )}
@@ -3578,7 +3676,7 @@ export default function AppraisalReviews() {
                                             {isSectionVisible("f_subjects_passPercent") && <td className="border-r border-zinc-200 p-2 text-center font-black text-[#120c7a]">{row.resultPercentage ? `${row.resultPercentage}${String(row.resultPercentage).includes('%') ? '' : '%'}` : "-"}</td>}
                                             {isSectionVisible("f_subjects_feedback") && <td className="border-r border-zinc-200 p-2 text-center font-bold text-indigo-700">{row.feedbackRating ? `${row.feedbackRating}${String(row.feedbackRating).includes('%') ? '' : '%'}` : "-"}</td>}
                                             {renderCustomGridCellsReadOnly(row, "sec_subjects_results")}
-                                            {renderRowEvidenceCellReadOnly(row, "sec_subjects_results")}
+                                            {renderRowEvidenceCellReadOnly(row, "sec_subjects_results", true, i, "evenTheorySubjects")}
                                           </tr>
                                         ))
                                       )}
@@ -3623,7 +3721,7 @@ export default function AppraisalReviews() {
                                             {isSectionVisible("f_subjects_passPercent") && <td className="border-r border-zinc-200 p-2 text-center font-black text-[#120c7a]">{row.resultPercentage ? `${row.resultPercentage}${String(row.resultPercentage).includes('%') ? '' : '%'}` : "-"}</td>}
                                             {isSectionVisible("f_subjects_feedback") && <td className="border-r border-zinc-200 p-2 text-center font-bold text-indigo-700">{row.feedbackRating ? `${row.feedbackRating}${String(row.feedbackRating).includes('%') ? '' : '%'}` : "-"}</td>}
                                             {renderCustomGridCellsReadOnly(row, "sec_subjects_results")}
-                                            {renderRowEvidenceCellReadOnly(row, "sec_subjects_results")}
+                                            {renderRowEvidenceCellReadOnly(row, "sec_subjects_results", true, i, "evenPracticalSubjects")}
                                           </tr>
                                         ))
                                       )}
@@ -3691,7 +3789,7 @@ export default function AppraisalReviews() {
                                         <td className="border-r border-zinc-200 p-2 text-center text-slate-700">{row.examDate || "-"}</td>
                                         <td className="border-r border-zinc-200 p-2 text-center font-bold text-emerald-700">{row.certificateReceived || "-"}</td>
                                         {renderCustomGridCellsReadOnly(row, "sec_academic_nptel")}
-                                        {renderRowEvidenceCellReadOnly(row, "sec_academic_nptel")}
+                                        {renderRowEvidenceCellReadOnly(row, "sec_academic_nptel", true, i, "onlineCourses")}
                                       </tr>
                                     ))
                                   )}
@@ -3747,7 +3845,7 @@ export default function AppraisalReviews() {
                                         <td className="border-r border-zinc-200 p-2 text-slate-700">{row.volumeIssue || "-"}</td>
                                         <td className="border-r border-zinc-200 p-2 text-center font-bold text-indigo-700">{row.sciScopusUgc || "-"}</td>
                                         {renderCustomGridCellsReadOnly(row, "sec_academic_journals")}
-                                        {renderRowEvidenceCellReadOnly(row, "sec_academic_journals")}
+                                        {renderRowEvidenceCellReadOnly(row, "sec_academic_journals", true, i, "researchPapers")}
                                       </tr>
                                     ))
                                   )}
@@ -3797,7 +3895,7 @@ export default function AppraisalReviews() {
                                         <td className="border-r border-zinc-200 p-2 font-medium text-slate-800">{row.organization || "-"}</td>
                                         <td className="border-r border-zinc-200 p-2 text-center font-bold text-emerald-700">{row.reportSubmitted || "-"}</td>
                                         {renderCustomGridCellsReadOnly(row, "sec_academic_fdp")}
-                                        {renderRowEvidenceCellReadOnly(row, "sec_academic_fdp")}
+                                        {renderRowEvidenceCellReadOnly(row, "sec_academic_fdp", true, i, "workshopsFDPs")}
                                       </tr>
                                     ))
                                   )}
@@ -3847,7 +3945,7 @@ export default function AppraisalReviews() {
                                         <td className="border-r border-zinc-200 p-2 text-center text-slate-700">{row.duration || "-"}</td>
                                         <td className="border-r border-zinc-200 p-2 text-center font-bold text-slate-800">{row.status || "-"}</td>
                                         <td className="border-r border-zinc-200 p-2 text-center font-bold text-indigo-700">{row.nocObtained || "-"}</td>
-                                        {renderRowEvidenceCellReadOnly(row, "sec_academic_nptel")}
+                                        {renderRowEvidenceCellReadOnly(row, "sec_academic_nptel", true, i, "improvingDetails")}
                                       </tr>
                                     ))
                                   )}
@@ -3934,7 +4032,7 @@ export default function AppraisalReviews() {
                                                 <td className="border-r border-zinc-200 p-2 text-slate-800">{row.resourcePersonDetails || "-"}</td>
                                                 <td className="border-r border-zinc-200 p-2 text-slate-700">{row.targetAudience || "-"}</td>
                                                 <td className="border-r border-zinc-200 p-2 text-slate-700">{row.outcome || "-"}</td>
-                                                {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
+                                                {renderRowEvidenceCellReadOnly(row, "sec_roles_department", true, i, "organizingPrograms")}
                                               </tr>
                                             ))
                                           )}
@@ -3979,7 +4077,7 @@ export default function AppraisalReviews() {
                                                 <td className="border-r border-zinc-200 p-2 text-center font-bold text-emerald-700">{row.fundRequested || "-"}</td>
                                                 <td className="border-r border-zinc-200 p-2 text-center text-slate-700">{row.dateSubmission || "-"}</td>
                                                 <td className="border-r border-zinc-200 p-2 text-slate-700">{row.status || "-"}</td>
-                                                {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
+                                                {renderRowEvidenceCellReadOnly(row, "sec_roles_department", true, i, "fundingProposals")}
                                               </tr>
                                             ))
                                           )}
@@ -4020,7 +4118,7 @@ export default function AppraisalReviews() {
                                                 <td className="border-r border-zinc-200 p-2 font-bold text-indigo-700">{row.role || "-"}</td>
                                                 <td className="border-r border-zinc-200 p-2 text-slate-700">{row.outcome || "-"}</td>
                                                 <td className="border-r border-zinc-200 p-2 text-center font-bold text-slate-800">{row.recordsMaintained || "-"}</td>
-                                                {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
+                                                {renderRowEvidenceCellReadOnly(row, "sec_roles_department", true, i, "involvementPlacement")}
                                               </tr>
                                             ))
                                           )}
@@ -4059,7 +4157,7 @@ export default function AppraisalReviews() {
                                                 <td className="border-r border-zinc-200 p-2 font-bold text-indigo-700">{row.role || "-"}</td>
                                                 <td className="border-r border-zinc-200 p-2 text-slate-800">{row.description || "-"}</td>
                                                 <td className="border-r border-zinc-200 p-2 text-slate-700">{row.outcome || "-"}</td>
-                                                {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
+                                                {renderRowEvidenceCellReadOnly(row, "sec_roles_department", true, i, "accreditationContributions")}
                                               </tr>
                                             ))
                                           )}
@@ -4098,7 +4196,7 @@ export default function AppraisalReviews() {
                                                 <td className="border-r border-zinc-200 p-2 font-bold text-indigo-700">{row.role || "-"}</td>
                                                 <td className="border-r border-zinc-200 p-2 text-slate-800">{row.description || "-"}</td>
                                                 <td className="border-r border-zinc-200 p-2 text-slate-700">{row.outcome || "-"}</td>
-                                                {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
+                                                {renderRowEvidenceCellReadOnly(row, "sec_roles_department", true, i, "rdContributions")}
                                               </tr>
                                             ))
                                           )}
@@ -4154,7 +4252,7 @@ export default function AppraisalReviews() {
                                                 <td className="border-r border-zinc-200 p-2 font-bold text-slate-800">{row.teamNoArea || "-"}</td>
                                                 <td className="border-r border-zinc-200 p-2 text-center font-black text-[#120c7a]">{row.countContributed ?? "-"}</td>
                                                 <td className="border-r border-zinc-200 p-2 text-slate-800">{row.teamLeaderName || "-"}</td>
-                                                {renderRowEvidenceCellReadOnly(row, "sec_roles_department")}
+                                                {renderRowEvidenceCellReadOnly(row, "sec_roles_department", true, i, "admissionContribution")}
                                               </tr>
                                             ))
                                           )}
@@ -4275,7 +4373,7 @@ export default function AppraisalReviews() {
                                       <div className="flex items-center gap-3">
                                         <span className="font-semibold text-zinc-500 bg-slate-50 border border-zinc-200 px-2 py-0.5 rounded text-[11px]">{row.type}</span>
                                         <span className="font-semibold text-slate-700">No: {row.membershipNo || "-"}</span>
-                                        {isSectionEvidenceRequired("sec_professional_memberships") && row.fileUrl && (
+                                        {row.fileUrl && (
                                           <button
                                             type="button"
                                             onClick={(e) => handleViewProof(e, row.fileUrl, row.fileName || `Membership_${idx + 1}`)}
@@ -4331,7 +4429,7 @@ export default function AppraisalReviews() {
                                           <td className="border-r border-zinc-200 p-2 text-slate-700">{row.organization || "-"}</td>
                                           <td className="border-r border-zinc-200 p-2 text-center font-semibold text-slate-700">{row.year || "-"}</td>
                                           <td className="border-r border-zinc-200 p-2 text-center font-bold text-indigo-700">{row.level || "-"}</td>
-                                          {renderRowEvidenceCellReadOnly(row, "sec_awards_honors")}
+                                          {renderRowEvidenceCellReadOnly(row, "sec_awards_honors", true, idx, "awardsHonors")}
                                         </tr>
                                       ))
                                     )}
@@ -4552,7 +4650,7 @@ export default function AppraisalReviews() {
                                 {field.type !== "file_only" && entry.value && (
                                   <p className="font-bold text-slate-850 bg-white p-3 rounded-lg border border-zinc-100">{entry.value}</p>
                                 )}
-                                {field.evidenceRequired && entry.fileUrl && (
+                                {entry.fileUrl && (
                                   <div className="flex items-center gap-2 mt-2">
                                     <span className="text-zinc-400 font-semibold uppercase text-[9px]">Proof Attachment:</span>
                                     <button
@@ -5858,14 +5956,19 @@ export default function AppraisalReviews() {
             >
               {/* Header */}
               <div className="px-6 py-4 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white flex items-center justify-between border-b border-white/10 shrink-0">
-                <div className="flex items-center gap-3 min-w-0">
+                <div className="flex items-center gap-3 min-w-0 pr-4">
                   <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center text-indigo-300 shrink-0">
                     <FileText size={18} />
                   </div>
                   <div className="min-w-0">
-                    <h3 className="text-sm font-bold truncate max-w-md text-white">
-                      {viewingProof.name}
-                    </h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-bold truncate max-w-md text-white">
+                        {viewingProof.name}
+                      </h3>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/15 text-indigo-200">
+                        {viewingProof.isPdf ? "PDF Document" : viewingProof.isImage ? "Image" : "Document"}
+                      </span>
+                    </div>
                     <span className="text-[10px] text-slate-300 font-semibold uppercase tracking-wider block">
                       Institutional Evidence Verification
                     </span>
@@ -5875,29 +5978,28 @@ export default function AppraisalReviews() {
                 <div className="flex items-center gap-2 shrink-0">
                   <button
                     type="button"
-                    onClick={() => {
-                      if (viewingProof.url) {
-                        window.open(viewingProof.url, "_blank", "noopener,noreferrer");
-                      }
-                    }}
+                    onClick={() => handleOpenInNewWindow(viewingProof)}
                     className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
                     title="Open in new window"
                   >
                     <ExternalLink size={13} />
                     <span className="hidden sm:inline">Open New Tab</span>
                   </button>
-                  <a
-                    href={viewingProof.url}
-                    download={viewingProof.name}
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadProof(viewingProof)}
                     className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
                     title="Download File"
                   >
                     <Download size={13} />
                     <span className="hidden sm:inline">Download</span>
-                  </a>
+                  </button>
                   <button
                     type="button"
-                    onClick={() => setViewingProof(null)}
+                    onClick={() => {
+                      setViewingProof(null);
+                      setUseGoogleViewer(false);
+                    }}
                     className="w-8 h-8 rounded-xl bg-white/10 hover:bg-rose-500 hover:text-white text-slate-300 transition-all flex items-center justify-center cursor-pointer ml-1"
                     title="Close Preview"
                   >
@@ -5908,18 +6010,97 @@ export default function AppraisalReviews() {
 
               {/* Content Body */}
               <div className="p-4 sm:p-6 overflow-y-auto flex-1 flex flex-col items-center justify-center bg-slate-50 min-h-[50vh]">
-                {viewingProof.mime === "application/pdf" || viewingProof.name?.toLowerCase().endsWith(".pdf") ? (
-                  <iframe
-                    src={viewingProof.url}
-                    className="w-full h-[70vh] rounded-2xl border border-slate-200 bg-white shadow-inner"
-                    title={viewingProof.name}
-                  />
-                ) : viewingProof.mime?.startsWith("image/") || /\.(jpg|jpeg|png|webp|gif|svg)$/i.test(viewingProof.name) ? (
-                  <div className="max-h-[70vh] flex items-center justify-center overflow-auto p-2">
-                    <img
-                      src={viewingProof.url}
-                      alt={viewingProof.name}
-                      className="max-h-[68vh] max-w-full rounded-2xl shadow-md object-contain border border-slate-200 bg-white"
+                {viewingProof.isPdf || viewingProof.mime === "application/pdf" || viewingProof.name?.toLowerCase().endsWith(".pdf") ? (
+                  <div className="w-full flex-1 flex flex-col items-center justify-center">
+                    <object
+                      data={useGoogleViewer && viewingProof.isHttp
+                        ? `https://docs.google.com/viewer?url=${encodeURIComponent(viewingProof.rawUrl || viewingProof.url)}&embedded=true`
+                        : viewingProof.url
+                      }
+                      type={useGoogleViewer ? "text/html" : (viewingProof.mime || "application/pdf")}
+                      className="w-full h-[70vh] rounded-2xl border border-slate-200 bg-white shadow-inner overflow-hidden"
+                    >
+                      <embed
+                        src={useGoogleViewer && viewingProof.isHttp
+                          ? `https://docs.google.com/viewer?url=${encodeURIComponent(viewingProof.rawUrl || viewingProof.url)}&embedded=true`
+                          : viewingProof.url
+                        }
+                        type={useGoogleViewer ? "text/html" : (viewingProof.mime || "application/pdf")}
+                        className="w-full h-full"
+                      />
+                      <iframe
+                        src={useGoogleViewer && viewingProof.isHttp
+                          ? `https://docs.google.com/viewer?url=${encodeURIComponent(viewingProof.rawUrl || viewingProof.url)}&embedded=true`
+                          : viewingProof.url
+                        }
+                        className="w-full h-full border-0"
+                        title={viewingProof.name}
+                      />
+                    </object>
+                    <div className="mt-3 text-center text-xs text-slate-500 flex flex-wrap items-center justify-center gap-3">
+                      <span>Preview not displaying?</span>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenInNewWindow(viewingProof)}
+                        className="font-bold text-emerald-600 hover:text-emerald-800 underline inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <ExternalLink size={12} /> Open in New Tab
+                      </button>
+                      <span>•</span>
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadProof(viewingProof)}
+                        className="font-bold text-blue-600 hover:text-blue-800 underline inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <Download size={12} /> Download PDF
+                      </button>
+                      {viewingProof.isHttp && (
+                        <>
+                          <span>•</span>
+                          <button
+                            type="button"
+                            onClick={() => setUseGoogleViewer(prev => !prev)}
+                            className="font-bold text-indigo-600 hover:text-indigo-800 underline inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            <FileText size={11} /> {useGoogleViewer ? "Direct View" : "Google Docs Viewer"}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ) : viewingProof.isImage || viewingProof.mime?.startsWith("image/") || /\.(jpg|jpeg|png|webp|gif|svg)$/i.test(viewingProof.name) ? (
+                  <div className="flex flex-col items-center justify-center w-full">
+                    <div className="max-h-[68vh] flex items-center justify-center overflow-auto p-2 bg-slate-100 rounded-2xl w-full">
+                      <img
+                        src={viewingProof.url}
+                        alt={viewingProof.name}
+                        className="max-h-[65vh] max-w-full rounded-xl shadow-md object-contain border border-slate-200 bg-white"
+                      />
+                    </div>
+                    <div className="mt-3 text-center text-xs text-slate-500 flex items-center justify-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenInNewWindow(viewingProof)}
+                        className="font-bold text-emerald-600 hover:text-emerald-800 underline inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <ExternalLink size={12} /> Open in New Tab
+                      </button>
+                      <span>•</span>
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadProof(viewingProof)}
+                        className="font-bold text-blue-600 hover:text-blue-800 underline inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <Download size={12} /> Download Image
+                      </button>
+                    </div>
+                  </div>
+                ) : viewingProof.isHttp ? (
+                  <div className="w-full flex-1 flex flex-col items-center justify-center">
+                    <iframe
+                      src={`https://docs.google.com/viewer?url=${encodeURIComponent(viewingProof.rawUrl || viewingProof.url)}&embedded=true`}
+                      className="w-full h-[70vh] rounded-2xl border border-slate-200 bg-white shadow-inner"
+                      title={viewingProof.name}
                     />
                   </div>
                 ) : (
@@ -5929,13 +6110,23 @@ export default function AppraisalReviews() {
                     <p className="text-xs text-slate-500 mb-4">
                       This file format cannot be rendered directly in the embedded frame.
                     </p>
-                    <a
-                      href={viewingProof.url}
-                      download={viewingProof.name}
-                      className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-md"
-                    >
-                      <Download size={14} /> Download Document
-                    </a>
+                    <div className="flex items-center justify-center gap-2">
+                      <a
+                        href={viewingProof.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-md"
+                      >
+                        <ExternalLink size={14} /> Open in New Tab
+                      </a>
+                      <a
+                        href={viewingProof.url}
+                        download={viewingProof.name}
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-md"
+                      >
+                        <Download size={14} /> Download Document
+                      </a>
+                    </div>
                   </div>
                 )}
               </div>
@@ -5947,7 +6138,10 @@ export default function AppraisalReviews() {
                 </span>
                 <button
                   type="button"
-                  onClick={() => setViewingProof(null)}
+                  onClick={() => {
+                    setViewingProof(null);
+                    setUseGoogleViewer(false);
+                  }}
                   className="px-4 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-all cursor-pointer"
                 >
                   Close Preview

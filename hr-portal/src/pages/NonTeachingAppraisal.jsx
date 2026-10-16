@@ -297,17 +297,28 @@ export default function NonTeachingAppraisal() {
 
       const userInst = userProfile?.institution || formData.institution || "CKSPK (Matric)";
 
+      const staffName = formData.name || userProfile?.name || currentUser.displayName || currentUser.email;
+      const staffEmail = currentUser.email || userProfile?.email || "";
+      const empId = userProfile?.empId || userProfile?.employeeId || formData.empId || "";
+
       const payload = {
         docId,
         formType: "non_teaching",
+        uid: currentUser.uid,
         staffId: currentUser.uid,
-        staffName: formData.name || userProfile?.name || currentUser.email,
-        staffEmail: currentUser.email,
+        name: staffName,
+        staffName,
+        email: staffEmail,
+        staffEmail,
+        empId,
+        employeeId: empId,
+        designation: formData.designation || userProfile?.designation || userProfile?.role || "",
         department: formData.department || userProfile?.department || "General",
         institution: userInst,
         academicYear,
         formData: {
           ...formData,
+          name: staffName,
           institution: userInst
         },
         status: isSubmit ? "HOD_Approved" : (existingAppraisal?.status || "Draft"),
@@ -376,6 +387,23 @@ export default function NonTeachingAppraisal() {
               <p className="text-slate-300 text-xs md:text-sm mt-1 max-w-2xl font-medium">
                 To be filled by each staff member. Questions are formulated to assess your views, decision making power, leave records, and institutional support.
               </p>
+
+              {/* Staff Identification Chip */}
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                <div className="bg-white/10 backdrop-blur-md border border-white/15 px-3 py-1 rounded-xl text-teal-200 flex items-center gap-1.5 font-medium">
+                  <User className="w-3.5 h-3.5 text-teal-300" />
+                  <span>Staff: <strong className="text-white font-bold">{formData.name || userProfile?.name || currentUser?.displayName || currentUser?.email}</strong></span>
+                </div>
+                {currentUser?.email && (
+                  <div className="bg-white/10 backdrop-blur-md border border-white/15 px-3 py-1 rounded-xl text-slate-300 flex items-center gap-1.5 font-medium">
+                    <span>Email: <strong className="text-white font-mono">{currentUser.email}</strong></span>
+                  </div>
+                )}
+                <div className="bg-white/10 backdrop-blur-md border border-white/15 px-3 py-1 rounded-xl text-slate-300 flex items-center gap-1.5 font-medium">
+                  <Building className="w-3.5 h-3.5 text-amber-300" />
+                  <span>{userInst} {formData.department ? `• ${formData.department}` : ""}</span>
+                </div>
+              </div>
             </div>
 
             {/* Status & Actions Pill */}

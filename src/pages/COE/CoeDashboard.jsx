@@ -23,6 +23,9 @@ import { useRegulations } from "../../hooks/useRegulations";
 import { useBatches } from "../../hooks/useBatches";
 import { formatProgrammeKey, matchRegulation, sanitizeKey, formatDepartmentDisplay } from "../../lib/utils";
 
+const ROMAN_LABELS = ["i)", "ii)", "iii)", "iv)", "v)", "vi)", "vii)", "viii)"];
+const getRomanLabel = (idx) => ROMAN_LABELS[idx] || `${idx + 1})`;
+
 export default function CoeDashboard() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("users"); // "users" | "patterns" | "assignment" | "submitted"
@@ -1110,6 +1113,7 @@ export default function CoeDashboard() {
   const [assignments, setAssignments] = useState([]);
   const [loadingAssignments, setLoadingAssignments] = useState(true);
   const [selectedReviewAssignment, setSelectedReviewAssignment] = useState(null);
+  const [submittedTabFilter, setSubmittedTabFilter] = useState("all"); // "all" | "submitted"
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "coe_setter_assignments"), (snap) => {
@@ -1123,14 +1127,30 @@ export default function CoeDashboard() {
     return () => unsub();
   }, []);
 
+  const normalizeSessionStr = (s) => (s || "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+
+  const isMatchingSession = (assSession, curSession) => {
+    if (!curSession || curSession === "ALL") return true;
+    if (!assSession) return true; // Include assignments without explicit examSession tag so they are never lost
+    const a = normalizeSessionStr(assSession);
+    const b = normalizeSessionStr(curSession);
+    return a === b || a.includes(b) || b.includes(a);
+  };
+
   const filteredAssignments = useMemo(() => {
-    if (!selectedExamSession || selectedExamSession === "ALL") return assignments;
-    return assignments.filter(a => a.examSession === selectedExamSession);
+    return assignments.filter((a) => isMatchingSession(a.examSession, selectedExamSession));
   }, [assignments, selectedExamSession]);
 
   const filteredSubmittedAssignments = useMemo(() => {
-    return filteredAssignments.filter(a => a.submittedPaper || a.status === "submitted");
+    return filteredAssignments.filter((a) => a.submittedPaper || a.submittedPaperB || a.status === "submitted" || a.paperSubmittedAt);
   }, [filteredAssignments]);
+
+  const displayedAssignments = useMemo(() => {
+    if (submittedTabFilter === "submitted") {
+      return filteredSubmittedAssignments;
+    }
+    return filteredAssignments;
+  }, [filteredAssignments, filteredSubmittedAssignments, submittedTabFilter]);
 
   const inputCls = "w-full bg-white border border-zinc-200 rounded-xl px-3.5 py-2.5 text-xs text-zinc-800 font-semibold placeholder-zinc-400 focus:outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 transition-all cursor-pointer";
   const labelCls = "text-[11px] font-black text-zinc-500 uppercase tracking-wider mb-1 block";
@@ -3076,7 +3096,7 @@ Contact: 94884 93434`}
         {/* ========================================================================= */}
         {activeTab === "submitted" && (
           <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm p-6">
-            <div className="flex items-center justify-between mb-6 pb-4 border-b border-zinc-100">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 pb-4 border-b border-zinc-100">
               <div>
                 <h2 className="text-base font-black text-[#120c7a] flex items-center gap-2">
                   <FileCheck className="h-5 w-5 text-indigo-600" />
@@ -3086,6 +3106,33 @@ Contact: 94884 93434`}
                   Review external setter acceptance status, signatures, order copy, and submitted question papers.
                 </p>
               </div>
+
+              {/* Filter Switcher */}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSubmittedTabFilter("all")}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    submittedTabFilter === "all"
+                      ? "bg-[#120c7a] text-white shadow-xs"
+                      : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
+                  }`}
+                >
+                  All Assignments ({filteredAssignments.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSubmittedTabFilter("submitted")}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                    submittedTabFilter === "submitted"
+                      ? "bg-emerald-700 text-white shadow-xs"
+                      : "bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200"
+                  }`}
+                >
+                  <FileCheck className="h-3.5 w-3.5" />
+                  Moved to COE ({filteredSubmittedAssignments.length})
+                </button>
+              </div>
             </div>
 
             {loadingAssignments ? (
@@ -3093,11 +3140,28 @@ Contact: 94884 93434`}
                 <RefreshCw className="h-6 w-6 animate-spin text-[#120c7a]" />
                 <span className="text-xs font-bold">Loading assignments & submitted papers...</span>
               </div>
-            ) : filteredAssignments.length === 0 ? (
-              <div className="py-12 text-center border-2 border-dashed border-zinc-200 rounded-2xl p-6 text-zinc-500">
-                <FileCheck className="h-10 w-10 mx-auto mb-2 text-zinc-400" />
-                <p className="font-extrabold text-zinc-800 text-sm">No Assignments for {selectedExamSession}</p>
-                <p className="text-xs text-zinc-500 mt-1">Assign subjects to external setters under Tab 3 for this examination session.</p>
+            ) : displayedAssignments.length === 0 ? (
+              <div className="py-12 text-center border-2 border-dashed border-zinc-200 rounded-2xl p-6 text-zinc-500 space-y-2">
+                <FileCheck className="h-10 w-10 mx-auto text-zinc-400" />
+                <p className="font-extrabold text-zinc-800 text-sm">
+                  {submittedTabFilter === "submitted"
+                    ? `No Submitted Question Papers yet for ${selectedExamSession || "Active Session"}`
+                    : `No Assignments for ${selectedExamSession || "Active Session"}`}
+                </p>
+                <p className="text-xs text-zinc-500">
+                  {submittedTabFilter === "submitted"
+                    ? "External setters who move question papers to COE will appear here."
+                    : "Assign subjects to external setters under Tab 3 for this examination session."}
+                </p>
+                {selectedExamSession && selectedExamSession !== "ALL" && assignments.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedExamSession("ALL")}
+                    className="mt-2 px-3.5 py-1.5 rounded-xl bg-blue-50 text-[#120c7a] hover:bg-blue-100 border border-blue-200 text-xs font-bold transition-all cursor-pointer inline-flex items-center gap-1"
+                  >
+                    View All Assignments Across All Sessions ({assignments.length})
+                  </button>
+                )}
               </div>
             ) : (
               <div className="overflow-x-auto border border-zinc-200 rounded-2xl">
@@ -3112,7 +3176,7 @@ Contact: 94884 93434`}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-100">
-                    {filteredAssignments.map((ass) => (
+                    {displayedAssignments.map((ass) => (
                       <tr key={ass.id} className="hover:bg-blue-50/30 transition-colors">
                         <td className="py-3.5 px-4">
                           <div className="font-extrabold text-[#120c7a] text-xs">{ass.subjectCode}</div>
@@ -3143,7 +3207,7 @@ Contact: 94884 93434`}
                           )}
                         </td>
                         <td className="py-3.5 px-4">
-                          {ass.status === "submitted" ? (
+                          {(ass.status === "submitted" || ass.submittedPaper || ass.paperSubmittedAt) ? (
                             <span className="px-2.5 py-1 rounded-full text-[11px] font-extrabold bg-blue-50 text-[#120c7a] border border-blue-200 inline-flex items-center gap-1">
                               <FileCheck className="h-3.5 w-3.5 text-[#120c7a]" />
                               Moved to COE
@@ -3176,7 +3240,7 @@ Contact: 94884 93434`}
                               <FileText className="h-3.5 w-3.5 text-amber-700" /> Order
                             </button>
 
-                            {ass.status === "submitted" && (
+                            {(ass.status === "submitted" || ass.submittedPaper || ass.paperSubmittedAt) && (
                               <button
                                 onClick={() => setSelectedReviewAssignment(ass)}
                                 className="px-3 py-1 rounded-lg bg-[#120c7a] hover:bg-[#0e0a60] text-white text-xs font-extrabold inline-flex items-center gap-1 shadow-sm cursor-pointer"
@@ -3612,14 +3676,33 @@ Contact: 94884 93434`}
                               if (!isEitherOr) {
                                 return (
                                   <tr key={qIdx} className="border-b border-black">
-                                    <td className="border border-black p-2 text-center font-bold font-sans align-middle whitespace-nowrap">
+                                    <td className="border border-black p-2 text-center font-bold font-sans align-top whitespace-nowrap">
                                       {qNoDisplay}
                                     </td>
-                                    <td className="border border-black p-2.5 align-middle">
-                                      <div
-                                        className="prose prose-sm max-w-none text-zinc-900 leading-relaxed font-serif"
-                                        dangerouslySetInnerHTML={{ __html: q.text || q.questionText || "(Question text pending)" }}
-                                      />
+                                    <td className="border border-black p-2.5 align-top">
+                                      {q.isSplit && q.subParts?.length > 0 ? (
+                                        <div className="space-y-2 font-serif text-xs leading-relaxed">
+                                          {q.subParts.map((sub, sIdx) => (
+                                            <div key={sIdx} className="flex items-start justify-between gap-2">
+                                              <div className="flex items-start gap-2 flex-1 min-w-0">
+                                                <span className="font-bold font-sans text-xs w-6 shrink-0">{sub.label || getRomanLabel(sIdx)}</span>
+                                                <div
+                                                  className="prose prose-sm max-w-none text-zinc-900 leading-relaxed font-serif flex-1"
+                                                  dangerouslySetInnerHTML={{ __html: sub.text || `(Sub-part ${sub.label || getRomanLabel(sIdx)} text pending)` }}
+                                                />
+                                              </div>
+                                              <span className="font-sans font-bold text-xs text-zinc-900 shrink-0 ml-2">
+                                                ({sub.marks})
+                                              </span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <div
+                                          className="prose prose-sm max-w-none text-zinc-900 leading-relaxed font-serif"
+                                          dangerouslySetInnerHTML={{ __html: q.text || q.questionText || "(Question text pending)" }}
+                                        />
+                                      )}
                                     </td>
                                     <td className="border border-black p-2 text-center font-sans font-bold align-middle">
                                       {q.marks || 2}
@@ -3638,14 +3721,33 @@ Contact: 94884 93434`}
                                 <Fragment key={qIdx}>
                                   {/* Option A Row */}
                                   <tr className="border-b border-black">
-                                    <td className="border border-black p-2 text-center font-bold font-sans align-middle whitespace-nowrap">
+                                    <td className="border border-black p-2 text-center font-bold font-sans align-top whitespace-nowrap">
                                       {qNoNum}(a)
                                     </td>
-                                    <td className="border border-black p-2.5 align-middle">
-                                      <div
-                                        className="prose prose-sm max-w-none text-zinc-900 leading-relaxed font-serif"
-                                        dangerouslySetInnerHTML={{ __html: q.text || q.questionText || "(Question text pending)" }}
-                                      />
+                                    <td className="border border-black p-2.5 align-top">
+                                      {q.isSplit && q.subParts?.length > 0 ? (
+                                        <div className="space-y-2 font-serif text-xs leading-relaxed">
+                                          {q.subParts.map((sub, sIdx) => (
+                                            <div key={sIdx} className="flex items-start justify-between gap-2">
+                                              <div className="flex items-start gap-2 flex-1 min-w-0">
+                                                <span className="font-bold font-sans text-xs w-6 shrink-0">{sub.label || getRomanLabel(sIdx)}</span>
+                                                <div
+                                                  className="prose prose-sm max-w-none text-zinc-900 leading-relaxed font-serif flex-1"
+                                                  dangerouslySetInnerHTML={{ __html: sub.text || `(Sub-part ${sub.label || getRomanLabel(sIdx)} text pending)` }}
+                                                />
+                                              </div>
+                                              <span className="font-sans font-bold text-xs text-zinc-900 shrink-0 ml-2">
+                                                ({sub.marks})
+                                              </span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <div
+                                          className="prose prose-sm max-w-none text-zinc-900 leading-relaxed font-serif"
+                                          dangerouslySetInnerHTML={{ __html: q.text || q.questionText || "(Question text pending)" }}
+                                        />
+                                      )}
                                     </td>
                                     <td className="border border-black p-2 text-center font-sans font-bold align-middle">
                                       {q.marks || 16}
@@ -3671,14 +3773,33 @@ Contact: 94884 93434`}
 
                                   {/* Option B Row */}
                                   <tr className="border-b border-black">
-                                    <td className="border border-black p-2 text-center font-bold font-sans align-middle whitespace-nowrap">
+                                    <td className="border border-black p-2 text-center font-bold font-sans align-top whitespace-nowrap">
                                       {qNoNum}(b)
                                     </td>
-                                    <td className="border border-black p-2.5 align-middle">
-                                      <div
-                                        className="prose prose-sm max-w-none text-zinc-900 leading-relaxed font-serif"
-                                        dangerouslySetInnerHTML={{ __html: q.optionB || "(Option b text pending)" }}
-                                      />
+                                    <td className="border border-black p-2.5 align-top">
+                                      {q.isSplitOptionB && q.subPartsOptionB?.length > 0 ? (
+                                        <div className="space-y-2 font-serif text-xs leading-relaxed">
+                                          {q.subPartsOptionB.map((sub, sIdx) => (
+                                            <div key={sIdx} className="flex items-start justify-between gap-2">
+                                              <div className="flex items-start gap-2 flex-1 min-w-0">
+                                                <span className="font-bold font-sans text-xs w-6 shrink-0">{sub.label || getRomanLabel(sIdx)}</span>
+                                                <div
+                                                  className="prose prose-sm max-w-none text-zinc-900 leading-relaxed font-serif flex-1"
+                                                  dangerouslySetInnerHTML={{ __html: sub.text || `(Sub-part ${sub.label || getRomanLabel(sIdx)} text pending)` }}
+                                                />
+                                              </div>
+                                              <span className="font-sans font-bold text-xs text-zinc-900 shrink-0 ml-2">
+                                                ({sub.marks})
+                                              </span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <div
+                                          className="prose prose-sm max-w-none text-zinc-900 leading-relaxed font-serif"
+                                          dangerouslySetInnerHTML={{ __html: q.optionB || "(Option b text pending)" }}
+                                        />
+                                      )}
                                     </td>
                                     <td className="border border-black p-2 text-center font-sans font-bold align-middle">
                                       {q.marks || 16}

@@ -89,6 +89,8 @@ export function getGoogleDocsViewerUrl(rawUrl) {
 
 /**
  * SharePoint Native Embed View URL.
+ * Preserves guest sharing links (/:w:/g/, /:b:/g/, /:x:/g/, /:p:/g/ or /g/) intact,
+ * ensuring anonymous viewing without tenant sign-in roadblocks.
  */
 export function getSharePointEmbedUrl(rawUrl) {
   if (!rawUrl || typeof rawUrl !== "string") return "";
@@ -99,11 +101,13 @@ export function getSharePointEmbedUrl(rawUrl) {
       const urlObj = new URL(cleaned);
       urlObj.searchParams.delete("download");
       urlObj.searchParams.set("action", "embedview");
-      urlObj.searchParams.set("wdAllowInteractivity", "True");
+      urlObj.searchParams.set("em", "2");
+      urlObj.searchParams.set("wdStartOn", "1");
+      urlObj.searchParams.set("wdAllowInteractivity", "False");
       return urlObj.toString();
     } catch {
       const sep = cleaned.includes("?") ? "&" : "?";
-      return `${cleaned}${sep}action=embedview&wdAllowInteractivity=True`;
+      return `${cleaned}${sep}action=embedview&em=2&wdStartOn=1`;
     }
   }
   return cleaned;

@@ -196,7 +196,7 @@ export default function AppointmentOrderCopyModal({ assignment, onClose }) {
             </p>
 
             <p>
-              The appointment, login credentials, question paper contents and all related information shall be treated as <strong>STRICLY CONFIDENTIAL</strong>.
+              The appointment, login credentials, question paper contents and all related information shall be treated as <strong>STRICTLY CONFIDENTIAL</strong>.
             </p>
 
             <p>
@@ -204,12 +204,10 @@ export default function AppointmentOrderCopyModal({ assignment, onClose }) {
             </p>
           </div>
 
-          {/* Signature Block */}
-          <div className="pt-6 border-t border-slate-200 flex items-end justify-between text-xs sm:text-sm">
-            <div>
-              <p className="font-semibold text-slate-600">With regards,</p>
-            </div>
+          {/* Signature Block - Right Aligned with With regards above Controller of Examinations */}
+          <div className="pt-6 border-t border-slate-200 flex justify-end text-xs sm:text-sm">
             <div className="text-right space-y-0.5">
+              <p className="font-semibold text-slate-700 mb-3 text-xs sm:text-sm">With regards,</p>
               <p className="font-extrabold text-slate-900 text-sm sm:text-base">Dr. N. Kamalakannan</p>
               <p className="font-bold text-[#120c7a]">Controller of Examinations</p>
               <p className="text-xs text-slate-600">C.K. College of Engineering & Technology</p>
@@ -217,7 +215,6 @@ export default function AppointmentOrderCopyModal({ assignment, onClose }) {
               <p className="text-xs font-bold text-slate-800">Contact: 94884 93434</p>
             </div>
           </div>
-
         </div>
 
         {/* Modal Footer (Hidden in Print) */}

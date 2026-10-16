@@ -3,7 +3,7 @@ import { auth, db } from "../firebase";
 import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import evaluateAppraisal, { checkAppraisalPortalStatus, parseAppraisalDateTime, getSchoolBannerTitle, getSchoolShortName, normalizeInstitution } from "../utils/appraisalScore";
-import { saveFacultyAppraisal, loadFacultyAppraisalEvidences, findEvidenceInMap } from "../utils/appraisalStorage";
+import { saveFacultyAppraisal, loadFacultyAppraisalEvidences, findEvidenceInMap, detectFileTypeAndMime, convertDataUrlToBlobUrl } from "../utils/appraisalStorage";
 import {
   User, Calendar, Briefcase, BookOpen, Award, CheckCircle2,
   Plus, Trash2, Save, Send, AlertTriangle, FileText, ChevronRight,
@@ -27,6 +27,7 @@ export default function FacultyAppraisal() {
   const [evalCriteria, setEvalCriteria] = useState({ part1: [], part2: [] });
   const [scorePopup, setScorePopup] = useState(null);
   const [viewingProof, setViewingProof] = useState(null);
+  const [useGoogleViewer, setUseGoogleViewer] = useState(false);
 
   // Form State
   const [academicYear, setAcademicYear] = useState("2024-2025");
@@ -217,34 +218,62 @@ export default function FacultyAppraisal() {
   }, [isCKCOEUser]);
 
   useEffect(() => {
-    if (!currentUser || !academicYear) return;
-    const docId = `appraisal_${currentUser.uid}_${academicYear}`;
-    const unsub = onSnapshot(doc(db, "faculty_appraisals", docId), async (snap) => {
-      if (snap.exists()) {
-        const rawData = snap.data();
-        const data = await loadFacultyAppraisalEvidences(db, docId, rawData);
-        setExistingAppraisal(data);
-        const savedForm = data.formData || data;
-        setFormData(prev => ({
-          ...prev,
-          ...savedForm,
-          organizingPrograms: (savedForm.organizingPrograms && savedForm.organizingPrograms.length > 0) ? savedForm.organizingPrograms : (prev.organizingPrograms || [{ title: "", period: "", resourcePersonDetails: "", targetAudience: "", outcome: "" }]),
-          fundingProposals: (savedForm.fundingProposals && savedForm.fundingProposals.length > 0) ? savedForm.fundingProposals : (prev.fundingProposals || [{ role: "PI", fundingAgencyScheme: "", title: "", fundRequested: "", dateSubmission: "", status: "" }]),
-          involvementPlacement: (savedForm.involvementPlacement && savedForm.involvementPlacement.length > 0) ? savedForm.involvementPlacement : (prev.involvementPlacement || [{ description: "", role: "", outcome: "", recordsMaintained: "Yes" }]),
-          accreditationContributions: (savedForm.accreditationContributions && savedForm.accreditationContributions.length > 0) ? savedForm.accreditationContributions : (prev.accreditationContributions || [{ role: "", description: "", outcome: "" }]),
-          rdContributions: (savedForm.rdContributions && savedForm.rdContributions.length > 0) ? savedForm.rdContributions : (prev.rdContributions || [{ role: "", description: "", outcome: "" }]),
-          admissionContribution: (savedForm.admissionContribution && savedForm.admissionContribution.length > 0) ? savedForm.admissionContribution : (prev.admissionContribution || [{ teamNoArea: "", countContributed: "", teamLeaderName: "" }]),
-          departmentRoles: (savedForm.departmentRoles && savedForm.departmentRoles.length > 0) ? savedForm.departmentRoles : (prev.departmentRoles || [{ programTitle: "", datesDuration: "", agencyGrant: "" }]),
-          professionalMembership: (savedForm.professionalMembership && savedForm.professionalMembership.length > 0) ? savedForm.professionalMembership : (prev.professionalMembership || [{ name: "", type: "Life Member", membershipNo: "" }]),
-          awardsHonors: (savedForm.awardsHonors && savedForm.awardsHonors.length > 0) ? savedForm.awardsHonors : (prev.awardsHonors || [{ awardName: "", organization: "", year: "", level: "Institutional" }]),
-          customFields: savedForm.customFields || {}
-        }));
-      } else {
-        setExistingAppraisal(null);
-      }
+    if (!currentUser || !academicYear) {
+      // If user or academicYear not yet ready, give it a moment then ensure loading ceases
+      const fallbackTimer = setTimeout(() => setLoading(false), 2000);
+      return () => clearTimeout(fallbackTimer);
+    }
+
+    // Safety timeout: ensure loading state never hangs indefinitely under any network condition
+    const safetyTimer = setTimeout(() => {
       setLoading(false);
-    });
-    return () => unsub();
+    }, 2500);
+
+    const docId = `appraisal_${currentUser.uid}_${academicYear}`;
+    const unsub = onSnapshot(
+      doc(db, "faculty_appraisals", docId),
+      async (snap) => {
+        clearTimeout(safetyTimer);
+        try {
+          if (snap.exists()) {
+            const rawData = snap.data();
+            const data = await loadFacultyAppraisalEvidences(db, docId, rawData);
+            setExistingAppraisal(data);
+            const savedForm = data.formData || data;
+            setFormData(prev => ({
+              ...prev,
+              ...savedForm,
+              organizingPrograms: (savedForm.organizingPrograms && savedForm.organizingPrograms.length > 0) ? savedForm.organizingPrograms : (prev.organizingPrograms || [{ title: "", period: "", resourcePersonDetails: "", targetAudience: "", outcome: "" }]),
+              fundingProposals: (savedForm.fundingProposals && savedForm.fundingProposals.length > 0) ? savedForm.fundingProposals : (prev.fundingProposals || [{ role: "PI", fundingAgencyScheme: "", title: "", fundRequested: "", dateSubmission: "", status: "" }]),
+              involvementPlacement: (savedForm.involvementPlacement && savedForm.involvementPlacement.length > 0) ? savedForm.involvementPlacement : (prev.involvementPlacement || [{ description: "", role: "", outcome: "", recordsMaintained: "Yes" }]),
+              accreditationContributions: (savedForm.accreditationContributions && savedForm.accreditationContributions.length > 0) ? savedForm.accreditationContributions : (prev.accreditationContributions || [{ role: "", description: "", outcome: "" }]),
+              rdContributions: (savedForm.rdContributions && savedForm.rdContributions.length > 0) ? savedForm.rdContributions : (prev.rdContributions || [{ role: "", description: "", outcome: "" }]),
+              admissionContribution: (savedForm.admissionContribution && savedForm.admissionContribution.length > 0) ? savedForm.admissionContribution : (prev.admissionContribution || [{ teamNoArea: "", countContributed: "", teamLeaderName: "" }]),
+              departmentRoles: (savedForm.departmentRoles && savedForm.departmentRoles.length > 0) ? savedForm.departmentRoles : (prev.departmentRoles || [{ programTitle: "", datesDuration: "", agencyGrant: "" }]),
+              professionalMembership: (savedForm.professionalMembership && savedForm.professionalMembership.length > 0) ? savedForm.professionalMembership : (prev.professionalMembership || [{ name: "", type: "Life Member", membershipNo: "" }]),
+              awardsHonors: (savedForm.awardsHonors && savedForm.awardsHonors.length > 0) ? savedForm.awardsHonors : (prev.awardsHonors || [{ awardName: "", organization: "", year: "", level: "Institutional" }]),
+              customFields: savedForm.customFields || {}
+            }));
+          } else {
+            setExistingAppraisal(null);
+          }
+        } catch (err) {
+          console.error("Error processing faculty appraisal snapshot:", err);
+        } finally {
+          setLoading(false);
+        }
+      },
+      (err) => {
+        console.error("Error subscribing to faculty appraisal:", err);
+        clearTimeout(safetyTimer);
+        setLoading(false);
+      }
+    );
+
+    return () => {
+      clearTimeout(safetyTimer);
+      unsub();
+    };
   }, [currentUser, academicYear]);
 
   const addRow = (field, defaultValue) => {
@@ -371,7 +400,7 @@ export default function FacultyAppraisal() {
       return;
     }
 
-    const uidToUse = currentUser?.uid || "user_draft";
+    const uidToUse = currentUser?.uid || userProfile?.uid || "faculty_proofs";
     setUploadingMap(prev => ({ ...prev, [`${listKey}_${index}`]: true }));
     try {
       const storagePath = userStoragePath(uidToUse, "appraisal_evidences", `${listKey}_row_${index}_${file.name}`);
@@ -382,6 +411,7 @@ export default function FacultyAppraisal() {
         updatedList[index] = {
           ...existingRow,
           fileUrl: downloadUrl || "",
+          file: downloadUrl || "",
           fileName: file.name || "evidence"
         };
         return { ...prev, [listKey]: updatedList };
@@ -389,7 +419,7 @@ export default function FacultyAppraisal() {
       showToast(`Uploaded evidence file for row ${index + 1}!`, "success");
     } catch (err) {
       console.error("Error uploading row evidence:", err);
-      showToast("File upload failed. Please try again.", "error");
+      showToast(err?.message || "File upload failed. Please try again.", "error");
     } finally {
       setUploadingMap(prev => ({ ...prev, [`${listKey}_${index}`]: false }));
       if (e.target) e.target.value = "";
@@ -416,8 +446,10 @@ export default function FacultyAppraisal() {
     if (e && e.stopPropagation) e.stopPropagation();
 
     let targetUrl = fileUrl;
-    if (typeof targetUrl === "object" && targetUrl?.fileUrl) {
-      targetUrl = targetUrl.fileUrl;
+    let resolvedFileName = fileName || "Evidence Document";
+    if (targetUrl && typeof targetUrl === "object") {
+      resolvedFileName = targetUrl.fileName || targetUrl.name || fileName || "Evidence Document";
+      targetUrl = targetUrl.fileUrl || targetUrl.url || targetUrl.downloadUrl || targetUrl.dataUrl || targetUrl.src || "";
     }
 
     if (!targetUrl) {
@@ -432,42 +464,59 @@ export default function FacultyAppraisal() {
       // 1. Check in-memory appraisal state & formData
       let foundUrl = findEvidenceInMap(existingAppraisal?.evidences, refKey)
                   || findEvidenceInMap(existingAppraisal?.formData?.evidences, refKey)
+                  || findEvidenceInMap(existingAppraisal?.formData, refKey)
                   || findEvidenceInMap(existingAppraisal, refKey)
-                  || findEvidenceInMap(formData?.evidences, refKey);
+                  || findEvidenceInMap(formData?.evidences, refKey)
+                  || findEvidenceInMap(formData, refKey);
 
       // 2. On-demand query to Firestore evidence documents strictly for currentUser
       if (!foundUrl && currentUser?.uid) {
         const candidateIds = Array.from(new Set([
           `appraisal_${currentUser.uid}_${academicYear}`,
           existingAppraisal?.id,
+          existingAppraisal?.docId,
+          currentUser.uid,
           `appraisal_${currentUser.uid}_2024-2025`,
           `appraisal_${currentUser.uid}_2025-2026`,
           `appraisal_${currentUser.uid}_2024-25`,
           `appraisal_${currentUser.uid}_2025-26`,
-          `appraisal_${currentUser.uid}`,
-          currentUser.uid
+          `appraisal_${currentUser.uid}`
         ])).filter(Boolean);
 
-        for (const cId of candidateIds) {
-          try {
-            const snap = await getDoc(doc(db, "faculty_appraisals_evidences", cId));
-            if (snap.exists()) {
-              const data = snap.data();
-              foundUrl = findEvidenceInMap(data?.evidences || data, refKey);
-              if (foundUrl) {
-                try {
-                  localStorage.setItem(`evidences_${cId}`, JSON.stringify(data?.evidences || data));
-                } catch (e) {}
-                break;
+        const colls = [
+          "faculty_appraisals_evidences",
+          "faculty_appraisals",
+          "teacher_appraisals_evidences",
+          "teacher_appraisals",
+          "non_teaching_appraisals_evidences",
+          "non_teaching_appraisals",
+          "hod_appraisals_evidences",
+          "hod_appraisals"
+        ];
+
+        for (const coll of colls) {
+          if (foundUrl) break;
+          for (const cId of candidateIds) {
+            try {
+              const snap = await getDoc(doc(db, coll, cId));
+              if (snap.exists()) {
+                const data = snap.data();
+                foundUrl = findEvidenceInMap(data?.evidences || data?.formData?.evidences || data?.formData || data, refKey);
+                if (foundUrl) {
+                  try {
+                    localStorage.setItem(`evidences_${cId}`, JSON.stringify(data?.evidences || data));
+                  } catch (e) {}
+                  break;
+                }
               }
+            } catch (e) {
+              console.warn("Could not query evidence doc:", e);
             }
-          } catch (e) {
-            console.warn("Could not query evidence doc:", e);
           }
         }
       }
 
-      // 3. Fallback: check localStorage STRICTLY for currentUser candidate keys only (NEVER iterate other users' caches)
+      // 3. Fallback: check localStorage STRICTLY for currentUser candidate keys only
       if (!foundUrl && currentUser?.uid) {
         const localCandidateKeys = Array.from(new Set([
           `evidences_appraisal_${currentUser.uid}_${academicYear}`,
@@ -497,46 +546,67 @@ export default function FacultyAppraisal() {
       }
     }
 
-    // Determine MIME type
-    let mime = "";
-    if (typeof targetUrl === "string") {
-      if (targetUrl.startsWith("data:")) {
-        const match = targetUrl.match(/^data:([^;]+);/);
-        mime = match ? match[1] : "";
-      } else if (fileName) {
-        const ext = String(fileName).split(".").pop().toLowerCase();
-        if (ext === "pdf") mime = "application/pdf";
-        else if (["jpg", "jpeg", "png", "webp", "gif"].includes(ext)) mime = `image/${ext === "jpg" ? "jpeg" : ext}`;
+    // Determine MIME and file classification (PDF vs Image vs Other)
+    const detected = detectFileTypeAndMime(targetUrl, resolvedFileName);
+    let mime = detected.mime;
+    let isPdf = detected.isPdf;
+    let isImage = detected.isImage;
+    let finalFileName = resolvedFileName;
+
+    // Normalize fileName extension if absent so download filenames are clean
+    if (!finalFileName.includes(".") && (isPdf || isImage)) {
+      if (isPdf) finalFileName = `${finalFileName}.pdf`;
+      else if (isImage) {
+        const ext = (mime || "").replace("image/", "") || "png";
+        finalFileName = `${finalFileName}.${ext === "jpeg" ? "jpg" : ext}`;
       }
     }
 
-    // If Base64 Data URL, convert to Blob URL so preview & new tab work without browser security blocks
+    // Convert Base64 Data URL to Blob URL to prevent browser CSP / iframe blocking
     let safeUrl = targetUrl;
     if (typeof targetUrl === "string" && targetUrl.startsWith("data:")) {
-      try {
-        const arr = targetUrl.split(",");
-        const mimeMatch = arr[0].match(/:(.*?);/);
-        const resolvedMime = mimeMatch ? mimeMatch[1] : (mime || "application/octet-stream");
-        mime = resolvedMime;
-        const bstr = atob(arr[1]);
-        let n = bstr.length;
-        const u8arr = new Uint8Array(n);
-        while (n--) {
-          u8arr[n] = bstr.charCodeAt(n);
-        }
-        const blob = new Blob([u8arr], { type: resolvedMime });
-        safeUrl = URL.createObjectURL(blob);
-      } catch (convErr) {
-        console.warn("Base64 to blob conversion failed, using raw data url:", convErr);
-      }
+      const conv = convertDataUrlToBlobUrl(targetUrl, mime);
+      safeUrl = conv.url;
+      if (conv.mime) mime = conv.mime;
+      if (mime === "application/pdf") isPdf = true;
+      if (mime.startsWith("image/")) isImage = true;
     }
 
     setViewingProof({
       url: safeUrl,
       rawUrl: targetUrl,
-      name: fileName || "Evidence Document",
-      mime: mime
+      name: finalFileName,
+      mime: mime || (isPdf ? "application/pdf" : isImage ? "image/jpeg" : ""),
+      isPdf: isPdf || (!isImage && (mime === "application/pdf" || finalFileName.toLowerCase().endsWith(".pdf"))),
+      isImage: isImage || (mime && mime.startsWith("image/")),
+      isHttp: typeof targetUrl === "string" && (targetUrl.startsWith("http://") || targetUrl.startsWith("https://"))
     });
+    setUseGoogleViewer(false);
+  };
+
+  const handleOpenInNewWindow = (proof) => {
+    if (!proof || !proof.url) return;
+    if (typeof proof.url === "string" && proof.url.startsWith("data:")) {
+      const conv = convertDataUrlToBlobUrl(proof.url, proof.mime);
+      window.open(conv.url, "_blank");
+      return;
+    }
+    window.open(proof.url, "_blank");
+  };
+
+  const handleDownloadProof = (proof) => {
+    if (!proof || !proof.url) return;
+    try {
+      const link = document.createElement("a");
+      link.href = proof.url;
+      link.download = proof.name || "Evidence_Document";
+      link.target = "_blank";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (e) {
+      window.open(proof.url, "_blank");
+    }
   };
 
   const renderRowEvidenceHeader = (sectionId, force = true) => {
@@ -545,7 +615,7 @@ export default function FacultyAppraisal() {
   };
 
   const renderRowEvidenceCell = (listKey, row, index, sectionId, force = true) => {
-    if (!force && !isSectionEvidenceRequired(sectionId)) return null;
+    if (!force && !isSectionEvidenceRequired(sectionId) && !row.fileUrl) return null;
 
     const isUploading = uploadingMap[`${listKey}_${index}`];
 
@@ -1022,7 +1092,7 @@ export default function FacultyAppraisal() {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-amber-50/90 border border-amber-200/90 rounded-2xl p-3.5 mb-4 shadow-xs">
           <div className="flex items-center gap-2 text-amber-900 font-semibold text-xs">
             <AlertCircle size={16} className="text-amber-600 shrink-0" />
-            <span><strong>Proof Attachment Guideline:</strong> Ensure each attached evidence document is in PDF or Image format and strictly <strong>under 100 KB</strong>.</span>
+            <span><strong>Proof Attachment Guideline:</strong> Ensure each attached evidence document is in PDF, Image, or Office format and strictly <strong>under 100 KB</strong>.</span>
           </div>
           <span className="shrink-0 bg-amber-200/80 text-amber-900 text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full border border-amber-300 w-fit">
             Max 100 KB / File
@@ -1123,7 +1193,7 @@ export default function FacultyAppraisal() {
                                               e.target.value = "";
                                               return;
                                             }
-                                            const uidToUse = currentUser?.uid || "user_draft";
+                                            const uidToUse = currentUser?.uid || userProfile?.uid || "faculty_proofs";
                                             const storagePath = userStoragePath(uidToUse, "appraisal_evidences", `${col.id}_${file.name}`);
                                             try {
                                               const url = await uploadFile(storagePath, file, file.type);
@@ -1216,7 +1286,7 @@ export default function FacultyAppraisal() {
 
                 setUploadingMap(prev => ({ ...prev, [field.id]: true }));
                 try {
-                  const uidToUse = currentUser?.uid || "user_draft";
+                  const uidToUse = currentUser?.uid || userProfile?.uid || "faculty_proofs";
                   const storagePath = userStoragePath(uidToUse, "appraisal_evidences", `${field.id}_${file.name}`);
                   const downloadUrl = await uploadFile(storagePath, file, file.type);
                   setFormData(prev => ({
@@ -1297,7 +1367,7 @@ export default function FacultyAppraisal() {
                     </div>
                   )}
 
-                  {field.evidenceRequired && (
+                  {(field.evidenceRequired || field.type === "file_only" || savedEntry.fileUrl) && (
                     <div className="bg-white border border-zinc-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-[#120c7a]">
@@ -1434,7 +1504,7 @@ export default function FacultyAppraisal() {
         <div className="bg-amber-50/90 border border-amber-200/90 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs mb-6">
           <div className="flex items-center gap-2.5 text-amber-900 font-semibold text-xs">
             <AlertCircle size={18} className="text-amber-600 shrink-0" />
-            <span><strong>Document Upload Policy:</strong> All uploaded proof documents must be in PDF or Image format and strictly <strong>under 100 KB</strong> in file size.</span>
+            <span><strong>Document Upload Policy:</strong> All uploaded proof documents must be in PDF, Image, or Office format and strictly <strong>under 100 KB</strong> in file size.</span>
           </div>
           <span className="shrink-0 bg-amber-200/80 text-amber-900 text-[10px] font-black uppercase tracking-wider px-3 py-1 rounded-full border border-amber-300 w-fit">
             Max 100 KB / File
@@ -2706,7 +2776,7 @@ export default function FacultyAppraisal() {
                         </select>
                         <input type="text" placeholder="e.g. M-236911" value={row.membershipNo} onChange={(e) => updateRow("professionalMembership", idx, "membershipNo", e.target.value)} disabled={isReadOnly} className="w-1/4 border-0 p-1 text-xs focus:ring-0 focus:outline-none" />
 
-                        {isSectionEvidenceRequired("sec_professional_memberships") && (
+                        {(isSectionEvidenceRequired("sec_professional_memberships") || row.fileUrl || !isReadOnly) && (
                           <div className="flex-shrink-0 min-w-[80px] flex justify-center">
                             {row.fileUrl ? (
                               <div className="flex items-center gap-1 px-1.5 py-0.5 bg-blue-50 border border-blue-200 rounded">
@@ -3314,7 +3384,7 @@ export default function FacultyAppraisal() {
 
                     setUploadingMap(prev => ({ ...prev, [field.id]: true }));
                     try {
-                      const uidToUse = currentUser?.uid || "user_draft";
+                      const uidToUse = currentUser?.uid || userProfile?.uid || "faculty_proofs";
                       const storagePath = userStoragePath(uidToUse, "appraisal_evidences", `${field.id}_${file.name}`);
                       const downloadUrl = await uploadFile(storagePath, file, file.type);
                       setFormData(prev => ({
@@ -3357,7 +3427,7 @@ export default function FacultyAppraisal() {
                       <div>
                         <div className="flex items-center gap-2">
                           <label className="text-xs font-black text-slate-805 uppercase tracking-wider">{field.title}</label>
-                          {field.evidenceRequired && (
+                          {(field.evidenceRequired || field.type === "file_only" || savedEntry.fileUrl) && (
                             <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${field.evidenceMandatory
                                 ? "bg-red-55 border border-red-150 text-red-700 animate-pulse font-sans"
                                 : "bg-indigo-50 border border-indigo-100 text-indigo-750 font-sans"
@@ -3616,14 +3686,19 @@ export default function FacultyAppraisal() {
             >
               {/* Header */}
               <div className="px-6 py-4 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white flex items-center justify-between border-b border-white/10 shrink-0">
-                <div className="flex items-center gap-3 min-w-0">
+                <div className="flex items-center gap-3 min-w-0 pr-4">
                   <div className="w-9 h-9 rounded-xl bg-white/10 flex items-center justify-center text-indigo-300 shrink-0">
                     <FileText size={18} />
                   </div>
                   <div className="min-w-0">
-                    <h3 className="text-sm font-bold truncate max-w-md text-white">
-                      {viewingProof.name}
-                    </h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-bold truncate max-w-md text-white">
+                        {viewingProof.name}
+                      </h3>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/15 text-indigo-200">
+                        {viewingProof.isPdf ? "PDF Document" : viewingProof.isImage ? "Image" : "Document"}
+                      </span>
+                    </div>
                     <span className="text-[10px] text-slate-300 font-semibold uppercase tracking-wider block">
                       Institutional Evidence Verification
                     </span>
@@ -3633,29 +3708,28 @@ export default function FacultyAppraisal() {
                 <div className="flex items-center gap-2 shrink-0">
                   <button
                     type="button"
-                    onClick={() => {
-                      if (viewingProof.url) {
-                        window.open(viewingProof.url, "_blank", "noopener,noreferrer");
-                      }
-                    }}
+                    onClick={() => handleOpenInNewWindow(viewingProof)}
                     className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
                     title="Open in new window"
                   >
                     <ExternalLink size={13} />
                     <span className="hidden sm:inline">Open New Tab</span>
                   </button>
-                  <a
-                    href={viewingProof.url}
-                    download={viewingProof.name}
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadProof(viewingProof)}
                     className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all flex items-center gap-1.5 cursor-pointer"
                     title="Download File"
                   >
                     <Download size={13} />
                     <span className="hidden sm:inline">Download</span>
-                  </a>
+                  </button>
                   <button
                     type="button"
-                    onClick={() => setViewingProof(null)}
+                    onClick={() => {
+                      setViewingProof(null);
+                      setUseGoogleViewer(false);
+                    }}
                     className="w-8 h-8 rounded-xl bg-white/10 hover:bg-rose-500 hover:text-white text-slate-300 transition-all flex items-center justify-center cursor-pointer ml-1"
                     title="Close Preview"
                   >
@@ -3666,18 +3740,97 @@ export default function FacultyAppraisal() {
 
               {/* Content Body */}
               <div className="p-4 sm:p-6 overflow-y-auto flex-1 flex flex-col items-center justify-center bg-slate-50 min-h-[50vh]">
-                {viewingProof.mime === "application/pdf" || viewingProof.name?.toLowerCase().endsWith(".pdf") ? (
-                  <iframe
-                    src={viewingProof.url}
-                    className="w-full h-[70vh] rounded-2xl border border-slate-200 bg-white shadow-inner"
-                    title={viewingProof.name}
-                  />
-                ) : viewingProof.mime?.startsWith("image/") || /\.(jpg|jpeg|png|webp|gif|svg)$/i.test(viewingProof.name) ? (
-                  <div className="max-h-[70vh] flex items-center justify-center overflow-auto p-2">
-                    <img
-                      src={viewingProof.url}
-                      alt={viewingProof.name}
-                      className="max-h-[68vh] max-w-full rounded-2xl shadow-md object-contain border border-slate-200 bg-white"
+                {viewingProof.isPdf || viewingProof.mime === "application/pdf" || viewingProof.name?.toLowerCase().endsWith(".pdf") ? (
+                  <div className="w-full flex-1 flex flex-col items-center justify-center">
+                    <object
+                      data={useGoogleViewer && viewingProof.isHttp
+                        ? `https://docs.google.com/viewer?url=${encodeURIComponent(viewingProof.rawUrl || viewingProof.url)}&embedded=true`
+                        : viewingProof.url
+                      }
+                      type={useGoogleViewer ? "text/html" : (viewingProof.mime || "application/pdf")}
+                      className="w-full h-[70vh] rounded-2xl border border-slate-200 bg-white shadow-inner overflow-hidden"
+                    >
+                      <embed
+                        src={useGoogleViewer && viewingProof.isHttp
+                          ? `https://docs.google.com/viewer?url=${encodeURIComponent(viewingProof.rawUrl || viewingProof.url)}&embedded=true`
+                          : viewingProof.url
+                        }
+                        type={useGoogleViewer ? "text/html" : (viewingProof.mime || "application/pdf")}
+                        className="w-full h-full"
+                      />
+                      <iframe
+                        src={useGoogleViewer && viewingProof.isHttp
+                          ? `https://docs.google.com/viewer?url=${encodeURIComponent(viewingProof.rawUrl || viewingProof.url)}&embedded=true`
+                          : viewingProof.url
+                        }
+                        className="w-full h-full border-0"
+                        title={viewingProof.name}
+                      />
+                    </object>
+                    <div className="mt-3 text-center text-xs text-slate-500 flex flex-wrap items-center justify-center gap-3">
+                      <span>Preview not displaying?</span>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenInNewWindow(viewingProof)}
+                        className="font-bold text-emerald-600 hover:text-emerald-800 underline inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <ExternalLink size={12} /> Open in New Tab
+                      </button>
+                      <span>•</span>
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadProof(viewingProof)}
+                        className="font-bold text-blue-600 hover:text-blue-800 underline inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <Download size={12} /> Download PDF
+                      </button>
+                      {viewingProof.isHttp && (
+                        <>
+                          <span>•</span>
+                          <button
+                            type="button"
+                            onClick={() => setUseGoogleViewer(prev => !prev)}
+                            className="font-bold text-indigo-600 hover:text-indigo-800 underline inline-flex items-center gap-1 cursor-pointer"
+                          >
+                            <FileText size={11} /> {useGoogleViewer ? "Direct View" : "Google Docs Viewer"}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ) : viewingProof.isImage || viewingProof.mime?.startsWith("image/") || /\.(jpg|jpeg|png|webp|gif|svg)$/i.test(viewingProof.name) ? (
+                  <div className="flex flex-col items-center justify-center w-full">
+                    <div className="max-h-[68vh] flex items-center justify-center overflow-auto p-2 bg-slate-100 rounded-2xl w-full">
+                      <img
+                        src={viewingProof.url}
+                        alt={viewingProof.name}
+                        className="max-h-[65vh] max-w-full rounded-xl shadow-md object-contain border border-slate-200 bg-white"
+                      />
+                    </div>
+                    <div className="mt-3 text-center text-xs text-slate-500 flex items-center justify-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenInNewWindow(viewingProof)}
+                        className="font-bold text-emerald-600 hover:text-emerald-800 underline inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <ExternalLink size={12} /> Open in New Tab
+                      </button>
+                      <span>•</span>
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadProof(viewingProof)}
+                        className="font-bold text-blue-600 hover:text-blue-800 underline inline-flex items-center gap-1 cursor-pointer"
+                      >
+                        <Download size={12} /> Download Image
+                      </button>
+                    </div>
+                  </div>
+                ) : viewingProof.isHttp ? (
+                  <div className="w-full flex-1 flex flex-col items-center justify-center">
+                    <iframe
+                      src={`https://docs.google.com/viewer?url=${encodeURIComponent(viewingProof.rawUrl || viewingProof.url)}&embedded=true`}
+                      className="w-full h-[70vh] rounded-2xl border border-slate-200 bg-white shadow-inner"
+                      title={viewingProof.name}
                     />
                   </div>
                 ) : (
@@ -3687,13 +3840,23 @@ export default function FacultyAppraisal() {
                     <p className="text-xs text-slate-500 mb-4">
                       This file format cannot be rendered directly in the embedded frame.
                     </p>
-                    <a
-                      href={viewingProof.url}
-                      download={viewingProof.name}
-                      className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-md"
-                    >
-                      <Download size={14} /> Download Document
-                    </a>
+                    <div className="flex items-center justify-center gap-2">
+                      <a
+                        href={viewingProof.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all shadow-md"
+                      >
+                        <ExternalLink size={14} /> Open in New Tab
+                      </a>
+                      <a
+                        href={viewingProof.url}
+                        download={viewingProof.name}
+                        className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-md"
+                      >
+                        <Download size={14} /> Download Document
+                      </a>
+                    </div>
                   </div>
                 )}
               </div>
@@ -3705,7 +3868,10 @@ export default function FacultyAppraisal() {
                 </span>
                 <button
                   type="button"
-                  onClick={() => setViewingProof(null)}
+                  onClick={() => {
+                    setViewingProof(null);
+                    setUseGoogleViewer(false);
+                  }}
                   className="px-4 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-all cursor-pointer"
                 >
                   Close Preview

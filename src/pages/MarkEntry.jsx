@@ -76,8 +76,10 @@ const parseSubjectCodeKey = (raw) => {
   if (m) s = m[1];
   else {
     // "CS25C09 - Java Programming" -> "CS25C09"
+    // "CME 340 - CAD/CAM" -> "CME 340" (space-separated codes keep their number part)
     s = s.split(' - ')[0].split(' — ')[0].split(':')[0].trim();
-    s = s.split(/\s+/)[0];
+    const spaced = s.match(/^([A-Z]{2,}\s+\d+[A-Z0-9]*)/);
+    s = spaced ? spaced[1].trim() : s.split(/\s+/)[0];
   }
 
   const clean = s.toUpperCase().trim();
@@ -88,9 +90,10 @@ const parseSubjectCodeKey = (raw) => {
     return '';
   }
 
-  // Course code should be alphanumeric, optionally with dashes/underscores (e.g. CS25C09, GE3791, CCS334)
-  const codeMatch = clean.match(/^[A-Z0-9_-]+/);
-  return codeMatch ? codeMatch[0] : '';
+  // Course code is alphanumeric with optional dashes/underscores and ONE internal
+  // space (e.g. CS25C09, GE3791, CCS334, CME 340, GE 3751)
+  const codeMatch = clean.match(/^([A-Z0-9_-]+(?:\s+[A-Z0-9_-]+)?)/);
+  return codeMatch ? codeMatch[1].trim() : '';
 };
 
 // Canonicalize any batch representation into "XX Batch (YYYY-YY)" without double-wrapping.
@@ -1136,6 +1139,16 @@ export default function MarkEntry() {
 
         const dashboardCode = dashboardQp ? cleanCode(dashboardQp.subject || dashboardQp.course || dashboardQp.subject_code || dashboardQp.courseCode) : '';
         let uniqueCodes = [...new Set([...userHandledCodes, ...userQpCodes, ...(dashboardCode ? [dashboardCode] : [])])];
+        // Dedupe spacing variants ("CME 340" vs "CME340" = same subject) — keep first
+        {
+          const seenNoSpace = new Set();
+          uniqueCodes = uniqueCodes.filter(code => {
+            const k = String(code).toUpperCase().replace(/\s+/g, '');
+            if (seenNoSpace.has(k)) return false;
+            seenNoSpace.add(k);
+            return true;
+          });
+        }
         if (isPrivileged) {
           uniqueCodes = [...new Set([...uniqueCodes, ...deptAllCodes, ...qpDeptCodes])];
         }
@@ -1180,9 +1193,12 @@ export default function MarkEntry() {
         const hasDashboardCode = Boolean(dashboardCode);
         const hasAssignedSubjects = userHandledCodes.length > 0 || deptAllCodes.length > 0;
         if (!hasAssignedSubjects) {
+          const noSpace = (c) => String(c).replace(/\s+/g, '');
+          const dashKey = hasDashboardCode ? noSpace(dashboardCode) : '';
+          const activeKeys = new Set([...activeQpSubjectCodes].map(noSpace));
           uniqueCodes = uniqueCodes.filter(code => {
-            if (hasDashboardCode && code === dashboardCode) return true;
-            return activeQpSubjectCodes.has(code);
+            if (hasDashboardCode && noSpace(code) === dashKey) return true;
+            return activeKeys.has(noSpace(code));
           });
         }
 
@@ -1222,7 +1238,10 @@ export default function MarkEntry() {
         {
           const keepDash = dashboardCode || '';
           const stillAssigned = userHandledCodes.length > 0 || deptAllCodes.length > 0;
-          uniqueCodes = [...new Set(uniqueCodes)].filter(code => (keepDash && code === keepDash) || stillAssigned || activeQpSubjectCodes.has(code));
+          const noSpace = (c) => String(c).replace(/\s+/g, '');
+          const dashKey = keepDash ? noSpace(keepDash) : '';
+          const activeKeys = new Set([...activeQpSubjectCodes].map(noSpace));
+          uniqueCodes = [...new Set(uniqueCodes)].filter(code => (keepDash && noSpace(code) === dashKey) || stillAssigned || activeKeys.has(noSpace(code)));
         }
 
         // Fetch course names map from courseUtils (syllabus + courses + course_bank)
@@ -1246,7 +1265,9 @@ export default function MarkEntry() {
           .map(code => {
             const clean = parseSubjectCodeKey(code);
             if (!clean) return null;
-            const title = syllabusMap[clean] || courseNamesMap[clean] || courseNamesMap[clean.toUpperCase()] || '';
+            // Titles may be keyed with or without the internal space ("CME 340" vs "CME340")
+            const noSpace = clean.replace(/\s+/g, '');
+            const title = syllabusMap[clean] || courseNamesMap[clean] || syllabusMap[noSpace] || courseNamesMap[noSpace] || courseNamesMap[clean.toUpperCase()] || courseNamesMap[noSpace.toUpperCase()] || '';
             return {
               value: clean,
               text: title ? `${clean} - ${title}` : clean
@@ -1347,7 +1368,7 @@ export default function MarkEntry() {
         if (qpSemNum && targetSemNum && String(qpSemNum) !== String(targetSemNum)) return false;
 
         const qpSubCode = parseSubjectCodeKey(qp.subject || qp.course || qp.subject_code || qp.courseCode);
-        if (qpSubCode && targetSubCode && qpSubCode !== targetSubCode) return false;
+        if (qpSubCode && targetSubCode && qpSubCode.replace(/\s+/g, '') !== targetSubCode.replace(/\s+/g, '')) return false;
 
         const rawName = qp.qpaper_name || qp.qpaperName;
         const baseName = stripSetSuffix(rawName) || rawName;
@@ -1721,7 +1742,7 @@ export default function MarkEntry() {
           const cleanQpName = qp.exam_name || qp.examName || matchedCfg?.examName || (!isFirestoreKey(rawQpName) ? rawQpName : '');
           const qpExam = cleanQpName || qp.qpaper_name || '';
 
-          return qpSubCode === targetSubCode &&
+          return qpSubCode.replace(/\s+/g, '') === targetSubCode.replace(/\s+/g, '') &&
             (!qpAy || !needAy || qpAy === needAy || qpAy.includes(needAy) || needAy.includes(qpAy)) &&
             (!qp.batch || isBatchMatch(qp.batch, batch)) &&
             (isExamNameMatch(qpExam, targetExam) || qp.id === exam || qp.qpaper_name === exam || isExamNameMatch(rawQpName, targetExam)) &&
@@ -2134,7 +2155,7 @@ export default function MarkEntry() {
             String(academicYear || '').replace(/[^0-9-]/g, '')
           ].filter(Boolean)));
 
-          const subKeys = Array.from(new Set([subCodeClean, subSanitized, rawSubCode].filter(Boolean)));
+          const subKeys = Array.from(new Set([subCodeClean, subCodeClean.replace(/\s+/g, ''), subSanitized, rawSubCode, rawSubCode.replace(/\s+/g, '')].filter(Boolean)));
           
           const secClean = section ? sanitizeKey(section) : '';
           const sectionSuffixes = Array.from(new Set([
@@ -3180,9 +3201,13 @@ export default function MarkEntry() {
     const cleanCode = (s) => parseSubjectCodeKey(s);
     const qpCode = cleanCode(dashboardQp.subject || dashboardQp.course || '');
     if (qpCode && qpCode !== subject) {
-      const hit = subjects.find(s => cleanCode(s.value) === qpCode || cleanCode(s.text) === qpCode);
+      const noSpace = (c) => String(c).replace(/\s+/g, '');
+      const hit = subjects.find(s => noSpace(cleanCode(s.value)) === noSpace(qpCode) || noSpace(cleanCode(s.text)) === noSpace(qpCode));
       if (hit) setSubject(hit.value);
-      else if ([...new Set(subjects.map(s => cleanCode(s.value)))].includes(qpCode)) setSubject(qpCode);
+      else if ([...new Set(subjects.map(s => cleanCode(s.value)))].map(noSpace).includes(noSpace(qpCode))) {
+        const exactHit = subjects.find(s => noSpace(cleanCode(s.value)) === noSpace(qpCode));
+        setSubject(exactHit ? exactHit.value : qpCode);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dashboardQp, subjects]);

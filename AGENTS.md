@@ -1,5 +1,59 @@
 ## Summary of Changes
 
+### 556. Full User Configuration of Tier Ranges and Complete Removal of Hardcoded Values (`hr-portal/src/pages/HRGrossAnalytics.jsx`, `src/pages/HRGrossAnalytics.jsx`)
+- **Goal**:
+  - Completely eliminate any hardcoded assumptions and give the user full configuration power over score ranges (both `Min Score` and `Max Score`), increments, and promotion bonus.
+- **Key Enhancements**:
+  1. **User-Configurable Max Score in Modal**:
+     - Added dedicated **Max Score** input field alongside **Min Score** and **Increment %** for every tier in the Configure Criteria Modal across both `hr-portal` and `outcomex`.
+     - Users can now explicitly configure the exact upper and lower boundaries for FEE, EE, ME, PME, and NME.
+  2. **Smart Dynamic Preservation Engine (`computeDynamicTiers`)**:
+     - When users enter custom `maxScore` values, the engine respects and preserves them.
+     - When `maxScore` is omitted or when a user modifies `minScore`, it automatically and seamlessly calculates clean, non-overlapping boundaries without gaps.
+  3. **Visual Matrix Display Cleaned of Hardcoded Values**:
+     - Removed hardcoded conditions like `idx === 0`, `100%`, and fallback `?? 60`.
+     - Visual Matrix Badges directly render `${tier.minScore}% to ${Math.floor(tier.maxScore)}%` (or `< ${Math.ceil(tier.maxScore)}%` for base tier) directly from what the user configured.
+  4. **Dynamic Promotion Bonus Text**:
+     - Updated candidate scorecard action button from hardcoded `+5%` to dynamic `+${criteriaConfig.promotionPct}%`.
+- **Result**: Production builds for both `hr-portal` (3.93s) and `outcomex` (8.07s) pass cleanly with 0 errors.
+
+### 555. Fix Increment Criteria Range Display & Dynamic Tier Normalization (`src/pages/HRGrossAnalytics.jsx`, `hr-portal/src/pages/HRGrossAnalytics.jsx`)
+- **Problem**:
+  - In `HRGrossAnalytics.jsx` (both in `outcomex` and `hr-portal`), configuring `EE` Min Score as `80%` in the modal displayed `80% to 92%` on the Active Score Criteria & Salary Increment Slabs card.
+  - The upper bound (`92%`) was stuck because `maxScore` was hardcoded to `92.99` in `DEFAULT_INCREMENT_CRITERIA` and was never recalculated when the user changed `minScore`.
+  - Similarly, `ME` showed `70% to 84%`, `PME` showed `60% to 74%`, and `NME` showed `≤ 64%`, creating confusing overlapping ranges.
+- **Key Enhancements**:
+  1. **Dynamic Tier Normalization Engine (`computeDynamicTiers`)**:
+     - Introduced `computeDynamicTiers(rawTiers)` which dynamically derives the upper score boundary (`maxScore`) for each tier strictly from the `minScore` of the tier above it (`prevMin - 0.01`).
+     - Top tier (`FEE`) max is `100`.
+     - Automatically generates dynamic descriptions (e.g. `80% to 89% (8%)`, `70% to 79% (6%)`, `60% to 69% (4%)`, `< 60% (0%)`).
+  2. **Clean Institutional Defaults (`DEFAULT_INCREMENT_CRITERIA`)**:
+     - Updated defaults across both portals: FEE (min: 90, 10%), EE (min: 80, 8%), ME (min: 70, 6%), PME (min: 60, 4%), NME (min: 0, 0%).
+  3. **Visual Matrix Card Dynamic Display**:
+     - Removed hardcoded range calculations.
+     - EE now cleanly displays `80% to 89%`, ME displays `70% to 79%`, PME displays `60% to 69%`, and NME displays `< 60%`.
+  4. **Persistence & Modal Interactivity**:
+     - Auto-normalizes tiers upon loading from Firestore `onSnapshot`, editing in modal, and saving to Firestore `appraisal_config/increment_criteria`.
+- **Result**: Production builds for both `outcomex` (8.21s) and `hr-portal` (3.91s) pass cleanly with 0 errors.
+
+### 554. Appointment Order Signature Block Alignment & Resilient Question Paper Submission Handoff (`src/components/AppointmentOrderCopyModal.jsx`, `src/pages/COE/ExternalSetterWorkbench.jsx`, `src/pages/COE/CoeDashboard.jsx`)
+- **Goal**:
+  1. In `AppointmentOrderCopyModal.jsx`, reposition "With regards," from being isolated on the bottom-left to the right side directly above Controller of Examinations signature block (`Dr. N. Kamalakannan`).
+  2. Fix typo `STRICLY` to `STRICTLY CONFIDENTIAL`.
+  3. Ensure that when question papers are submitted ("Moved to COE") from `ExternalSetterWorkbench.jsx`, they reliably reflect in `CoeDashboard.jsx` under Tab 4 ("Submitted ESE Question Papers").
+- **Key Enhancements**:
+  1. **Signature Block Re-alignment (`AppointmentOrderCopyModal.jsx`)**:
+     - Aligned container to `flex justify-end` and moved `<p>With regards,</p>` directly above `Dr. N. Kamalakannan` in the right-aligned column.
+  2. **Resilient Setter Assignment Discovery & Safe Persistence (`ExternalSetterWorkbench.jsx`)**:
+     - Added `activeAssignmentId` with automatic fallback discovery querying `coe_setter_assignments` by setter's verified email or ID when setters log in without `?assignmentId=` in URL.
+     - In `handleSubmitAcceptance` and `handleFinalSubmitToCoe`, use `setDoc(..., { merge: true })` with `targetAssignmentId` and stamp `paperSubmittedAt`, `submittedPaperA`, `submittedPaperB`, `claimBillData`, and server timestamps.
+     - Immediate local state synchronization and explicit success confirmation upon submission.
+  3. **COE Dashboard Session Resilience & Submitted Filters (`CoeDashboard.jsx`)**:
+     - Upgraded `filteredAssignments` with normalized session matching (`isMatchingSession`) so punctuation differences (e.g. `Nov./Dec. 2026` vs `Nov / Dec 2026`) or assignments without session tags are never hidden.
+     - Enhanced Tab 4 with interactive filter switcher (`All Assignments` vs `Moved to COE`) and quick button to view all assignments across all sessions.
+     - Validates paper submission status across `ass.status === "submitted" || ass.submittedPaper || ass.paperSubmittedAt` to ensure "Moved to COE" status and "Review Paper" button always activate.
+- **Result**: Production build succeeds cleanly in 7.54s with 0 errors.
+
 ### 553. Automatic Official Appointment Order Copy Generation & 1-Set / 2-Set Question Paper Workflow (`src/pages/COE/CoeDashboard.jsx`, `src/pages/COE/ExternalSetterWorkbench.jsx`, `src/components/AppointmentOrderCopyModal.jsx`)
 - **Goal**:
   1. Remove manual file upload for Appointment Order Copy (`orderFile` <= 30KB) in `CoeDashboard.jsx`.

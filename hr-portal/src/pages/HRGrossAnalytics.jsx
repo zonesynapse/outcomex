@@ -42,6 +42,49 @@ import {
 } from "lucide-react";
 import { isSameInstitution, normalizeInstitution, getSchoolShortName } from "../utils/appraisalScore";
 
+// Helper to compute clean, dynamic non-overlapping tier boundaries (honoring user-configured min and max scores)
+export const computeDynamicTiers = (rawTiers = []) => {
+  if (!Array.isArray(rawTiers) || rawTiers.length === 0) {
+    return DEFAULT_INCREMENT_CRITERIA.tiers;
+  }
+
+  return rawTiers.map((tier, idx, arr) => {
+    const minScore = Number(tier.minScore) || 0;
+    const incrementPct = Number(tier.incrementPct) || 0;
+
+    // If tier has an explicit user-configured maxScore that is valid, preserve it!
+    // Otherwise, dynamically derive: top tier is 100, subsequent tiers up to prevMin - 0.01
+    let maxScore = 100;
+    if (idx === 0) {
+      maxScore = tier.maxScore !== undefined && tier.maxScore !== null ? Number(tier.maxScore) : 100;
+    } else {
+      const prevMin = Number(arr[idx - 1].minScore) || 100;
+      if (tier.maxScore !== undefined && tier.maxScore !== null && Number(tier.maxScore) <= prevMin && Number(tier.maxScore) >= minScore) {
+        maxScore = Number(tier.maxScore);
+      } else {
+        maxScore = Math.max(minScore, prevMin - 0.01);
+      }
+    }
+
+    let description = "";
+    if (idx === 0) {
+      description = `≥ ${minScore}% (${incrementPct}%)`;
+    } else if (minScore > 0) {
+      description = `${minScore}% to ${Math.floor(maxScore)}% (${incrementPct}%)`;
+    } else {
+      description = `< ${Math.ceil(maxScore)}% (${incrementPct}%)`;
+    }
+
+    return {
+      ...tier,
+      minScore,
+      maxScore,
+      incrementPct,
+      description
+    };
+  });
+};
+
 // Institutional Performance & Increment Criteria Matrix (from official rubrics)
 export const DEFAULT_INCREMENT_CRITERIA = {
   tiers: [
@@ -49,10 +92,10 @@ export const DEFAULT_INCREMENT_CRITERIA = {
       id: "FEE",
       code: "FEE",
       label: "Far Exceeds Expectations",
-      minScore: 93,
+      minScore: 90,
       maxScore: 100,
       incrementPct: 10,
-      description: "> 93% & ABOVE (10%)",
+      description: "≥ 90% (10%)",
       badgeColor: "bg-emerald-50 text-emerald-800 border-emerald-300",
       accentBg: "bg-emerald-600 text-white"
     },
@@ -60,10 +103,10 @@ export const DEFAULT_INCREMENT_CRITERIA = {
       id: "EE",
       code: "EE",
       label: "Exceeds Expectations",
-      minScore: 85,
-      maxScore: 92.99,
+      minScore: 80,
+      maxScore: 89.99,
       incrementPct: 8,
-      description: "85 to 92% (8%)",
+      description: "80% to 89% (8%)",
       badgeColor: "bg-blue-50 text-blue-800 border-blue-300",
       accentBg: "bg-blue-600 text-white"
     },
@@ -71,10 +114,10 @@ export const DEFAULT_INCREMENT_CRITERIA = {
       id: "ME",
       code: "ME",
       label: "Meets Expectations",
-      minScore: 75,
-      maxScore: 84.99,
+      minScore: 70,
+      maxScore: 79.99,
       incrementPct: 6,
-      description: "75 to 84% (6%)",
+      description: "70% to 79% (6%)",
       badgeColor: "bg-indigo-50 text-indigo-800 border-indigo-300",
       accentBg: "bg-indigo-600 text-white"
     },
@@ -82,10 +125,10 @@ export const DEFAULT_INCREMENT_CRITERIA = {
       id: "PME",
       code: "PME",
       label: "Partially Meets",
-      minScore: 65,
-      maxScore: 74.99,
+      minScore: 60,
+      maxScore: 69.99,
       incrementPct: 4,
-      description: "65 to 74% (4%)",
+      description: "60% to 69% (4%)",
       badgeColor: "bg-amber-50 text-amber-800 border-amber-300",
       accentBg: "bg-amber-600 text-white"
     },
@@ -94,9 +137,9 @@ export const DEFAULT_INCREMENT_CRITERIA = {
       code: "NME",
       label: "Does Not Meet",
       minScore: 0,
-      maxScore: 64.99,
+      maxScore: 59.99,
       incrementPct: 0,
-      description: "64% & Below (0%)",
+      description: "< 60% (0%)",
       badgeColor: "bg-rose-50 text-rose-800 border-rose-300",
       accentBg: "bg-rose-600 text-white"
     }
@@ -331,10 +374,11 @@ export default function HRGrossAnalytics() {
     const unsubCriteria = onSnapshot(doc(db, "appraisal_config", "increment_criteria"), (snap) => {
       if (snap.exists()) {
         const data = snap.data();
+        const normalizedTiers = computeDynamicTiers(data.tiers || DEFAULT_INCREMENT_CRITERIA.tiers);
         setCriteriaConfig({
           ...DEFAULT_INCREMENT_CRITERIA,
           ...data,
-          tiers: data.tiers || DEFAULT_INCREMENT_CRITERIA.tiers
+          tiers: normalizedTiers
         });
       } else {
         setCriteriaConfig(DEFAULT_INCREMENT_CRITERIA);
@@ -440,10 +484,11 @@ export default function HRGrossAnalytics() {
 
   // Helper: Find matching tier for a given score
   const getCandidateTier = (score, criteria) => {
-    const tiers = criteria?.tiers || DEFAULT_INCREMENT_CRITERIA.tiers;
+    const rawTiers = criteria?.tiers || DEFAULT_INCREMENT_CRITERIA.tiers;
+    const tiers = computeDynamicTiers(rawTiers);
     const numScore = Number(score) || 0;
     for (const tier of tiers) {
-      if (numScore >= Number(tier.minScore) && (tier.maxScore === undefined || numScore <= Number(tier.maxScore))) {
+      if (numScore >= Number(tier.minScore)) {
         return tier;
       }
     }
@@ -1340,12 +1385,15 @@ export default function HRGrossAnalytics() {
   const handleSaveCriteriaConfig = async () => {
     setCriteriaSaving(true);
     try {
-      await setDoc(doc(db, "appraisal_config", "increment_criteria"), {
+      const normalizedPayload = {
         ...editingCriteria,
+        tiers: computeDynamicTiers(editingCriteria.tiers),
         updatedAt: new Date().toISOString()
-      }, { merge: true });
+      };
 
-      setCriteriaConfig(editingCriteria);
+      await setDoc(doc(db, "appraisal_config", "increment_criteria"), normalizedPayload, { merge: true });
+
+      setCriteriaConfig(normalizedPayload);
       setCriteriaModalOpen(false);
       showToast("Increment criteria & slab configuration updated successfully!", "success");
     } catch (err) {
@@ -1358,7 +1406,11 @@ export default function HRGrossAnalytics() {
 
   // Open Criteria Modal
   const handleOpenCriteriaModal = () => {
-    setEditingCriteria(JSON.parse(JSON.stringify(criteriaConfig)));
+    const normalized = {
+      ...criteriaConfig,
+      tiers: computeDynamicTiers(criteriaConfig.tiers)
+    };
+    setEditingCriteria(JSON.parse(JSON.stringify(normalized)));
     setCriteriaModalOpen(true);
   };
 
@@ -1543,7 +1595,7 @@ export default function HRGrossAnalytics() {
 
           {/* Visual Matrix Badges (Parity with uploaded image tables) */}
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-            {(criteriaConfig.tiers || DEFAULT_INCREMENT_CRITERIA.tiers).map((tier) => (
+            {computeDynamicTiers(criteriaConfig.tiers || DEFAULT_INCREMENT_CRITERIA.tiers).map((tier, idx, allTiers) => (
               <div key={tier.code} className="bg-zinc-50 border border-zinc-200 rounded-2xl p-3 text-center space-y-1 relative overflow-hidden">
                 <div className="text-[10px] font-black text-zinc-400 uppercase tracking-wider">
                   {tier.code}
@@ -1555,7 +1607,9 @@ export default function HRGrossAnalytics() {
                   {tier.incrementPct}% Increment
                 </div>
                 <div className="text-[10px] font-bold text-zinc-500 pt-0.5">
-                  {tier.minScore > 0 ? `${tier.minScore}% to ${Math.floor(tier.maxScore)}%` : `≤ ${Math.floor(tier.maxScore)}%`}
+                  {tier.minScore > 0
+                    ? `${tier.minScore}% to ${Math.floor(tier.maxScore)}%`
+                    : `< ${Math.ceil(tier.maxScore)}%`}
                 </div>
               </div>
             ))}
@@ -2292,7 +2346,27 @@ export default function HRGrossAnalytics() {
                                 setEditingCriteria((prev) => {
                                   const newTiers = [...prev.tiers];
                                   newTiers[idx] = { ...newTiers[idx], minScore: val };
-                                  return { ...prev, tiers: newTiers };
+                                  return { ...prev, tiers: computeDynamicTiers(newTiers) };
+                                });
+                              }}
+                              className="w-16 h-8 text-center bg-white border border-zinc-300 rounded-lg font-bold text-xs"
+                            />
+                            <span className="text-zinc-400">%</span>
+                          </div>
+
+                          <div className="flex items-center gap-1">
+                            <span className="text-[10px] font-bold text-zinc-400 uppercase">Max Score:</span>
+                            <input
+                              type="number"
+                              min={0}
+                              max={100}
+                              value={Math.floor(tier.maxScore ?? 100)}
+                              onChange={(e) => {
+                                const val = parseFloat(e.target.value) || 0;
+                                setEditingCriteria((prev) => {
+                                  const newTiers = [...prev.tiers];
+                                  newTiers[idx] = { ...newTiers[idx], maxScore: val };
+                                  return { ...prev, tiers: computeDynamicTiers(newTiers) };
                                 });
                               }}
                               className="w-16 h-8 text-center bg-white border border-zinc-300 rounded-lg font-bold text-xs"
@@ -2312,7 +2386,7 @@ export default function HRGrossAnalytics() {
                                 setEditingCriteria((prev) => {
                                   const newTiers = [...prev.tiers];
                                   newTiers[idx] = { ...newTiers[idx], incrementPct: val };
-                                  return { ...prev, tiers: newTiers };
+                                  return { ...prev, tiers: computeDynamicTiers(newTiers) };
                                 });
                               }}
                               className="w-16 h-8 text-center bg-white border border-emerald-300 text-emerald-800 rounded-lg font-black text-xs"
@@ -2736,7 +2810,9 @@ export default function HRGrossAnalytics() {
                           : "bg-white border border-purple-300 text-purple-700 hover:bg-purple-50"
                       }`}
                     >
-                      {selectedCandidate.isPromoted ? `Promotion Active (+${selectedCandidate.promotionBonusPct}%)` : "Apply Promotion (+5%)"}
+                      {selectedCandidate.isPromoted
+                        ? `Promotion Active (+${selectedCandidate.promotionBonusPct || criteriaConfig.promotionPct || 5}%)`
+                        : `Apply Promotion (+${criteriaConfig.promotionPct || 5}%)`}
                     </button>
                   </div>
 
