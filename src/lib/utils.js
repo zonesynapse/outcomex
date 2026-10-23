@@ -469,6 +469,26 @@ export function getAttendanceRecords(attData) {
   return mergedRecords;
 }
 
+export function findRecordForPeriod(recordsObj, dateStr, periodVal) {
+  if (!recordsObj || !dateStr || !periodVal) return null;
+  const normTargetDate = normalizeDateStr(dateStr);
+  const targetP = String(periodVal).trim();
+  const exactKey = `${normTargetDate}_P${targetP}`;
+  if (recordsObj[exactKey]) return recordsObj[exactKey];
+  if (recordsObj[`${dateStr}_P${periodVal}`]) return recordsObj[`${dateStr}_P${periodVal}`];
+
+  const keys = Object.keys(recordsObj);
+  const match = keys.find(k => {
+    const kDate = normalizeDateStr(k.split('_P')[0].split('_p')[0].split('_')[0]);
+    if (kDate !== normTargetDate && !k.startsWith(dateStr) && !k.startsWith(normTargetDate)) return false;
+    const m = k.match(/_+[pP](\d+)/i) || k.match(/_(\d+)$/);
+    if (m && String(parseInt(m[1], 10)) === targetP) return true;
+    const rest = k.replace(kDate, '').replace(/^[_ -]+/, '').toLowerCase();
+    return rest === `p${targetP}` || rest === targetP || rest === `period${targetP}` || rest === `p0${targetP}`;
+  });
+  return match ? recordsObj[match] : null;
+}
+
 export function parseStudentAttendanceVal(val) {
   if (val === undefined || val === null) return null;
 
@@ -582,6 +602,8 @@ export function getAllCandidateAttendanceDocIds({ programme, department, batch, 
 
   const deptClean = cleanKey(department);
   const deptNoDegree = cleanKey(department.replace(/^(B\.?Tech\.?|B\.?E\.?|M\.?E\.?|M\.?Tech\.?|MBA|MCA)\s+/i, ''));
+  const deptUnderscore = sanitizeKey(department);
+  const deptNoDegreeUnderscore = sanitizeKey(department.replace(/^(B\.?Tech\.?|B\.?E\.?|M\.?E\.?|M\.?Tech\.?|MBA|MCA)\s+/i, ''));
   let deptAcronym = '';
   const matchAcronym = department.match(/\(([^)]+)\)/);
   if (matchAcronym) {
@@ -592,9 +614,13 @@ export function getAllCandidateAttendanceDocIds({ programme, department, batch, 
       deptAcronym = cleanKey(words.map(w => w[0]).join(''));
     }
   }
+  const deptUnderscoreSingle = deptUnderscore.replace(/_+/g, '_');
   const deptCandidates = Array.from(new Set([
     deptClean,
     deptNoDegree,
+    deptUnderscore,
+    deptUnderscoreSingle,
+    deptNoDegreeUnderscore,
     deptAcronym,
     deptAcronym.replace(/_/g, ''),
     deptAcronym.replace(/_/g, '&')
@@ -655,17 +681,29 @@ export function getAllCandidateAttendanceDocIds({ programme, department, batch, 
     '' // allow empty semester for legacy doc IDs
   ]);
 
-  const subCodes = Array.from(new Set([cleanKey(subjectCode), ...legacyCodes.map(cleanKey)].filter(Boolean)));
+  const subCodes = Array.from(new Set([
+    cleanKey(subjectCode),
+    cleanKey(subjectCode).replace(/\s+/g, ''),
+    cleanKey(subjectCode).replace(/\s+/g, '_'),
+    ...legacyCodes.map(cleanKey),
+    ...legacyCodes.map(c => cleanKey(c).replace(/\s+/g, ''))
+  ].filter(Boolean)));
   const secSuffixes = Array.from(new Set([
     section ? `_${cleanKey(section)}` : '',
     ''
   ]));
 
   const candidateIds = new Set();
-  // Ensure the primary canonical doc ID is always evaluated first!
+  // Ensure the primary canonical doc IDs (both with section and base without section, space and underscore variants) are evaluated first!
   const canonicalSecSuffix = section ? `_${cleanKey(section)}` : '';
-  const canonicalDocId = `${progKey}_${deptClean}_${batchClean}_${ayClean}_${semNum}_${cleanKey(subjectCode)}${canonicalSecSuffix}`;
-  candidateIds.add(canonicalDocId);
+  candidateIds.add(`${progKey}_${deptClean}_${batchClean}_${ayClean}_${semNum}_${cleanKey(subjectCode)}${canonicalSecSuffix}`);
+  candidateIds.add(`${progKey}_${deptClean}_${batchClean}_${ayClean}_${semNum}_${cleanKey(subjectCode)}`);
+  candidateIds.add(`${progKey}_${deptUnderscore}_${batchClean}_${ayClean}_${semNum}_${cleanKey(subjectCode)}${canonicalSecSuffix}`);
+  candidateIds.add(`${progKey}_${deptUnderscore}_${batchClean}_${ayClean}_${semNum}_${cleanKey(subjectCode)}`);
+  if (deptNoDegree) {
+    candidateIds.add(`${progKey}_${deptNoDegree}_${batchClean}_${ayClean}_${semNum}_${cleanKey(subjectCode)}${canonicalSecSuffix}`);
+    candidateIds.add(`${progKey}_${deptNoDegree}_${batchClean}_${ayClean}_${semNum}_${cleanKey(subjectCode)}`);
+  }
 
   progCandidates.forEach(p => {
     deptCandidates.forEach(d => {

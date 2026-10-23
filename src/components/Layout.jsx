@@ -60,7 +60,8 @@ import {
   Landmark,
   ScrollText,
   CalendarCheck2,
-  PenLine
+  PenLine,
+  Route
 } from "lucide-react";
 import { useDepartments } from "../hooks/useDepartments";
 
@@ -151,6 +152,7 @@ const allPossibleItems = [
   { id: "faculty-appraisal-request", icon: FileText, label: "Faculty Appraisal Request", path: "/hr/appraisal" },
   { id: "non-teaching-appraisal-request", icon: FileText, label: "Non-Teaching Appraisal Request", path: "/hr/non-teaching-appraisal" },
   { id: "hod-appraisal-request", icon: FileText, label: "HOD Appraisal Request", path: "/hr/hod-appraisal" },
+  { id: "principal-appraisal-request", icon: Award, label: "Principal Appraisal Request", path: "/hr/principal-appraisal" },
   { id: "faculty-appraisal-reviews", icon: CheckCircle2, label: "Appraisal Reviews", path: "/hr/reviews" },
   { id: "hr-gross-analytics", icon: BarChart3, label: "Gross Analytics", path: "/hr/gross-analytics" },
   { id: "appraisal-settings", icon: Settings2, label: "Appraisal Settings", path: "/hr/settings" },
@@ -176,6 +178,11 @@ const allPossibleItems = [
   { id: "exam-cell-exam-hall-suite", icon: ShieldCheck, label: "Exam Hall OS Suite", path: "/exam-cell/exam-hall-suite" },
   { id: "exam-cell-fee-configuration", icon: IndianRupee, label: "Fee Configuration", path: "/exam-cell/fee-configuration" },
   { id: "exam-cell-exam-form-setting", icon: Settings2, label: "Exam Form Setting", path: "/exam-cell/exam-form-setting" },
+
+  // Transport Configuration Module
+  { id: "transport-bus-fleet", icon: Building2, label: "Bus Fleet", path: "/transport/bus-fleet" },
+  { id: "transport-routes-stages", icon: Route, label: "Routes & Stages Fee", path: "/transport/routes-stages" },
+  { id: "transport-driver-database", icon: Users, label: "Driver Database", path: "/transport/driver-database" },
 ];
 
 const modules = [
@@ -262,7 +269,7 @@ const modules = [
     id: "hr",
     label: "HR",
     icon: UserCheck,
-    itemIds: ["faculty-appraisal-request", "non-teaching-appraisal-request", "hod-appraisal-request", "faculty-appraisal-reviews", "hr-gross-analytics", "appraisal-settings"]
+    itemIds: ["faculty-appraisal-request", "non-teaching-appraisal-request", "hod-appraisal-request", "principal-appraisal-request", "faculty-appraisal-reviews", "hr-gross-analytics", "appraisal-settings"]
   },
   {
     id: "resource_hub",
@@ -290,6 +297,12 @@ const modules = [
       "ia-schedule-creation",
       "exam-cell-exam-form-setting"
     ]
+  },
+  {
+    id: "transport",
+    label: "Transport Config",
+    icon: Building2,
+    itemIds: ["transport-bus-fleet", "transport-routes-stages", "transport-driver-database"]
   }
 ];
 
@@ -600,7 +613,7 @@ export default function Layout({ children, title }) {
   if (effectivePermissions !== null) {
     // Dynamic items based on Admin configuration
     allPossibleItems.forEach(item => {
-      if (item.id === "faculty-appraisal-request" || item.id === "non-teaching-appraisal-request" || item.id === "hod-appraisal-request") {
+      if (item.id === "faculty-appraisal-request" || item.id === "non-teaching-appraisal-request" || item.id === "hod-appraisal-request" || item.id === "principal-appraisal-request") {
         const isAdminOrHR = userRole === "HR" || userRole === "Admin";
         const isFacultyOrHOD = userRole === "Faculty" || userRole === "HOD";
         

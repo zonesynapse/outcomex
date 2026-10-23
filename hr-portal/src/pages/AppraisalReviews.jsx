@@ -7,7 +7,7 @@ import {
   User, CheckCircle2, AlertCircle, FileText, ChevronRight,
   Eye, Check, Search, Building2, Filter, Loader2, ArrowLeft,
   X, Star, Printer, Undo2, Award, Sparkles, Send, GraduationCap, Library, Paperclip, Save, Edit2,
-  ExternalLink, Download
+  ExternalLink, Download, Crown
 } from "lucide-react";
 import HRLayout from "../components/HRLayout";
 import { getSchoolShortName, isSameInstitution, normalizeInstitution } from "../utils/appraisalScore";
@@ -1295,28 +1295,41 @@ export default function AppraisalReviews() {
     let nonTeachingList = [];
     let hodList = [];
     let teacherList = [];
+    let principalList = [];
 
     const unsubFaculty = onSnapshot(collection(db, "faculty_appraisals"), (snap) => {
       facultyList = snap.docs.map((d) => ({ ...d.data(), id: d.id, collectionName: "faculty_appraisals", formType: d.data().formType || "faculty", facultyName: d.data().facultyName || d.data().name }));
-      setAppraisals([...facultyList, ...nonTeachingList, ...hodList, ...teacherList]);
+      setAppraisals([...facultyList, ...nonTeachingList, ...hodList, ...teacherList, ...principalList]);
       setLoading(false);
     });
 
     const unsubNonTeaching = onSnapshot(collection(db, "non_teaching_appraisals"), (snap) => {
       nonTeachingList = snap.docs.map((d) => ({ ...d.data(), id: d.id, collectionName: "non_teaching_appraisals", formType: "non_teaching", facultyName: d.data().staffName || d.data().name }));
-      setAppraisals([...facultyList, ...nonTeachingList, ...hodList, ...teacherList]);
+      setAppraisals([...facultyList, ...nonTeachingList, ...hodList, ...teacherList, ...principalList]);
       setLoading(false);
     });
 
     const unsubHOD = onSnapshot(collection(db, "hod_appraisals"), (snap) => {
       hodList = snap.docs.map((d) => ({ ...d.data(), id: d.id, collectionName: "hod_appraisals", formType: "hod", facultyName: d.data().hodName || d.data().name }));
-      setAppraisals([...facultyList, ...nonTeachingList, ...hodList, ...teacherList]);
+      setAppraisals([...facultyList, ...nonTeachingList, ...hodList, ...teacherList, ...principalList]);
       setLoading(false);
     });
 
     const unsubTeacher = onSnapshot(collection(db, "teacher_appraisals"), (snap) => {
       teacherList = snap.docs.map((d) => ({ ...d.data(), id: d.id, collectionName: "teacher_appraisals", formType: "teacher", facultyName: d.data().facultyName || d.data().name }));
-      setAppraisals([...facultyList, ...nonTeachingList, ...hodList, ...teacherList]);
+      setAppraisals([...facultyList, ...nonTeachingList, ...hodList, ...teacherList, ...principalList]);
+      setLoading(false);
+    });
+
+    const unsubPrincipal = onSnapshot(collection(db, "principal_appraisals"), (snap) => {
+      principalList = snap.docs.map((d) => ({
+        ...d.data(),
+        id: d.id,
+        collectionName: "principal_appraisals",
+        formType: "principal",
+        facultyName: d.data().principalName || d.data().staffName || d.data().name || "Principal"
+      }));
+      setAppraisals([...facultyList, ...nonTeachingList, ...hodList, ...teacherList, ...principalList]);
       setLoading(false);
     });
 
@@ -1325,6 +1338,7 @@ export default function AppraisalReviews() {
       unsubNonTeaching();
       unsubHOD();
       unsubTeacher();
+      unsubPrincipal();
     };
   }, [currentUser]);
 
@@ -1425,7 +1439,15 @@ export default function AppraisalReviews() {
   const handleOpenDetails = async (app) => {
     let appWithEvidences = app;
     if (app && app.id) {
-      const targetColl = app.formType === "non_teaching" ? "non_teaching_appraisals" : app.formType === "hod" ? "hod_appraisals" : app.formType === "teacher" ? "teacher_appraisals" : "faculty_appraisals";
+      const targetColl = (app.formType === "principal" || app.collectionName === "principal_appraisals")
+        ? "principal_appraisals"
+        : app.formType === "non_teaching"
+        ? "non_teaching_appraisals"
+        : app.formType === "hod"
+        ? "hod_appraisals"
+        : app.formType === "teacher"
+        ? "teacher_appraisals"
+        : "faculty_appraisals";
       appWithEvidences = await loadAppraisalEvidences(db, targetColl, app.id, app);
     }
     setSelectedAppraisal(appWithEvidences);
@@ -1502,13 +1524,15 @@ export default function AppraisalReviews() {
     if (isHODRole || isCoordinatorRole) {
       setComments(app.hodReview?.comments || app.coordinatorReview?.comments || "");
       setEvaluationGrade(app.hodReview?.grade || app.coordinatorReview?.grade || "Good");
-    } else if (isPrincipalOrHR) {
-      setComments(app.principalReview?.comments || "");
-      setEvaluationGrade(app.principalReview?.grade || "Good");
+    } else if (isPrincipalOrHR || app.formType === "principal") {
+      setComments(app.managementReview?.comments || app.principalReview?.comments || "");
+      setEvaluationGrade(app.managementReview?.grade || app.principalReview?.grade || "Outstanding");
 
-      const existingFinal = app.principalReview?.finalRating ?? app.principalReview?.rating ?? "";
+      const existingFinal = app.managementReview?.score ?? app.totalScore ?? app.principalReview?.finalRating ?? app.principalReview?.rating ?? "";
       let resolvedFinal = "";
-      if (isSchoolOrCOE && cumulativeInitialScore > 0) {
+      if (app.formType === "principal") {
+        resolvedFinal = String(existingFinal !== "" && existingFinal !== null && existingFinal !== undefined ? existingFinal : 100);
+      } else if (isSchoolOrCOE && cumulativeInitialScore > 0) {
         // For CKCOE, CKSPK, CKSPE, cumulative of principal score sits in final rating
         resolvedFinal = String(cumulativeInitialScore);
       } else if (existingFinal !== "" && existingFinal !== null && existingFinal !== undefined) {
@@ -1530,6 +1554,7 @@ export default function AppraisalReviews() {
 
   const handleReviewAction = async (newStatus) => {
     if (!selectedAppraisal) return;
+    const isPrincipal = selectedAppraisal.formType === "principal" || selectedAppraisal.collectionName === "principal_appraisals";
     const isNonTeaching = selectedAppraisal.formType === "non_teaching" || selectedAppraisal.collectionName === "non_teaching_appraisals";
 
     setActioning(true);
@@ -1562,7 +1587,28 @@ export default function AppraisalReviews() {
     const revP1T = Math.round(revRowsP1.reduce((s, r) => s + revVal(r), 0) * 100) / 100;
     const revP2T = Math.round(revRowsP2.reduce((s, r) => s + revVal(r), 0) * 100) / 100;
 
-    if (isCoordOnly) {
+    if (isPrincipal) {
+      const resolvedRatingNum = (finalRating !== "" && !isNaN(Number(finalRating))) ? Number(finalRating) : 100;
+      updatePayload.totalScore = resolvedRatingNum;
+      updatePayload.grossMark = resolvedRatingNum;
+      updatePayload.isPrincipalApproved = true;
+      updatePayload.managementReview = {
+        score: resolvedRatingNum,
+        grade: evaluationGrade,
+        finalRating: String(resolvedRatingNum),
+        comments: comments || "Approved by Management",
+        reviewedBy: currentUser?.email || "Management",
+        reviewedAt: new Date().toISOString()
+      };
+      updatePayload.principalReview = {
+        principalTotalScore: resolvedRatingNum,
+        finalRating: String(resolvedRatingNum),
+        grade: evaluationGrade,
+        comments: comments || "Approved by Management",
+        reviewedBy: currentUser?.email || "Management",
+        reviewedAt: new Date().toISOString()
+      };
+    } else if (isCoordOnly) {
       updatePayload.coordinatorReview = {
         scores: { ...hodFacultyScoresMap },
         part1Total: revP1T,
@@ -1642,7 +1688,15 @@ export default function AppraisalReviews() {
     });
 
     try {
-      const targetColl = isNonTeaching ? "non_teaching_appraisals" : selectedAppraisal.formType === "hod" ? "hod_appraisals" : selectedAppraisal.formType === "teacher" ? "teacher_appraisals" : "faculty_appraisals";
+      const targetColl = isPrincipal
+        ? "principal_appraisals"
+        : isNonTeaching
+        ? "non_teaching_appraisals"
+        : selectedAppraisal.formType === "hod"
+        ? "hod_appraisals"
+        : selectedAppraisal.formType === "teacher"
+        ? "teacher_appraisals"
+        : "faculty_appraisals";
       await updateDoc(doc(db, targetColl, selectedAppraisal.id), updatePayload);
       showToast(selectedAppraisal.status === "Approved" ? "Appraisal marks and review updated successfully!" : `Appraisal successfully updated to: ${newStatus.replace("_", " ")}`, "success");
       setSelectedAppraisal(null);
@@ -1722,7 +1776,15 @@ export default function AppraisalReviews() {
     });
 
     try {
-      const targetColl = isNonTeaching ? "non_teaching_appraisals" : selectedAppraisal.formType === "hod" ? "hod_appraisals" : selectedAppraisal.formType === "teacher" ? "teacher_appraisals" : "faculty_appraisals";
+      const targetColl = (selectedAppraisal.formType === "principal" || selectedAppraisal.collectionName === "principal_appraisals")
+        ? "principal_appraisals"
+        : isNonTeaching
+        ? "non_teaching_appraisals"
+        : selectedAppraisal.formType === "hod"
+        ? "hod_appraisals"
+        : selectedAppraisal.formType === "teacher"
+        ? "teacher_appraisals"
+        : "faculty_appraisals";
       await updateDoc(doc(db, targetColl, selectedAppraisal.id), updatePayload);
       showToast("Appraisal returned to staff for correction.", "success");
       setCorrectionModalOpen(false);
@@ -2021,8 +2083,8 @@ export default function AppraisalReviews() {
     const info = [
       ["Faculty Name:", data.name || "", "Designation:", data.designation || ""],
       ["Department:", data.department || "", "Date of Birth:", data.dob || ""],
-      ["Age:", data.age || "", "DOJ School:", data.dojCollege || ""],
-      ["DOJ Present Post:", data.dojPresentPost || "", "Academic Qual:", data.academicQualification || ""],
+      ["Age:", data.age || "", "DOJ School:", data.dojSchool || data.dojCollege || data.doj || data.dateOfJoining || ""],
+      ["DOJ Present Post:", data.dojPresentPost || "", "Academic Qual:", data.academicQualification || data.qualification || ""],
       ["Specialization:", data.subjectSpecialization || "", "", ""]
     ];
 
@@ -2155,15 +2217,18 @@ export default function AppraisalReviews() {
               </button>
 
               <div className="flex items-center gap-3">
-                <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${selectedAppraisal.formType === "hod"
-                  ? "bg-purple-500/20 text-purple-700 border border-purple-500/30"
-                  : selectedAppraisal.formType === "non_teaching"
+                <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                  selectedAppraisal.formType === "principal"
+                    ? "bg-amber-500/20 text-amber-800 border border-amber-500/30"
+                    : selectedAppraisal.formType === "hod"
+                    ? "bg-purple-500/20 text-purple-700 border border-purple-500/30"
+                    : selectedAppraisal.formType === "non_teaching"
                     ? "bg-teal-500/20 text-teal-700 border border-teal-500/30"
                     : selectedAppraisal.formType === "teacher"
-                      ? "bg-amber-500/20 text-amber-700 border border-amber-500/30"
-                      : "bg-indigo-500/20 text-indigo-700 border border-indigo-500/30"
-                  }`}>
-                  {selectedAppraisal.formType === "hod" ? "HOD Appraisal" : selectedAppraisal.formType === "non_teaching" ? "Non-Teaching Appraisal" : selectedAppraisal.formType === "teacher" ? "Teacher Appraisal" : "Faculty Appraisal"}
+                    ? "bg-amber-500/20 text-amber-700 border border-amber-500/30"
+                    : "bg-indigo-500/20 text-indigo-700 border border-indigo-500/30"
+                }`}>
+                  {selectedAppraisal.formType === "principal" ? "Principal Appraisal" : selectedAppraisal.formType === "hod" ? "HOD Appraisal" : selectedAppraisal.formType === "non_teaching" ? "Non-Teaching Appraisal" : selectedAppraisal.formType === "teacher" ? "Teacher Appraisal" : "Faculty Appraisal"}
                 </span>
                 <button
                   onClick={() => handlePrintPDF(selectedAppraisal)}
@@ -2190,6 +2255,11 @@ export default function AppraisalReviews() {
 
                 {/* Custom internal detail tabs */}
                 {(() => {
+                  const principalSubTabs = [
+                    { id: 1, name: "1. Principal Details (Q1-Q6)" },
+                    { id: 2, name: "2. Roles & Responsibilities (Q7)" }
+                  ];
+
                   const hodSubTabs = [
                     { id: 1, name: "1. Profile & Info" },
                     { id: 2, name: "2. KRA Performance (1-5)" },
@@ -2210,7 +2280,9 @@ export default function AppraisalReviews() {
                     { id: 4, name: "4. Rating, Targets & Self Analysis" }
                   ];
 
-                  const currentSubTabs = selectedAppraisal?.formType === "hod"
+                  const currentSubTabs = selectedAppraisal?.formType === "principal"
+                    ? principalSubTabs
+                    : selectedAppraisal?.formType === "hod"
                     ? hodSubTabs
                     : selectedAppraisal?.formType === "non_teaching"
                       ? nonTeachingSubTabs
@@ -2235,6 +2307,181 @@ export default function AppraisalReviews() {
                     </div>
                   );
                 })()}
+
+                {/* ── PRINCIPAL APPRAISAL FORM REVIEW VIEWS ── */}
+                {selectedAppraisal?.formType === "principal" && (
+                  <>
+                    {/* Sub-Tab 1: Principal Details (Q1 - Q6) */}
+                    {activeDetailsTab === 1 && (() => {
+                      const fData = selectedAppraisal.formData || {};
+                      const pName = fData.name || selectedAppraisal.principalName || selectedAppraisal.staffName || selectedAppraisal.facultyName || "Principal";
+                      const dob = fData.dob || "-";
+                      const age = fData.age || "-";
+                      const designation = fData.designation || selectedAppraisal.designation || "Principal";
+                      const department = fData.department || selectedAppraisal.department || "Administration / Institutional Governance";
+                      const institution = fData.institution || selectedAppraisal.institution || "CKCET";
+                      const dojCollege = fData.dojCollege || selectedAppraisal.dojCollege || selectedAppraisal.doj || selectedAppraisal.dateOfJoining || "-";
+                      const dojPresentPost = fData.dojPresentPost || selectedAppraisal.dojPresentPost || "-";
+                      const qualification = fData.qualification || "-";
+                      const totalExp = fData.totalExperience || "0";
+                      const expCurrent = fData.expCurrent || "0";
+                      const expOther = fData.expOther || "0";
+                      const expIndustry = fData.expIndustry || "0";
+
+                      return (
+                        <div className="space-y-6 animate-fadeIn">
+                          {/* Executive Profile Card */}
+                          <div className="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white p-6 rounded-3xl shadow-md border border-indigo-900/50 space-y-4">
+                            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-3">
+                              <div className="flex items-center gap-2.5">
+                                <span className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                                  <Crown size={20} />
+                                </span>
+                                <div>
+                                  <h3 className="text-base font-black tracking-wide text-white">{pName}</h3>
+                                  <p className="text-xs text-indigo-200 font-medium">{designation} • {institution}</p>
+                                </div>
+                              </div>
+                              <span className="bg-amber-400/20 text-amber-300 border border-amber-400/30 text-[10px] font-black uppercase px-3 py-1 rounded-full">
+                                Executive Leadership
+                              </span>
+                            </div>
+
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs pt-1">
+                              <div>
+                                <span className="block text-[10px] font-bold text-indigo-300 uppercase tracking-wider">Date of Birth</span>
+                                <span className="font-bold text-white">{dob}</span>
+                                {age !== "-" && (
+                                  <span className="ml-1 text-[10px] bg-indigo-800 text-indigo-200 px-1.5 py-0.5 rounded font-black">
+                                    {age} Yrs
+                                  </span>
+                                )}
+                              </div>
+                              <div>
+                                <span className="block text-[10px] font-bold text-indigo-300 uppercase tracking-wider">Highest Qualification</span>
+                                <span className="font-bold text-amber-300">{qualification}</span>
+                              </div>
+                              <div>
+                                <span className="block text-[10px] font-bold text-indigo-300 uppercase tracking-wider">DOJ Institution</span>
+                                <span className="font-bold text-white">{dojCollege}</span>
+                              </div>
+                              <div>
+                                <span className="block text-[10px] font-bold text-indigo-300 uppercase tracking-wider">DOJ Present Post</span>
+                                <span className="font-bold text-white">{dojPresentPost}</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Experience Breakdown Card (Question 6) */}
+                          <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-xs space-y-4">
+                            <div className="flex items-center justify-between border-b border-zinc-100 pb-3">
+                              <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                                <Award size={15} className="text-indigo-600" />
+                                6. Professional Experience Breakdown
+                              </h4>
+                              <span className="bg-indigo-50 text-indigo-700 text-xs font-black px-3 py-1 rounded-full border border-indigo-200">
+                                Total: {totalExp} Years
+                              </span>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
+                                <span className="text-[10px] font-bold text-zinc-500 uppercase block tracking-wider">a) At CKCET / Institution</span>
+                                <p className="text-xl font-black text-slate-900 mt-1">{expCurrent} <span className="text-xs font-bold text-zinc-400">Years</span></p>
+                              </div>
+                              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
+                                <span className="text-[10px] font-bold text-zinc-500 uppercase block tracking-wider">b) At Other Institutions</span>
+                                <p className="text-xl font-black text-slate-900 mt-1">{expOther} <span className="text-xs font-bold text-zinc-400">Years</span></p>
+                              </div>
+                              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
+                                <span className="text-[10px] font-bold text-zinc-500 uppercase block tracking-wider">c) Industrial / Research</span>
+                                <p className="text-xl font-black text-slate-900 mt-1">{expIndustry} <span className="text-xs font-bold text-zinc-400">Years</span></p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Sub-Tab 2: Roles & Responsibilities (Q7) & Certification */}
+                    {activeDetailsTab === 2 && (() => {
+                      const fData = selectedAppraisal.formData || {};
+                      const rolesText = fData.rolesResponsibilities || "No description provided.";
+                      const docUrl = fData.rolesEvidenceUrl;
+                      const docName = fData.rolesEvidenceName || "Attached Document";
+                      const certified = fData.certified === true || selectedAppraisal.declaration === true;
+                      const submissionDate = fData.submissionDate || selectedAppraisal.submittedAt || selectedAppraisal.updatedAt || "-";
+
+                      return (
+                        <div className="space-y-6 animate-fadeIn">
+                          {/* Roles & Responsibilities Statement */}
+                          <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-xs space-y-4">
+                            <div className="flex items-center justify-between border-b border-zinc-100 pb-3">
+                              <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                                <FileText size={15} className="text-indigo-600" />
+                                7. Roles & Responsibilities Carried Out During the Year
+                              </h4>
+                              <span className="text-[10px] font-bold bg-zinc-100 text-zinc-600 px-2.5 py-0.5 rounded-full">
+                                Executive Governance & Operations
+                              </span>
+                            </div>
+
+                            <div className="p-5 rounded-2xl bg-zinc-50 border border-zinc-200/80 text-xs text-zinc-800 font-medium whitespace-pre-wrap leading-relaxed">
+                              {rolesText}
+                            </div>
+
+                            {/* Attached Document / Evidence */}
+                            {docUrl ? (
+                              <div className="mt-4 p-4 rounded-2xl bg-indigo-50/60 border border-indigo-200 flex flex-wrap items-center justify-between gap-3">
+                                <div className="flex items-center gap-3">
+                                  <div className="p-2 rounded-xl bg-indigo-600 text-white">
+                                    <FileText size={16} />
+                                  </div>
+                                  <div>
+                                    <span className="text-xs font-black text-indigo-950 block">{docName}</span>
+                                    <span className="text-[10px] text-indigo-600 font-bold">Attached Document / Evidence (Under 100 KB)</span>
+                                  </div>
+                                </div>
+                                <a
+                                  href={docUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-xs transition-all flex items-center gap-1.5"
+                                >
+                                  <ExternalLink size={13} /> View Attached Evidence
+                                </a>
+                              </div>
+                            ) : (
+                              <div className="p-3 bg-zinc-50 border border-dashed border-zinc-200 rounded-xl text-center text-xs text-zinc-400 font-medium">
+                                No additional evidence document was attached with this submission.
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Digital Declaration & Submission Certification */}
+                          <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-xs space-y-4">
+                            <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2 border-b border-zinc-100 pb-3">
+                              <CheckCircle2 size={15} className="text-emerald-600" />
+                              Digital Certification & Submission
+                            </h4>
+
+                            <div className="flex items-start gap-3 p-4 rounded-2xl bg-emerald-50/50 border border-emerald-200">
+                              <CheckCircle2 size={18} className="text-emerald-600 shrink-0 mt-0.5" />
+                              <div className="space-y-1">
+                                <p className="text-xs font-bold text-emerald-950">
+                                  Certified and declared that all the information provided above is true and correct to the best of knowledge.
+                                </p>
+                                <p className="text-[10px] text-emerald-700 font-medium">
+                                  Submission Stamped: {submissionDate}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </>
+                )}
 
                 {/* ── HOD APPRAISAL FORM REVIEW VIEWS ── */}
                 {selectedAppraisal?.formType === "hod" && (
@@ -2694,7 +2941,7 @@ export default function AppraisalReviews() {
                             </div>
                             <div>
                               <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">DOJ School</span>
-                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.dojCollege || "-"}</span>
+                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.dojSchool || selectedAppraisal.formData?.dojCollege || selectedAppraisal.formData?.doj || selectedAppraisal.dojSchool || selectedAppraisal.doj || selectedAppraisal.dateOfJoining || "-"}</span>
                             </div>
                             <div>
                               <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">DOJ Present Post</span>
@@ -3075,7 +3322,7 @@ export default function AppraisalReviews() {
                             </div>
                             <div>
                               <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">DOJ School</span>
-                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.dojCollege || "-"}</span>
+                              <span className="font-bold text-slate-800">{selectedAppraisal.formData?.dojSchool || selectedAppraisal.formData?.dojCollege || selectedAppraisal.formData?.doj || selectedAppraisal.dojSchool || selectedAppraisal.doj || selectedAppraisal.dateOfJoining || "-"}</span>
                             </div>
                             <div>
                               <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">DOJ Present Post</span>
@@ -3374,7 +3621,7 @@ export default function AppraisalReviews() {
                               {isSectionVisible("f_dojCollege") && (
                                 <div>
                                   <span className="block text-[10px] font-black text-zinc-400 uppercase tracking-wider">{getSectionTitle("f_dojCollege", "DOJ School")}</span>
-                                  <span className="font-bold text-slate-800">{selectedAppraisal.formData?.dojCollege || "-"}</span>
+                                  <span className="font-bold text-slate-800">{selectedAppraisal.formData?.dojSchool || selectedAppraisal.formData?.dojCollege || selectedAppraisal.formData?.doj || selectedAppraisal.dojSchool || selectedAppraisal.doj || selectedAppraisal.dateOfJoining || "-"}</span>
                                 </div>
                               )}
                               {isSectionVisible("f_dojPresentPost") && (
@@ -5131,24 +5378,35 @@ export default function AppraisalReviews() {
                   </div>
                 )}
 
-                {/* Final Rating Number Input Box (shown to Principal/HR only) */}
-                {isPrincipalOrHR && (
+                {/* Final Rating Number Input Box (shown to Principal/HR or for Principal appraisals) */}
+                {(isPrincipalOrHR || selectedAppraisal.formType === "principal") && (
                   <div>
-                    <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-wider mb-1">Final Rating</label>
+                    <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-wider mb-1">
+                      {selectedAppraisal.formType === "principal" ? "Management Evaluation Score (Out of 100)" : "Final Rating"}
+                    </label>
                     <input
                       type="number"
                       step="any"
+                      min="0"
+                      max="100"
                       placeholder="e.g. 0 to 100"
                       value={finalRating}
                       onChange={(e) => setFinalRating(e.target.value)}
                       className="w-full rounded-xl border border-zinc-200 bg-white p-2.5 text-xs font-bold text-zinc-800 focus:outline-none focus:ring-2 focus:ring-[#120c7a]/20 focus:border-[#120c7a]"
                     />
+                    {selectedAppraisal.formType === "principal" && (
+                      <p className="text-[10px] text-zinc-400 mt-1 font-medium">
+                        Direct 100% executive mark. Determines Principal's gross mark, salary increment %, and revised salary in HR Gross Analytics.
+                      </p>
+                    )}
                   </div>
                 )}
 
                 {/* Recommendation Remarks */}
                 <div>
-                  <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-wider mb-1">Detailed Review Comments</label>
+                  <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-wider mb-1">
+                    {selectedAppraisal.formType === "principal" ? "Management Review Comments" : "Detailed Review Comments"}
+                  </label>
                   <textarea
                     value={comments}
                     onChange={(e) => setComments(e.target.value)}
@@ -5160,7 +5418,7 @@ export default function AppraisalReviews() {
 
                 {/* Interactive Action Buttons */}
                 <div className="space-y-2.5 pt-4">
-                  {(selectedAppraisal.formType === "teacher" || selectedAppraisal.formType === "non_teaching" || selectedAppraisal.formType === "hod" || selectedAppraisal.formType === "faculty") && (() => {
+                  {selectedAppraisal.formType !== "principal" && (selectedAppraisal.formType === "teacher" || selectedAppraisal.formType === "non_teaching" || selectedAppraisal.formType === "hod" || selectedAppraisal.formType === "faculty") && (() => {
                     const attInfo = getAttitudeScoreInfo(selectedAppraisal);
                     const isEvaluated = attInfo.totalScore > 0 || attInfo.hasMarks;
                     return (
@@ -5183,7 +5441,7 @@ export default function AppraisalReviews() {
                     );
                   })()}
 
-                  {(userRole === "HOD" || isCoordinatorRole) && selectedAppraisal.status === "Submitted" && (
+                  {(userRole === "HOD" || isCoordinatorRole) && selectedAppraisal.status === "Submitted" && selectedAppraisal.formType !== "principal" && (
                     <>
                       <button
                         onClick={() => handleReviewAction("HOD_Approved")}
@@ -5203,7 +5461,7 @@ export default function AppraisalReviews() {
                   )}
 
                   {/* School HOD can add/update their own evaluation after Coordinator forwards */}
-                  {(userRole === "HOD" || isHODRole) && selectedAppraisal.status === "HOD_Approved" && (
+                  {(userRole === "HOD" || isHODRole) && selectedAppraisal.status === "HOD_Approved" && selectedAppraisal.formType !== "principal" && (
                     <>
                       <button
                         onClick={() => handleReviewAction("HOD_Approved")}
@@ -5222,53 +5480,53 @@ export default function AppraisalReviews() {
                     </>
                   )}
 
-                  {isPrincipalOrHR && (selectedAppraisal.status === "HOD_Approved" || selectedAppraisal.status === "Submitted") && (
-                    <>
-                      <button
-                        onClick={() => handleReviewAction("Approved")}
-                        disabled={actioning}
-                        className="w-full py-2.5 bg-gradient-to-r from-indigo-650 to-indigo-800 hover:from-indigo-700 hover:to-indigo-900 text-white font-black rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-indigo-100 cursor-pointer disabled:opacity-50"
-                      >
-                        <CheckCircle2 size={14} /> Finalize & Approve
-                      </button>
-                      <button
-                        onClick={() => setCorrectionModalOpen(true)}
-                        disabled={actioning}
-                        className="w-full py-2.5 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                      >
-                        <Undo2 size={14} /> Return for Correction
-                      </button>
-                    </>
-                  )}
-
-                  {isPrincipalOrHR && selectedAppraisal.status === "Approved" && (
-                    <div className="space-y-2 pt-1 border-t border-emerald-100">
-                      <div className="p-3 bg-emerald-50/90 border border-emerald-200 rounded-xl flex items-center gap-2.5">
-                        <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
-                        <div>
-                          <div className="text-[11px] font-black text-emerald-950 uppercase tracking-wide">
+                  {(isPrincipalOrHR || selectedAppraisal.formType === "principal") && (
+                    selectedAppraisal.status === "Approved" ? (
+                      <div className="space-y-2">
+                        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-2.5 text-center">
+                          <span className="text-[11px] font-bold text-emerald-800 flex items-center justify-center gap-1">
+                            <CheckCircle2 size={13} className="text-emerald-600" />
                             Appraisal Approved
-                          </div>
-                          <div className="text-[10px] text-emerald-700 font-medium leading-tight">
-                            Unlocked for Principal / HR — you can edit marks &amp; re-save anytime.
-                          </div>
+                          </span>
+                          <p className="text-[10px] text-emerald-700 mt-0.5 font-medium">
+                            {selectedAppraisal.formType === "principal"
+                              ? "Principal Appraisal Approved. You can update the score or review comments anytime."
+                              : "Unlocked for Principal: You can modify marks, ratings, or remarks and save updates anytime."}
+                          </p>
                         </div>
+                        <button
+                          onClick={() => handleReviewAction("Approved")}
+                          disabled={actioning}
+                          className="w-full py-2.5 bg-gradient-to-r from-purple-700 to-indigo-800 hover:from-purple-800 hover:to-indigo-900 text-white font-black rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-purple-100 cursor-pointer disabled:opacity-50"
+                        >
+                          {actioning ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Save Updated Marks
+                        </button>
+                        <button
+                          onClick={() => setCorrectionModalOpen(true)}
+                          disabled={actioning}
+                          className="w-full py-2 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        >
+                          <Undo2 size={13} /> Re-route for Correction
+                        </button>
                       </div>
-                      <button
-                        onClick={() => handleReviewAction("Approved")}
-                        disabled={actioning}
-                        className="w-full py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-800 hover:from-indigo-700 hover:to-indigo-900 text-white font-black rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-indigo-200 cursor-pointer disabled:opacity-50"
-                      >
-                        <Save size={14} /> {actioning ? "Saving..." : "Save Updated Marks"}
-                      </button>
-                      <button
-                        onClick={() => setCorrectionModalOpen(true)}
-                        disabled={actioning}
-                        className="w-full py-2 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
-                      >
-                        <Undo2 size={14} /> Re-route for Correction
-                      </button>
-                    </div>
+                    ) : (selectedAppraisal.status === "HOD_Approved" || selectedAppraisal.status === "Submitted" || selectedAppraisal.formType === "principal") ? (
+                      <>
+                        <button
+                          onClick={() => handleReviewAction("Approved")}
+                          disabled={actioning}
+                          className="w-full py-2.5 bg-gradient-to-r from-indigo-650 to-indigo-800 hover:from-indigo-700 hover:to-indigo-900 text-white font-black rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-indigo-100 cursor-pointer disabled:opacity-50"
+                        >
+                          <CheckCircle2 size={14} /> Finalize & Approve
+                        </button>
+                        <button
+                          onClick={() => setCorrectionModalOpen(true)}
+                          disabled={actioning}
+                          className="w-full py-2.5 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                        >
+                          <Undo2 size={14} /> Return for Correction
+                        </button>
+                      </>
+                    ) : null
                   )}
                 </div>
 
@@ -5352,7 +5610,14 @@ export default function AppraisalReviews() {
                       filteredAppraisals.map((app) => (
                         <tr key={app.id} className="hover:bg-zinc-50/40 transition-all">
                           <td className="p-4">
-                            <div className="font-bold text-slate-800">{app.facultyName}</div>
+                            <div className="font-bold text-slate-800 flex items-center gap-1.5">
+                              {app.formType === "principal" && (
+                                <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-800 text-[9px] font-black px-1.5 py-0.5 rounded shadow-2xs">
+                                  <Crown size={10} /> Principal
+                                </span>
+                              )}
+                              {app.facultyName}
+                            </div>
                             <div className="text-[10px] text-zinc-500">{app.facultyEmail}</div>
                           </td>
                           <td className="p-4">
@@ -5373,14 +5638,18 @@ export default function AppraisalReviews() {
                             </span>
                           </td>
                           <td className="p-4 text-center font-bold text-indigo-950">
-                            {app.hodReview?.grade ? (
+                            {app.formType === "principal" ? (
+                              <span className="text-[10px] text-zinc-400 font-medium italic">
+                                N/A (Executive)
+                              </span>
+                            ) : app.hodReview?.grade ? (
                               <span className="flex items-center justify-center gap-1">
                                 <Star size={10} className="fill-amber-400 text-amber-400" /> {app.hodReview.grade}
                               </span>
                             ) : (
                               <span className="text-zinc-300">-</span>
                             )}
-                            {(() => {
+                            {app.formType !== "principal" && (() => {
                               const attInfo = getAttitudeScoreInfo(app);
                               if (attInfo.hodScore > 0 || attInfo.totalScore > 0) {
                                 const scoreVal = attInfo.hodScore > 0 ? attInfo.hodScore : attInfo.totalScore;
@@ -5401,7 +5670,15 @@ export default function AppraisalReviews() {
                             })()}
                           </td>
                           <td className="p-4 text-center font-bold text-emerald-950">
-                            {(() => {
+                            {app.formType === "principal" ? (
+                              (app.managementReview?.score !== undefined || app.principalReview?.finalRating !== undefined || app.totalScore !== undefined) ? (
+                                <span className="inline-flex items-center justify-center gap-1 text-purple-700 bg-purple-50 px-2.5 py-1 rounded-full text-xs font-black border border-purple-200 shadow-sm">
+                                  <Star size={11} className="fill-amber-400 text-amber-400" /> {app.managementReview?.score ?? app.totalScore ?? app.principalReview?.finalRating} / 100
+                                </span>
+                              ) : (
+                                <span className="text-zinc-300">-</span>
+                              )
+                            ) : (() => {
                               const pRating = (app.principalReview?.finalRating !== undefined && app.principalReview?.finalRating !== null && app.principalReview?.finalRating !== "")
                                 ? app.principalReview.finalRating
                                 : (app.principalReview?.principalTotalScore !== undefined && app.principalReview?.principalTotalScore !== null && Number(app.principalReview?.principalTotalScore) > 0)
@@ -5969,7 +6246,7 @@ export default function AppraisalReviews() {
                         {viewingProof.isPdf ? "PDF Document" : viewingProof.isImage ? "Image" : "Document"}
                       </span>
                     </div>
-                    <span className="text-[10px] text-slate-300 font-semibold uppercase tracking-wider block">
+                    <span className="text-[10px] text-indigo-200 font-bold uppercase tracking-wider block">
                       Institutional Evidence Verification
                     </span>
                   </div>
@@ -6000,7 +6277,7 @@ export default function AppraisalReviews() {
                       setViewingProof(null);
                       setUseGoogleViewer(false);
                     }}
-                    className="w-8 h-8 rounded-xl bg-white/10 hover:bg-rose-500 hover:text-white text-slate-300 transition-all flex items-center justify-center cursor-pointer ml-1"
+                    className="w-8 h-8 rounded-xl bg-white/15 hover:bg-rose-500 text-white transition-all flex items-center justify-center cursor-pointer ml-1"
                     title="Close Preview"
                   >
                     <X size={16} />

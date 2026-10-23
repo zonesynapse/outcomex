@@ -5,6 +5,19 @@ import { collection, doc, onSnapshot, setDoc, getDoc, deleteDoc } from "firebase
 import { onAuthStateChanged } from "firebase/auth";
 import * as XLSX from "xlsx";
 import {
+  AreaChart,
+  Area,
+  BarChart,
+  Bar,
+  Cell,
+  ResponsiveContainer,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+  LabelList
+} from "recharts";
+import {
   BarChart3,
   Search,
   Download,
@@ -37,8 +50,10 @@ import {
   RotateCcw,
   BadgePercent,
   ArrowRight,
+  ArrowUpRight,
   Building2,
-  Trash2
+  Trash2,
+  Crown
 } from "lucide-react";
 import { isSameInstitution, normalizeInstitution, getSchoolShortName } from "../utils/appraisalScore";
 
@@ -171,6 +186,7 @@ export default function HRGrossAnalytics() {
   const [teacherAppraisals, setTeacherAppraisals] = useState([]);
   const [nonTeachingAppraisals, setNonTeachingAppraisals] = useState([]);
   const [hodAppraisals, setHodAppraisals] = useState([]);
+  const [principalAppraisals, setPrincipalAppraisals] = useState([]);
   const [usersMap, setUsersMap] = useState({});
   const [promotionsMap, setPromotionsMap] = useState({});
   const [salaryAdjustmentsMap, setSalaryAdjustmentsMap] = useState({});
@@ -289,6 +305,8 @@ export default function HRGrossAnalytics() {
 
   // Modal States
   const [selectedCandidate, setSelectedCandidate] = useState(null);
+  const [selectedAnalyticsCandidate, setSelectedAnalyticsCandidate] = useState(null);
+  const [analyticsSalaryViewMode, setAnalyticsSalaryViewMode] = useState("PM");
   const [uploadModalOpen, setUploadModalOpen] = useState(false);
   const [criteriaModalOpen, setCriteriaModalOpen] = useState(false);
   const [editingCriteria, setEditingCriteria] = useState(DEFAULT_INCREMENT_CRITERIA);
@@ -330,6 +348,12 @@ export default function HRGrossAnalytics() {
           uMap[eStr] = entry;
           uMap[eStr.toUpperCase()] = entry;
           uMap[eStr.toLowerCase()] = entry;
+        }
+        if (data.employeeId) {
+          const empStr = String(data.employeeId).trim();
+          uMap[empStr] = entry;
+          uMap[empStr.toUpperCase()] = entry;
+          uMap[empStr.toLowerCase()] = entry;
         }
         if (data.facultyId) {
           const fStr = String(data.facultyId).trim();
@@ -454,6 +478,18 @@ export default function HRGrossAnalytics() {
     }, (err) => console.error("Error loading HOD appraisals:", err));
     unsubs.push(unsubHOD);
 
+    // 9. Fetch Principal Appraisals
+    const unsubPrincipal = onSnapshot(collection(db, "principal_appraisals"), (snap) => {
+      const list = snap.docs.map((d) => ({
+        id: d.id,
+        collectionType: "principal",
+        ...d.data()
+      }));
+      setPrincipalAppraisals(list);
+      setLoading(false);
+    }, (err) => console.error("Error loading principal appraisals:", err));
+    unsubs.push(unsubPrincipal);
+
     return () => unsubs.forEach((u) => u && u());
   }, []);
 
@@ -497,7 +533,7 @@ export default function HRGrossAnalytics() {
 
   // Process and compute combined gross records
   const allRecords = useMemo(() => {
-    const rawList = [...facultyAppraisals, ...teacherAppraisals, ...nonTeachingAppraisals, ...hodAppraisals];
+    const rawList = [...facultyAppraisals, ...teacherAppraisals, ...nonTeachingAppraisals, ...hodAppraisals, ...principalAppraisals];
 
     return rawList.map((app, appIdx) => {
       // Find matching user from usersMap
@@ -516,7 +552,9 @@ export default function HRGrossAnalytics() {
         app.formData?.facultyEmail ? app.formData.facultyEmail.toLowerCase().trim() : null,
         app.formData?.staffEmail ? app.formData.staffEmail.toLowerCase().trim() : null,
         app.empId,
-        app.formData?.empId
+        app.formData?.empId,
+        app.employeeId,
+        app.formData?.employeeId
       ].filter(Boolean);
 
       let matchedUser = {};
@@ -600,15 +638,18 @@ export default function HRGrossAnalytics() {
         app.recommendedPromotion
       );
 
-      // Faculty Name resolution
+      const isPrincipal = app.formType === "principal" || app.collectionType === "principal";
+
+      // Faculty / Member Name resolution
       const facultyName = (
+        app.principalName ||
         app.facultyName ||
         app.formData?.name ||
         app.staffName ||
         app.hodName ||
         matchedUser.displayName ||
         matchedUser.facultyName ||
-        "Faculty Member"
+        (isPrincipal ? "Principal" : "Faculty Member")
       );
 
       // Designation resolution
@@ -617,7 +658,7 @@ export default function HRGrossAnalytics() {
         app.formData?.designation ||
         app.staffDesignation ||
         matchedUser.designation ||
-        "Faculty"
+        (isPrincipal ? "Principal" : "Faculty")
       );
 
       // Department resolution
@@ -628,7 +669,7 @@ export default function HRGrossAnalytics() {
         app.formData?.dept ||
         matchedUser.department ||
         matchedUser.dept ||
-        "General"
+        (isPrincipal ? "Administration" : "General")
       );
 
       // Institution resolution (e.g. 'CKSPK (Matric)', 'CKSPE (CBSE)', 'CKCOE', 'CKCET')
@@ -639,21 +680,42 @@ export default function HRGrossAnalytics() {
         app.formData?.school ||
         matchedUser.institution ||
         matchedUser.school ||
-        (app.collectionType === "teacher" ? "CKSPK (Matric)" : app.collectionType === "faculty" ? "CKCOE" : "")
+        (isPrincipal ? "CKCET" : app.collectionType === "teacher" ? "CKSPK (Matric)" : app.collectionType === "faculty" ? "CKCOE" : "")
       );
 
-      // Date of Joining (DOJ) resolution
-      const dateOfJoining = (
+      // Helper to cleanly extract a date string if val is a string, Firestore Timestamp, or Date
+      const extractDojString = (val) => {
+        if (!val) return "";
+        if (typeof val === "string") return val.trim();
+        if (val.toDate && typeof val.toDate === "function") {
+          return val.toDate().toISOString().split("T")[0];
+        }
+        if (val instanceof Date) {
+          return val.toISOString().split("T")[0];
+        }
+        return String(val).trim();
+      };
+
+      // Date of Joining (DOJ) resolution - supports Non-Teaching (dojSchool), Teachers (dojCollege/dojSchool), Faculty (dojCollege), and user profiles
+      const rawDoj = (
+        app.formData?.dojSchool ||
         app.formData?.dojCollege ||
         app.formData?.dateOfJoining ||
         app.formData?.doj ||
+        app.formData?.dojPresentPost ||
+        app.dojSchool ||
         app.dojCollege ||
         app.dateOfJoining ||
         app.doj ||
+        app.dojPresentPost ||
         matchedUser.dateOfJoining ||
+        matchedUser.doj ||
+        matchedUser.dojSchool ||
         matchedUser.dojCollege ||
-        "-"
+        matchedUser.dojPresentPost ||
+        ""
       );
+      const dateOfJoining = extractDojString(rawDoj) || "-";
 
       // 1. Appraisal Review Form Mark (out of 100)
       // The Principal's explicit Final Rating entered in AppraisalReviews takes highest priority
@@ -661,7 +723,14 @@ export default function HRGrossAnalytics() {
       const rawFinalRating = app.principalReview?.finalRating ?? app.principalReview?.rating ?? app.performanceEvaluation?.finalRating ?? app.finalRating;
       const hasFinalRating = rawFinalRating !== undefined && rawFinalRating !== null && rawFinalRating !== "" && !isNaN(Number(rawFinalRating));
 
-      if (hasFinalRating) {
+      if (isPrincipal) {
+        const principalScore = app.managementReview?.score ?? app.totalScore ?? app.principalReview?.finalRating ?? app.grossMark ?? (hasFinalRating ? rawFinalRating : null);
+        if (principalScore !== undefined && principalScore !== null && !isNaN(Number(principalScore))) {
+          appraisalMark = Number(principalScore);
+        } else {
+          appraisalMark = 100;
+        }
+      } else if (hasFinalRating) {
         // Principal's entered Final Rating (e.g. 85 in AppraisalReviews)
         appraisalMark = Number(rawFinalRating);
       } else if (app.principalReview?.principalTotalScore !== undefined && app.principalReview?.principalTotalScore !== null && !isNaN(Number(app.principalReview.principalTotalScore))) {
@@ -713,10 +782,10 @@ export default function HRGrossAnalytics() {
             : attitudePercentage)
         : 0;
 
-      // 3. Mark = (0.6 * appraisal review form mark) + (0.4 * attitude form mark)
-      const weightedAppraisal = 0.6 * appraisalMark;
-      const weightedAttitude = 0.4 * attitudeMarkNormalized;
-      const grossMark = Number((weightedAppraisal + weightedAttitude).toFixed(2));
+      // 3. Mark Computation: For Principal executive rubric, gross mark is 100% of the evaluated appraisal score.
+      const weightedAppraisal = isPrincipal ? appraisalMark : 0.6 * appraisalMark;
+      const weightedAttitude = isPrincipal ? 0 : 0.4 * attitudeMarkNormalized;
+      const grossMark = isPrincipal ? Number(appraisalMark.toFixed(2)) : Number((weightedAppraisal + weightedAttitude).toFixed(2));
 
       // 4. Performance Tier & Increment Percentage Evaluation (Criteria Matrix)
       const tier = getCandidateTier(grossMark, criteriaConfig);
@@ -813,10 +882,12 @@ export default function HRGrossAnalytics() {
         incrementAmount: totalIncrementAmount, // Backward-compat
         totalIncrementAmount,   // Col U: INCREMENT AMOUNT
         totalIncrementAmountPA,
-        isPrincipalApproved: app.status === "Approved" || Boolean(app.principalReview)
+        isPrincipalApproved: isPrincipal
+          ? (app.status === "Approved" || Boolean(app.managementReview) || Boolean(app.principalReview))
+          : (app.status === "Approved" || Boolean(app.principalReview))
       };
     });
-  }, [facultyAppraisals, teacherAppraisals, nonTeachingAppraisals, hodAppraisals, usersMap, salariesMap, criteriaConfig, promotionsMap, salaryAdjustmentsMap]);
+  }, [facultyAppraisals, teacherAppraisals, nonTeachingAppraisals, hodAppraisals, principalAppraisals, usersMap, salariesMap, criteriaConfig, promotionsMap, salaryAdjustmentsMap]);
 
   const isSuperAdmin = (currentUser?.email === "obe@ckcet.edu.in" || userRole === "Admin" || userRole === "Super Admin") && (!userInstitution || userInstitution === "ALL");
   const isDeptRole = (userRole || "").toLowerCase().includes("hod") || (userRole || "").toLowerCase().includes("coordinator");
@@ -870,6 +941,7 @@ export default function HRGrossAnalytics() {
         if (selectedType === "Faculty" && rec.collectionType !== "faculty" && rec.collectionType !== "teacher") return false;
         if (selectedType === "Non-Teaching" && rec.collectionType !== "non_teaching") return false;
         if (selectedType === "HOD" && rec.collectionType !== "hod") return false;
+        if (selectedType === "Principal" && rec.collectionType !== "principal") return false;
       }
 
       // Academic Year Filter
@@ -974,6 +1046,63 @@ export default function HRGrossAnalytics() {
       totalIncrementPA
     };
   }, [filteredRecords]);
+
+  // Dynamic Chart & Progression Analytics for selected candidate in analytics modal
+  const selectedCandidateAnalyticsData = useMemo(() => {
+    if (!selectedAnalyticsCandidate) return null;
+
+    const history = selectedAnalyticsCandidate.salaryHistory || {};
+    let historyEntries = Object.entries(history);
+
+    if (historyEntries.length === 0 && selectedAnalyticsCandidate.grossPM) {
+      historyEntries = [["Current", Number(selectedAnalyticsCandidate.grossPM)]];
+    }
+
+    // Sort years chronologically
+    historyEntries.sort((a, b) => a[0].localeCompare(b[0]));
+
+    const chartData = historyEntries.map(([yr, val], idx, arr) => {
+      const displayYear = formatAnalyticsYear(yr);
+      const numVal = Number(val) || 0;
+      const prevVal = idx > 0 ? Number(arr[idx - 1][1]) || 0 : null;
+      const incPM = prevVal !== null ? numVal - prevVal : 0;
+      const incPct = prevVal && prevVal > 0 ? ((incPM / prevVal) * 100).toFixed(1) : "0.0";
+      const incPctNum = Number(incPct) || 0;
+      return {
+        year: displayYear,
+        rawYear: yr,
+        salaryPM: numVal,
+        salaryPA: numVal * 12,
+        incrementPM: incPM,
+        incrementPA: incPM * 12,
+        growthPct: incPct,
+        growthPctNum: incPctNum,
+        growthPctFormatted: idx === 0 ? "Base" : `+${incPct}%`,
+        isBase: idx === 0,
+        isLatest: idx === arr.length - 1
+      };
+    });
+
+    const firstVal = chartData.length > 0 ? chartData[0].salaryPM : 0;
+    const lastVal = chartData.length > 0 ? chartData[chartData.length - 1].salaryPM : (selectedAnalyticsCandidate.grossPM || 0);
+    const totalGrowth = lastVal - firstVal;
+    const totalGrowthPct = firstVal > 0 ? ((totalGrowth / firstVal) * 100).toFixed(1) : "0.0";
+
+    const validIncrements = chartData.filter((d, i) => i > 0 && d.growthPctNum > 0);
+    const avgGrowthPct = validIncrements.length > 0
+      ? (validIncrements.reduce((acc, c) => acc + c.growthPctNum, 0) / validIncrements.length).toFixed(1)
+      : "0.0";
+
+    return {
+      chartData,
+      currentPM: lastVal,
+      currentPA: lastVal * 12,
+      totalGrowth,
+      totalGrowthPct,
+      avgGrowthPct,
+      hasMultiYear: chartData.length > 1
+    };
+  }, [selectedAnalyticsCandidate]);
 
   // Sort handler
   const handleSort = (field) => {
@@ -1481,7 +1610,7 @@ export default function HRGrossAnalytics() {
                 <BarChart3 className="text-blue-400 stroke-[2.5]" size={30} />
                 Gross Analytics & Increment Engine
               </h1>
-              <p className="text-zinc-300 text-xs sm:text-sm mt-1.5 max-w-2xl leading-relaxed">
+              <p className="text-blue-100/90 text-xs sm:text-sm mt-1.5 max-w-2xl leading-relaxed">
                 Consolidated performance metrics for Principal-approved appraisals calculating monthly gross salary
                 increment amounts based on the institutional appraisal score matrix.
               </p>
@@ -1497,7 +1626,7 @@ export default function HRGrossAnalytics() {
                 <div className="text-sm font-extrabold text-white tracking-wide font-mono">
                   Gross Mark = <span className="text-sky-300">(0.6 × Appraisal)</span> + <span className="text-emerald-300">(0.4 × Attitude)</span>
                 </div>
-                <div className="text-[10px] text-zinc-300 mt-0.5">
+                <div className="text-[10px] text-slate-200 mt-0.5">
                   Increment % derived from Gross Mark slab • Increment ₹ = Gross PM × Increment %
                 </div>
               </div>
@@ -1785,6 +1914,7 @@ export default function HRGrossAnalytics() {
                 <option value="Faculty">Teaching Faculty</option>
                 <option value="Non-Teaching">Non-Teaching Staff</option>
                 <option value="HOD">Head of Department (HOD)</option>
+                <option value="Principal">Principal</option>
               </select>
             </div>
 
@@ -2057,7 +2187,11 @@ export default function HRGrossAnalytics() {
                           <div className="text-[10px] text-zinc-400 truncate max-w-[180px]">{rec.email}</div>
                         )}
                         <div className="text-[10px] text-indigo-600 font-bold uppercase tracking-wider mt-0.5">
-                          {rec.collectionType === "teacher"
+                          {rec.collectionType === "principal" ? (
+                            <span className="text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 inline-flex items-center gap-1 font-black">
+                              <Crown size={10} /> Principal
+                            </span>
+                          ) : rec.collectionType === "teacher"
                             ? "School Teacher"
                             : rec.collectionType === "faculty"
                             ? "Teaching Faculty"
@@ -2109,27 +2243,39 @@ export default function HRGrossAnalytics() {
                         )}
                       </td>
 
-                      {/* 6. Appraisal Review Form Mark (60%) */}
+                      {/* 6. Appraisal Review Form Mark */}
                       <td className="p-3.5 text-center bg-blue-50/20">
                         <div className="font-black text-blue-950 text-xs">
                           {rec.appraisalMark} <span className="text-[10px] font-bold text-blue-500">/ 100</span>
                         </div>
                         <div className="text-[10px] font-bold text-blue-700 mt-0.5">
-                          60% = <strong className="text-blue-900">{rec.weightedAppraisal} pts</strong>
+                          {rec.collectionType === "principal" ? (
+                            <strong className="text-purple-900 bg-purple-50 px-1.5 py-0.2 rounded border border-purple-200">100% Executive</strong>
+                          ) : (
+                            <>60% = <strong className="text-blue-900">{rec.weightedAppraisal} pts</strong></>
+                          )}
                         </div>
                       </td>
 
-                      {/* 7. Attitude Form Mark (40%) */}
+                      {/* 7. Attitude Form Mark */}
                       <td className="p-3.5 text-center bg-emerald-50/20">
-                        <div className="font-black text-emerald-950 text-xs">
-                          {rec.attitudeMarkNormalized}%
-                          <span className="text-[10px] font-bold text-zinc-400 ml-1">
-                            ({rec.attitudeTotalScore}/{rec.attitudeMaxScore})
-                          </span>
-                        </div>
-                        <div className="text-[10px] font-bold text-emerald-700 mt-0.5">
-                          40% = <strong className="text-emerald-900">{rec.weightedAttitude} pts</strong>
-                        </div>
+                        {rec.collectionType === "principal" ? (
+                          <div className="text-[10px] text-zinc-400 font-medium italic">
+                            N/A (Direct)
+                          </div>
+                        ) : (
+                          <>
+                            <div className="font-black text-emerald-950 text-xs">
+                              {rec.attitudeMarkNormalized}%
+                              <span className="text-[10px] font-bold text-zinc-400 ml-1">
+                                ({rec.attitudeTotalScore}/{rec.attitudeMaxScore})
+                              </span>
+                            </div>
+                            <div className="text-[10px] font-bold text-emerald-700 mt-0.5">
+                              40% = <strong className="text-emerald-900">{rec.weightedAttitude} pts</strong>
+                            </div>
+                          </>
+                        )}
                       </td>
 
                       {/* 8. Gross Total Mark */}
@@ -2267,15 +2413,27 @@ export default function HRGrossAnalytics() {
                         )}
                       </td>
 
-                      {/* 19. Action Button */}
+                      {/* 19. Action Buttons: Analytics + Breakdown */}
                       <td className="p-3.5 text-center">
-                        <button
-                          onClick={() => setSelectedCandidate(rec)}
-                          className="px-3 py-1.5 bg-[#101b38] hover:bg-[#1c356e] text-white rounded-lg text-[10px] font-bold tracking-wide uppercase transition-all inline-flex items-center gap-1 cursor-pointer shadow-xs"
-                          title="View Complete Salary Revision Breakdown"
-                        >
-                          <Eye size={12} /> Breakdown
-                        </button>
+                        <div className="flex items-center justify-center gap-1.5 whitespace-nowrap">
+                          <button
+                            onClick={() => {
+                              setSelectedAnalyticsCandidate(rec);
+                              setAnalyticsSalaryViewMode("PM");
+                            }}
+                            className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-bold tracking-wide uppercase transition-all inline-flex items-center gap-1 cursor-pointer shadow-xs"
+                            title="View Personal Salary Progression & Dual Charts"
+                          >
+                            <TrendingUp size={12} /> Analytics
+                          </button>
+                          <button
+                            onClick={() => setSelectedCandidate(rec)}
+                            className="px-2.5 py-1.5 bg-[#101b38] hover:bg-[#1c356e] text-white rounded-lg text-[10px] font-bold tracking-wide uppercase transition-all inline-flex items-center gap-1 cursor-pointer shadow-xs"
+                            title="View Complete Salary Revision Breakdown"
+                          >
+                            <Eye size={12} /> Breakdown
+                          </button>
+                        </div>
                       </td>
 
                     </tr>
@@ -2738,15 +2896,27 @@ export default function HRGrossAnalytics() {
                   <div className="flex items-center gap-2 text-amber-900 font-extrabold text-xs">
                     <Calculator size={15} /> Formula Weightage Computation:
                   </div>
-                  <div className="font-mono text-xs bg-white p-3 rounded-xl border border-amber-200 text-slate-800 space-y-1">
-                    <div>Gross Mark = (0.60 × Appraisal Review Mark) + (0.40 × Attitude Form Mark)</div>
-                    <div className="text-amber-800 font-bold">
-                      Gross Mark = (0.60 × {selectedCandidate.appraisalMark}) + (0.40 × {selectedCandidate.attitudeMarkNormalized})
+                  {selectedCandidate.collectionType === "principal" ? (
+                    <div className="font-mono text-xs bg-white p-3 rounded-xl border border-amber-200 text-slate-800 space-y-1">
+                      <div>Executive Leadership Rubric: Gross Mark = Management Evaluated Mark (100% Direct)</div>
+                      <div className="text-amber-800 font-bold">
+                        Management Review Score = {selectedCandidate.appraisalMark} / 100
+                      </div>
+                      <div className="text-emerald-700 font-black text-sm pt-1 border-t border-zinc-100">
+                        Gross Mark = <span className="underline">{selectedCandidate.grossMark} / 100</span>
+                      </div>
                     </div>
-                    <div className="text-emerald-700 font-black text-sm pt-1 border-t border-zinc-100">
-                      = {selectedCandidate.weightedAppraisal} + {selectedCandidate.weightedAttitude} = <span className="underline">{selectedCandidate.grossMark} / 100</span>
+                  ) : (
+                    <div className="font-mono text-xs bg-white p-3 rounded-xl border border-amber-200 text-slate-800 space-y-1">
+                      <div>Gross Mark = (0.60 × Appraisal Review Mark) + (0.40 × Attitude Form Mark)</div>
+                      <div className="text-amber-800 font-bold">
+                        Gross Mark = (0.60 × {selectedCandidate.appraisalMark}) + (0.40 × {selectedCandidate.attitudeMarkNormalized})
+                      </div>
+                      <div className="text-emerald-700 font-black text-sm pt-1 border-t border-zinc-100">
+                        = {selectedCandidate.weightedAppraisal} + {selectedCandidate.weightedAttitude} = <span className="underline">{selectedCandidate.grossMark} / 100</span>
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
 
                 {/* Score Breakdown Comparison Cards */}
@@ -2964,6 +3134,451 @@ export default function HRGrossAnalytics() {
                   className="px-5 py-2.5 rounded-xl bg-[#101b38] hover:bg-[#162752] text-white text-xs font-bold transition-all cursor-pointer shadow-sm"
                 >
                   Close Scorecard
+                </button>
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {/* Candidate Compensation Progression & Analytics Modal */}
+        {selectedAnalyticsCandidate && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 overflow-y-auto animate-fadeIn">
+            <div className="bg-white rounded-3xl w-full max-w-5xl border border-zinc-200 shadow-2xl overflow-hidden flex flex-col my-6 max-h-[92vh]">
+
+              {/* Modal Header */}
+              <div className="bg-gradient-to-r from-[#101b38] to-[#1c356e] p-6 text-white flex items-center justify-between gap-4 flex-wrap">
+                <div>
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-black uppercase tracking-wider mb-1">
+                    <TrendingUp size={12} /> Compensation Analytics & Progression
+                  </div>
+                  <h3 className="text-xl font-black">{selectedAnalyticsCandidate.facultyName}</h3>
+                  <div className="flex items-center gap-2 mt-1 text-xs text-zinc-300 flex-wrap">
+                    <span className="bg-white/10 px-2 py-0.5 rounded font-mono font-bold text-white">
+                      ID: {selectedAnalyticsCandidate.facultyId}
+                    </span>
+                    <span>•</span>
+                    <span>{selectedAnalyticsCandidate.designation}</span>
+                    <span>•</span>
+                    <span className="text-amber-300 font-semibold">{selectedAnalyticsCandidate.department}</span>
+                    {selectedAnalyticsCandidate.institution && (
+                      <>
+                        <span>•</span>
+                        <span className="text-amber-300 font-bold bg-amber-400/10 border border-amber-300/20 px-2 py-0.5 rounded-md">
+                          {getSchoolShortName(selectedAnalyticsCandidate.institution)}
+                        </span>
+                      </>
+                    )}
+                    {selectedAnalyticsCandidate.dateOfJoining && (
+                      <>
+                        <span>•</span>
+                        <span>Joined: {selectedAnalyticsCandidate.dateOfJoining}</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  {/* View Mode Switcher: Monthly (PM) vs Annual (PA) */}
+                  <div className="flex items-center bg-white/10 p-1 rounded-xl border border-white/15">
+                    <button
+                      onClick={() => setAnalyticsSalaryViewMode("PM")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        analyticsSalaryViewMode === "PM"
+                          ? "bg-white text-slate-900 shadow-sm"
+                          : "text-zinc-200 hover:text-white"
+                      }`}
+                    >
+                      Monthly (PM)
+                    </button>
+                    <button
+                      onClick={() => setAnalyticsSalaryViewMode("PA")}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        analyticsSalaryViewMode === "PA"
+                          ? "bg-white text-slate-900 shadow-sm"
+                          : "text-zinc-200 hover:text-white"
+                      }`}
+                    >
+                      Annual (PA)
+                    </button>
+                  </div>
+
+                  <button
+                    onClick={() => setSelectedAnalyticsCandidate(null)}
+                    className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors cursor-pointer"
+                    title="Close"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Modal Body */}
+              <div className="p-6 overflow-y-auto space-y-6 flex-1">
+
+                {/* Appraisal Evaluation & Increment Proposal Ribbon */}
+                <div className="bg-gradient-to-r from-slate-900 via-[#101b38] to-[#1c356e] text-white p-4 sm:p-5 rounded-2xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-sm border border-slate-700/60">
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider block">Institutional Performance</span>
+                      <div className="text-2xl font-black text-amber-300">
+                        {selectedAnalyticsCandidate.grossMark} <span className="text-xs text-zinc-400">/ 100</span>
+                      </div>
+                    </div>
+                    <div className="h-8 w-px bg-white/15 hidden sm:block" />
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider block">Evaluated Tier</span>
+                      <span className={`inline-block mt-0.5 px-2.5 py-0.5 rounded-full text-[11px] font-black uppercase tracking-wider ${selectedAnalyticsCandidate.tierBadgeColor}`}>
+                        {selectedAnalyticsCandidate.tierCode} ({selectedAnalyticsCandidate.tierLabel})
+                      </span>
+                    </div>
+                    <div className="h-8 w-px bg-white/15 hidden sm:block" />
+                    <div>
+                      <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider block">Proposed Increment</span>
+                      <span className="text-base font-black font-mono text-emerald-400">
+                        +{selectedAnalyticsCandidate.totalIncrementPct}%
+                      </span>
+                      {selectedAnalyticsCandidate.isPromoted && (
+                        <span className="text-[10px] text-amber-300 font-bold ml-1.5">(Promoted)</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {selectedAnalyticsCandidate.revisedGrossPM !== null && (
+                    <div className="bg-white/10 border border-white/15 px-4 py-2.5 rounded-xl text-right">
+                      <span className="text-[10px] uppercase font-bold text-zinc-300 tracking-wider block">
+                        Proposed Revised {analyticsSalaryViewMode === "PM" ? "Gross PM" : "Gross PA"}
+                      </span>
+                      <div className="text-lg font-black font-mono text-emerald-300">
+                        ₹{Number(analyticsSalaryViewMode === "PM" ? selectedAnalyticsCandidate.revisedGrossPM : selectedAnalyticsCandidate.revisedGrossPA).toLocaleString("en-IN")}
+                      </div>
+                      <span className="text-[10px] text-emerald-400 font-bold">
+                        +₹{Number(analyticsSalaryViewMode === "PM" ? selectedAnalyticsCandidate.totalIncrementAmount : selectedAnalyticsCandidate.totalIncrementAmountPA).toLocaleString("en-IN")} ({selectedAnalyticsCandidate.totalIncrementPct}%)
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* If data exists */}
+                {selectedCandidateAnalyticsData && selectedCandidateAnalyticsData.chartData.length > 0 ? (
+                  <>
+                    {/* KPI Metric Ribbon */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
+                      <div className="bg-zinc-50/80 p-4 rounded-2xl border border-zinc-200/80">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block">
+                          Current Gross (PM)
+                        </span>
+                        <p className="text-lg md:text-xl font-black font-mono text-slate-800 mt-1">
+                          ₹{Number(selectedCandidateAnalyticsData.currentPM).toLocaleString("en-IN")}
+                        </p>
+                        <span className="text-[10px] text-zinc-500 font-medium">Monthly baseline compensation</span>
+                      </div>
+
+                      <div className="bg-zinc-50/80 p-4 rounded-2xl border border-zinc-200/80">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block">
+                          Annualized Gross (PA)
+                        </span>
+                        <p className="text-lg md:text-xl font-black font-mono text-emerald-800 mt-1">
+                          ₹{Number(selectedCandidateAnalyticsData.currentPA).toLocaleString("en-IN")}
+                        </p>
+                        <span className="text-[10px] text-zinc-500 font-medium">Annual gross outlay</span>
+                      </div>
+
+                      <div className="bg-zinc-50/80 p-4 rounded-2xl border border-zinc-200/80">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block">
+                          Total Growth (Timeline)
+                        </span>
+                        <p className="text-lg md:text-xl font-black font-mono text-indigo-700 mt-1 flex items-center gap-1">
+                          {selectedCandidateAnalyticsData.totalGrowth >= 0 ? "+" : ""}₹{Number(analyticsSalaryViewMode === "PM" ? selectedCandidateAnalyticsData.totalGrowth : selectedCandidateAnalyticsData.totalGrowth * 12).toLocaleString("en-IN")}
+                          <ArrowUpRight size={16} className="text-indigo-600" />
+                        </p>
+                        <span className="text-[10px] text-zinc-500 font-medium">Over recorded timeline</span>
+                      </div>
+
+                      <div className="bg-zinc-50/80 p-4 rounded-2xl border border-zinc-200/80">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block">
+                          Overall Increment %
+                        </span>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-lg md:text-xl font-black font-mono text-purple-700">
+                            +{selectedCandidateAnalyticsData.totalGrowthPct}%
+                          </span>
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 font-bold">
+                            {selectedCandidateAnalyticsData.chartData.length} Years
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-zinc-500 font-medium">Cumulative growth</span>
+                      </div>
+                    </div>
+
+                    {/* Interactive Analytics Dual-Chart Grid: Left (Line Graph) + Right (Bar Chart) */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+                      {/* Left Card: Historical Compensation Line Graph */}
+                      <div className="bg-gradient-to-b from-zinc-50/60 to-white border border-zinc-200/70 rounded-2xl p-4 md:p-6 flex flex-col justify-between shadow-xs">
+                        <div>
+                          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                            <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
+                              <TrendingUp size={16} className="text-emerald-600" />
+                              Historical Compensation ({analyticsSalaryViewMode === "PM" ? "Gross Per Month" : "Gross Per Annum"})
+                            </div>
+                            <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">
+                              <span className="w-5 h-0.5 bg-emerald-600 inline-block rounded-full" />
+                              <span className="w-2 h-2 rounded-full bg-emerald-600 inline-block -ml-2" />
+                              <span>Salary Trajectory</span>
+                            </div>
+                          </div>
+
+                          <div className="w-full h-64 md:h-72">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <AreaChart
+                                data={selectedCandidateAnalyticsData.chartData}
+                                margin={{ top: 20, right: 20, left: -5, bottom: 20 }}
+                              >
+                                <defs>
+                                  <linearGradient id="hrPortalSalaryLineGrad" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="5%" stopColor="#059669" stopOpacity={0.25} />
+                                    <stop offset="95%" stopColor="#059669" stopOpacity={0.0} />
+                                  </linearGradient>
+                                </defs>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e4e4e7" />
+                                <XAxis
+                                  dataKey="year"
+                                  tickLine={false}
+                                  axisLine={{ stroke: "#e4e4e7" }}
+                                  tick={{ fill: "#52525b", fontSize: 11, fontWeight: 600 }}
+                                />
+                                <YAxis
+                                  tickLine={false}
+                                  axisLine={{ stroke: "#e4e4e7" }}
+                                  tick={{ fill: "#71717a", fontSize: 10 }}
+                                  tickFormatter={(val) => `₹${(val / 1000).toFixed(0)}k`}
+                                  domain={['auto', 'auto']}
+                                />
+                                <Tooltip
+                                  content={({ active, payload }) => {
+                                    if (!active || !payload || !payload.length) return null;
+                                    const d = payload[0].payload;
+                                    const displayVal = analyticsSalaryViewMode === "PM" ? d.salaryPM : d.salaryPA;
+                                    return (
+                                      <div className="bg-slate-900 text-white text-xs p-3 rounded-xl shadow-xl border border-slate-700 space-y-1">
+                                        <div className="font-bold text-amber-300 text-[11px] uppercase tracking-wider">{d.year}</div>
+                                        <div className="text-sm font-black font-mono">
+                                          ₹{Number(displayVal).toLocaleString("en-IN")} {analyticsSalaryViewMode === "PM" ? "PM" : "PA"}
+                                        </div>
+                                        {d.incrementPM > 0 && (
+                                          <div className="text-[10px] text-emerald-400 font-semibold pt-1 border-t border-slate-800">
+                                            YoY Increment: +₹{Number(analyticsSalaryViewMode === "PM" ? d.incrementPM : d.incrementPA).toLocaleString("en-IN")} (+{d.growthPct}%)
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  }}
+                                />
+                                <Area
+                                  type="monotone"
+                                  dataKey={analyticsSalaryViewMode === "PM" ? "salaryPM" : "salaryPA"}
+                                  stroke="#059669"
+                                  strokeWidth={3.5}
+                                  fillOpacity={1}
+                                  fill="url(#hrPortalSalaryLineGrad)"
+                                  dot={{ r: 5, fill: "#059669", stroke: "#ffffff", strokeWidth: 2.5 }}
+                                  activeDot={{ r: 8, fill: "#047857", stroke: "#ffffff", strokeWidth: 3 }}
+                                />
+                              </AreaChart>
+                            </ResponsiveContainer>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right Card: Year-by-Year Increment Growth Rate (%) Bar Chart */}
+                      <div className="bg-gradient-to-b from-zinc-50/60 to-white border border-zinc-200/70 rounded-2xl p-4 md:p-6 flex flex-col justify-between shadow-xs">
+                        <div>
+                          <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                            <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
+                              <BarChart3 size={16} className="text-indigo-600" />
+                              Year-by-Year Increment Growth Rate (%)
+                            </div>
+                            <div className="flex items-center gap-2">
+                              {Number(selectedCandidateAnalyticsData.avgGrowthPct) > 0 && (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                  Avg: +{selectedCandidateAnalyticsData.avgGrowthPct}%
+                                </span>
+                              )}
+                              <div className="flex items-center gap-1.5 text-[11px] text-zinc-500">
+                                <span className="w-2.5 h-2.5 rounded-sm bg-indigo-600 inline-block" />
+                                <span>YoY % Growth</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="w-full h-64 md:h-72">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <BarChart
+                                data={selectedCandidateAnalyticsData.chartData}
+                                margin={{ top: 25, right: 20, left: -10, bottom: 20 }}
+                              >
+                                <defs>
+                                  <linearGradient id="hrPortalIncrementBarGrad" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="0%" stopColor="#6366f1" stopOpacity={0.95} />
+                                    <stop offset="100%" stopColor="#4f46e5" stopOpacity={0.8} />
+                                  </linearGradient>
+                                  <linearGradient id="hrPortalIncrementBarGradActive" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="0%" stopColor="#10b981" stopOpacity={0.95} />
+                                    <stop offset="100%" stopColor="#059669" stopOpacity={0.85} />
+                                  </linearGradient>
+                                </defs>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e4e4e7" />
+                                <XAxis
+                                  dataKey="year"
+                                  tickLine={false}
+                                  axisLine={{ stroke: "#e4e4e7" }}
+                                  tick={{ fill: "#52525b", fontSize: 11, fontWeight: 600 }}
+                                />
+                                <YAxis
+                                  tickLine={false}
+                                  axisLine={{ stroke: "#e4e4e7" }}
+                                  tick={{ fill: "#71717a", fontSize: 10 }}
+                                  tickFormatter={(val) => `${val}%`}
+                                  domain={[0, (dataMax) => Math.max(12, Math.ceil(dataMax + 2))]}
+                                />
+                                <Tooltip
+                                  content={({ active, payload }) => {
+                                    if (!active || !payload || !payload.length) return null;
+                                    const d = payload[0].payload;
+                                    return (
+                                      <div className="bg-slate-900 text-white text-xs p-3 rounded-xl shadow-xl border border-slate-700 space-y-1">
+                                        <div className="font-bold text-indigo-300 text-[11px] uppercase tracking-wider">{d.year}</div>
+                                        {d.isBase ? (
+                                          <div className="text-amber-300 font-bold text-xs">
+                                            Baseline Reference Year
+                                          </div>
+                                        ) : (
+                                          <div className="text-sm font-black font-mono text-emerald-400">
+                                            +{d.growthPct}% Increment
+                                          </div>
+                                        )}
+                                        <div className="text-[10px] text-zinc-300 pt-1 border-t border-slate-800">
+                                          {d.isBase ? (
+                                            <span>Base Gross: ₹{Number(analyticsSalaryViewMode === "PM" ? d.salaryPM : d.salaryPA).toLocaleString("en-IN")} {analyticsSalaryViewMode}</span>
+                                          ) : (
+                                            <span>
+                                              Added Outlay: +₹{Number(analyticsSalaryViewMode === "PM" ? d.incrementPM : d.incrementPA).toLocaleString("en-IN")} {analyticsSalaryViewMode}
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    );
+                                  }}
+                                />
+                                <Bar
+                                  dataKey="growthPctNum"
+                                  radius={[6, 6, 0, 0]}
+                                  maxBarSize={44}
+                                >
+                                  <LabelList
+                                    dataKey="growthPctFormatted"
+                                    position="top"
+                                    fill="#4338ca"
+                                    fontSize={11}
+                                    fontWeight={700}
+                                    formatter={(val) => val === "Base" ? "—" : val}
+                                  />
+                                  {selectedCandidateAnalyticsData.chartData.map((entry, index) => (
+                                    <Cell
+                                      key={`hr-portal-increment-bar-${index}`}
+                                      fill={
+                                        entry.isBase
+                                          ? "#e2e8f0"
+                                          : index === selectedCandidateAnalyticsData.chartData.length - 1
+                                          ? "url(#hrPortalIncrementBarGradActive)"
+                                          : "url(#hrPortalIncrementBarGrad)"
+                                      }
+                                    />
+                                  ))}
+                                </Bar>
+                              </BarChart>
+                            </ResponsiveContainer>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Year-by-Year Progression Timeline Cards */}
+                    <div>
+                      <div className="text-xs font-bold text-slate-800 mb-2.5 flex items-center gap-1.5">
+                        <Calendar size={14} className="text-slate-500" />
+                        Multi-Year Historical Compensation Progression Cards
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                        {selectedCandidateAnalyticsData.chartData.map((item, idx) => (
+                          <div
+                            key={item.rawYear || item.year}
+                            className={`p-3.5 rounded-2xl border transition-all ${
+                              idx === selectedCandidateAnalyticsData.chartData.length - 1
+                                ? "bg-emerald-50/50 border-emerald-200"
+                                : "bg-zinc-50/70 border-zinc-200/80"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between text-zinc-500 text-[10px] font-bold uppercase tracking-wider mb-1">
+                              <span>{item.year}</span>
+                              {idx === selectedCandidateAnalyticsData.chartData.length - 1 && (
+                                <span className="bg-emerald-200 text-emerald-900 px-1.5 py-0.5 rounded text-[9px] font-black">
+                                  Active Year
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-sm font-black font-mono text-slate-800">
+                              ₹{Number(analyticsSalaryViewMode === "PM" ? item.salaryPM : item.salaryPA).toLocaleString("en-IN")}
+                              <span className="text-[10px] text-zinc-400 font-semibold ml-1">
+                                {analyticsSalaryViewMode === "PM" ? "PM" : "PA"}
+                              </span>
+                            </div>
+                            {idx > 0 && item.incrementPM > 0 && (
+                              <div className="text-[10px] text-emerald-600 font-bold mt-1 flex items-center gap-1">
+                                <ArrowUpRight size={12} />
+                                +₹{Number(analyticsSalaryViewMode === "PM" ? item.incrementPM : item.incrementPA).toLocaleString("en-IN")} ({item.growthPct}%)
+                              </div>
+                            )}
+                            {idx === 0 && (
+                              <div className="text-[10px] text-zinc-400 font-medium mt-1">
+                                Baseline salary
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="p-8 text-center bg-zinc-50 rounded-2xl border border-dashed border-zinc-300">
+                    <AlertCircle size={36} className="mx-auto text-amber-500 mb-2" />
+                    <p className="text-sm font-bold text-slate-700">No Historical Salary Data Recorded</p>
+                    <p className="text-xs text-zinc-400 mt-1 max-w-md mx-auto">
+                      Salary figures have not yet been uploaded for this member ({selectedAnalyticsCandidate.facultyId}). Upload the multi-year Excel template above to visualize their progression timeline and increment graphs.
+                    </p>
+                  </div>
+                )}
+
+              </div>
+
+              {/* Modal Footer */}
+              <div className="bg-zinc-50 border-t border-zinc-200 px-6 py-4 flex items-center justify-between flex-wrap gap-2">
+                <button
+                  onClick={() => {
+                    const cand = selectedAnalyticsCandidate;
+                    setSelectedAnalyticsCandidate(null);
+                    setSelectedCandidate(cand);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold transition-all cursor-pointer inline-flex items-center gap-1.5 border border-slate-300"
+                >
+                  <Eye size={13} /> View Full Scorecard Breakdown
+                </button>
+                <button
+                  onClick={() => setSelectedAnalyticsCandidate(null)}
+                  className="px-5 py-2.5 rounded-xl bg-[#101b38] hover:bg-[#162752] text-white text-xs font-bold transition-all cursor-pointer shadow-sm"
+                >
+                  Close Analytics
                 </button>
               </div>
 

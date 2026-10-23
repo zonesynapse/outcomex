@@ -3699,7 +3699,7 @@ export default function FacultyAppraisal() {
                         {viewingProof.isPdf ? "PDF Document" : viewingProof.isImage ? "Image" : "Document"}
                       </span>
                     </div>
-                    <span className="text-[10px] text-slate-300 font-semibold uppercase tracking-wider block">
+                    <span className="text-[10px] text-indigo-200 font-bold uppercase tracking-wider block">
                       Institutional Evidence Verification
                     </span>
                   </div>
@@ -3730,7 +3730,7 @@ export default function FacultyAppraisal() {
                       setViewingProof(null);
                       setUseGoogleViewer(false);
                     }}
-                    className="w-8 h-8 rounded-xl bg-white/10 hover:bg-rose-500 hover:text-white text-slate-300 transition-all flex items-center justify-center cursor-pointer ml-1"
+                    className="w-8 h-8 rounded-xl bg-white/15 hover:bg-rose-500 text-white transition-all flex items-center justify-center cursor-pointer ml-1"
                     title="Close Preview"
                   >
                     <X size={16} />

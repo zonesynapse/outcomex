@@ -6,7 +6,7 @@ import { doc, getDoc } from "firebase/firestore";
 import { 
   FileText, CheckCircle2, Settings2, LayoutDashboard, 
   User, LogOut, Menu, X, ChevronRight, Building2, 
-  ShieldCheck, Award, Bell, GraduationCap, Users, BarChart3
+  ShieldCheck, Award, Bell, GraduationCap, Users, BarChart3, Crown
 } from "lucide-react";
 
 export default function HRLayout({ children }) {
@@ -77,6 +77,7 @@ export default function HRLayout({ children }) {
 
   if (isPrincipalHR) {
     navItems.push(
+      { id: "principal-appraisal", label: "Principal Appraisal Request", path: "/principal-appraisal", icon: Crown },
       { id: "appraisal-reviews", label: "Appraisal Reviews", path: "/reviews", icon: CheckCircle2 },
       { id: "gross-analytics", label: "Gross Analytics", path: "/gross-analytics", icon: BarChart3 },
       { id: "user-management", label: "User Management", path: "/users", icon: Users },

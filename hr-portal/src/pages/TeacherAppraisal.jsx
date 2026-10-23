@@ -549,7 +549,7 @@ export default function TeacherAppraisal() {
               <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight font-heading">
                 Teacher Appraisal Request Form
               </h1>
-              <p className="text-slate-300 text-xs md:text-sm mt-1 max-w-2xl font-medium">
+              <p className="text-indigo-100/90 text-xs md:text-sm mt-1 max-w-2xl font-medium">
                 Self-Appraisal Form for Teaching Staff. Formulated to assess your academic performance, subject results, IIY growth, and departmental contributions.
               </p>
             </div>
@@ -560,7 +560,7 @@ export default function TeacherAppraisal() {
                 status === "HOD_Approved" ? "bg-blue-500/20 text-blue-300 border-blue-500/40" :
                   status === "Submitted" ? "bg-amber-500/20 text-amber-300 border-amber-500/40" :
                     status === "Returned" ? "bg-rose-500/20 text-rose-300 border-rose-500/40" :
-                      "bg-slate-700/50 text-slate-300 border-slate-600/50"
+                      "bg-slate-800/80 text-slate-100 border-slate-600/80 shadow-xs"
                 }`}>
                 Status: {status.replace("_", " ")}
               </span>

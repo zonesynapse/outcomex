@@ -130,6 +130,7 @@ export default function AdminRoleConfig() {
     { id: "faculty-appraisal-request", label: "HR — Faculty Appraisal Request", path: "/hr/appraisal", module: "HR" },
     { id: "non-teaching-appraisal-request", label: "HR — Non-Teaching Appraisal Request", path: "/hr/non-teaching-appraisal", module: "HR" },
     { id: "hod-appraisal-request", label: "HR — HOD Appraisal Request", path: "/hr/hod-appraisal", module: "HR" },
+    { id: "principal-appraisal-request", label: "HR — Principal Appraisal Request", path: "/hr/principal-appraisal", module: "HR" },
     { id: "faculty-appraisal-reviews", label: "HR — Appraisal Reviews", path: "/hr/reviews", module: "HR" },
     { id: "hr-gross-analytics", label: "HR — Gross Analytics", path: "/hr/gross-analytics", module: "HR" },
     { id: "appraisal-settings", label: "HR — Appraisal Settings Manager", path: "/hr/settings", module: "HR" },
@@ -151,7 +152,12 @@ export default function AdminRoleConfig() {
     { id: "exam-cell-live-dashboard", label: "Exam Cell — Live Exam Control Desk", path: "/exam-cell/live-dashboard", module: "Exam Cell" },
     { id: "exam-cell-exam-hall-suite", label: "Exam Cell — Exam Hall OS Suite", path: "/exam-cell/exam-hall-suite", module: "Exam Cell" },
     { id: "exam-cell-fee-configuration", label: "Exam Cell — Fee Configuration", path: "/exam-cell/fee-configuration", module: "Exam Cell" },
-    { id: "exam-cell-exam-form-setting", label: "Exam Cell — Exam Form Setting", path: "/exam-cell/exam-form-setting", module: "Exam Cell" }
+    { id: "exam-cell-exam-form-setting", label: "Exam Cell — Exam Form Setting", path: "/exam-cell/exam-form-setting", module: "Exam Cell" },
+
+    // Transport Configuration Module
+    { id: "transport-bus-fleet", label: "Transport Config — Bus Fleet", path: "/transport/bus-fleet", module: "Transport Config" },
+    { id: "transport-routes-stages", label: "Transport Config — Routes & Stages Fee", path: "/transport/routes-stages", module: "Transport Config" },
+    { id: "transport-driver-database", label: "Transport Config — Driver Database", path: "/transport/driver-database", module: "Transport Config" }
   ];
 
   const groupedPages = useMemo(() => {

@@ -14,5 +14,12 @@ export default defineConfig({
     port: 3000,
     host: '0.0.0.0',
     hmr: process.env.DISABLE_HMR !== 'true',
+    proxy: {
+      '/fb-storage-proxy': {
+        target: 'https://firebasestorage.googleapis.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/fb-storage-proxy/, ''),
+      },
+    },
   },
 });

@@ -64,7 +64,169 @@ function parseTimeToDate(timeStr) {
   return new Date(1970, 0, 1, h, m, 0);
 }
 
-console.log('[Attendance] build r9 — module-level admissions bridge, per-run load log');
+// Alpha-numeric normalizer for resilient string comparison
+const normAlpha = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+const isDeptMatch = (d1, d2) => {
+  if (!d1 || !d2) return false;
+  const n1 = normAlpha(d1);
+  const n2 = normAlpha(d2);
+  if (!n1 || !n2) return false;
+  if (n1 === n2 || n1.includes(n2) || n2.includes(n1)) return true;
+  const getAcronym = (s) => String(s || '').split(/[^a-zA-Z0-9]+/).filter(Boolean).map(w => w[0]).join('').toLowerCase();
+  const a1 = getAcronym(d1);
+  const a2 = getAcronym(d2);
+  if (n1 === a2 || n2 === a1) return true;
+  return false;
+};
+
+const isBatchMatch = (b1, b2) => {
+  if (!b1 || !b2) return false;
+  const n1 = normAlpha(b1);
+  const n2 = normAlpha(b2);
+  if (!n1 || !n2) return false;
+  if (n1 === n2 || n1.includes(n2) || n2.includes(n1)) return true;
+  const y1 = String(b1).match(/20\d{2}/)?.[0] || String(b1).match(/\b\d{2}\b/)?.[0] || '';
+  const y2 = String(b2).match(/20\d{2}/)?.[0] || String(b2).match(/\b\d{2}\b/)?.[0] || '';
+  if (y1 && y2) {
+    const c1 = y1.length === 2 ? `20${y1}` : y1;
+    const c2 = y2.length === 2 ? `20${y2}` : y2;
+    if (c1 === c2) return true;
+  }
+  return false;
+};
+
+// Global in-memory cache for resolved student rosters to ensure instantaneous re-use across renders
+export const studentRosterCache = new Map();
+
+async function resolveStudentsRosterData({ programme, department, batch, section }) {
+  if (!programme || !department || !batch) return null;
+
+  const progKey = formatProgrammeKey(programme);
+  const cleanBatch = sanitizeKey(batch);
+  const cleanDept = sanitizeKey(department);
+  const cacheKey = `${cleanBatch}_${progKey}_${cleanDept}_${section || ''}`;
+
+  if (studentRosterCache.has(cacheKey)) {
+    return studentRosterCache.get(cacheKey);
+  }
+
+  const deptNoDegree = cleanDept.replace(/^(B_Tech_|B_E_|M_E_|M_Tech_|MBA_|MCA_|B\.Tech\.|B\.E\.|M\.E\.|M\.Tech\.)\s*/i, '');
+  const words = department.replace(/^(B\.?Tech\.?|B\.?E\.?|M\.?E\.?|M\.?Tech\.?|MBA|MCA)\s+/i, '').split(/[\s&/_-]+/);
+  const deptAcronym = words.length > 1 ? words.map(w => w[0]).join('') : '';
+
+  const secVariations = [];
+  if (section) {
+    const rawSec = String(section).trim();
+    const cleanSec = sanitizeKey(rawSec);
+    secVariations.push(`_${cleanSec}`);
+    secVariations.push(`_${cleanSec.replace(/-/g, '_')}`);
+    secVariations.push(`_${cleanSec.replace(/_/g, '-')}`);
+    const secLetter = rawSec.replace(/[^a-zA-Z0-9]/g, '');
+    if (secLetter) {
+      secVariations.push(`_${secLetter}`);
+      secVariations.push(`_Sec_${secLetter}`);
+      secVariations.push(`_Sec-${secLetter}`);
+    }
+  }
+  const allSecVariations = [...new Set([...secVariations, ''])];
+
+  const deptCandidates = [
+    cleanDept,
+    department,
+    cleanDept.replace(/[^a-zA-Z0-9]/g, '_'),
+    deptNoDegree,
+    deptNoDegree.replace(/[^a-zA-Z0-9]/g, '_'),
+    deptAcronym,
+    deptAcronym ? deptAcronym.toUpperCase() : ''
+  ].filter(Boolean);
+
+  const batchCandidates = [
+    cleanBatch,
+    batch,
+    cleanBatch.replace(/_Batch_\([^)]+\)/i, '_Batch'),
+    cleanBatch.replace(/_Batch/i, '')
+  ];
+  const yearsMatch = String(batch).match(/(\d{4})\s*[-_]\s*(\d{2,4})/);
+  if (yearsMatch) {
+    const by1 = yearsMatch[1];
+    const rawBy2 = yearsMatch[2];
+    const by2 = rawBy2.length === 2 ? `20${rawBy2}` : rawBy2;
+    const shortBy2 = by2.slice(-2);
+    batchCandidates.push(`${by1}-${by2}`);
+    batchCandidates.push(`${by1}_${by2}`);
+    batchCandidates.push(`${by1}-${shortBy2}`);
+    batchCandidates.push(`${by1}_${shortBy2}`);
+    batchCandidates.push(`${shortBy2}_batch_${by1}_${shortBy2}`);
+    batchCandidates.push(`${shortBy2}_batch_${by1}_${by2}`);
+  }
+
+  const candidateDocIds = [];
+  for (const b of batchCandidates) {
+    for (const d of deptCandidates) {
+      for (const s of allSecVariations) {
+        candidateDocIds.push(`${b}_${progKey}_${d}${s}`);
+        candidateDocIds.push(`${b}_${d}${s}`);
+      }
+    }
+  }
+
+  const uniqueCandidates = Array.from(new Set(candidateDocIds));
+
+  // 1. Check primary candidates first
+  for (const cid of uniqueCandidates) {
+    try {
+      const snap = await getDoc(doc(db, "students", cid));
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data && Object.keys(data).filter(k => !k.startsWith('_')).length > 0) {
+          const res = { data, docId: cid };
+          studentRosterCache.set(cacheKey, res);
+          return res;
+        }
+      }
+    } catch (e) { }
+  }
+
+  // 2. Broad fallback scan of 'students' collection if candidates missed
+  try {
+    const studentsSnap = await getDocs(collection(db, "students"));
+    let matchedDoc = null;
+    let matchedBaseDoc = null;
+
+    studentsSnap.forEach(d => {
+      const data = d.data();
+      const meta = data?._meta || {};
+      const docDept = meta.department || d.id;
+      const docBatch = meta.batch || d.id;
+
+      if (isBatchMatch(docBatch, batch) && isDeptMatch(docDept, department)) {
+        const studentCount = Object.keys(data).filter(k => !k.startsWith('_')).length;
+        if (studentCount > 0) {
+          const docIdLower = d.id.toLowerCase();
+          const secLower = section ? section.toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+          if (secLower && docIdLower.includes(secLower)) {
+            matchedDoc = { data, docId: d.id };
+          } else if (!matchedBaseDoc) {
+            matchedBaseDoc = { data, docId: d.id };
+          }
+        }
+      }
+    });
+
+    const chosen = matchedDoc || matchedBaseDoc;
+    if (chosen) {
+      studentRosterCache.set(cacheKey, chosen);
+      return chosen;
+    }
+  } catch (err) {
+    console.warn('[Attendance] Fallback scan of students collection error:', err);
+  }
+
+  return null;
+}
+
+console.log('[Attendance] build r11 — parallel student resolution, multi-key fallback, zero-delay roster');
 
 // Module-level approved_admissions bridge cache. Deliberately outside the
 // component: async continuations here touch no per-run closures, so rapid
@@ -191,7 +353,14 @@ export default function Attendance() {
   // Guards the fetchData pipeline: stale overlapping runs + safety timeout
   const fetchRunRef = useRef(0);
   const [facultyNames, setFacultyNames] = useState({});
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      return Boolean(p.get('prog') || p.get('subject') || p.get('batch'));
+    } catch {
+      return false;
+    }
+  });
   const [saving, setSaving] = useState(false);
   const [saveConfirmation, setSaveConfirmation] = useState(null); // { absent: [], od: [], notMarked: [] }
   const [searchTerm, setSearchTerm] = useState("");
@@ -243,6 +412,8 @@ export default function Attendance() {
     Object.entries(masterList || {}).forEach(([key, val]) => {
       if (key.startsWith('_')) return;
       addAlias(key, key);
+      const studentName = typeof val === 'object' && val !== null ? (val.name || val.studentName || '') : (typeof val === 'string' ? val : '');
+      if (studentName) addAlias(key, studentName);
       if (val && typeof val === 'object') {
         const r = val.regNo || val.reg || val.registerNo || val.register_number || val.reg_no;
         const ad = val.admissionNo || val.admNo || val.adm_no || val.admission_no || val.examNo || val.applicationNo;
@@ -606,7 +777,7 @@ export default function Attendance() {
     const sec = urlSectionRef.current;
     if (sec && availableSections.length > 0 && availableSections.includes(sec) && section !== sec) {
       setSection(sec);
-    } else if (!section && availableSections.length === 1) {
+    } else if (!section && searchParams.get('section') === null && availableSections.length === 1) {
       setSection(availableSections[0]);
     }
   }, [availableSections, programme, department, batch]);
@@ -807,6 +978,13 @@ export default function Attendance() {
         if (match) {
           urlSubjRef.current = '';
           handleSubjectChange(match.value, true);
+          if (urlPeriodRef.current) {
+            setPeriod(urlPeriodRef.current);
+            setPeriods(prev => [...new Set([...prev, urlPeriodRef.current])]);
+          }
+          if (urlSectionRef.current !== undefined && urlSectionRef.current === '') {
+            setSection('');
+          }
         }
       }
 
@@ -821,6 +999,13 @@ export default function Attendance() {
             if (match) {
               urlSubjRef.current = '';
               handleSubjectChange(match.value, true);
+              if (urlPeriodRef.current) {
+                setPeriod(urlPeriodRef.current);
+                setPeriods(prev => [...new Set([...prev, urlPeriodRef.current])]);
+              }
+              if (urlSectionRef.current !== undefined && urlSectionRef.current === '') {
+                setSection('');
+              }
             }
           }
         })
@@ -852,6 +1037,7 @@ export default function Attendance() {
       setEventName("");
       return;
     }
+    setLoading(true);
     setSubject(val);
     const selectedCtx = JSON.parse(val);
     setBatch(selectedCtx.batch);
@@ -1060,6 +1246,7 @@ export default function Attendance() {
       setRosterFallback(null);
       setLoadInfo(null);
       setRecordSources([]);
+      setLoading(false);
       return;
     }
 
@@ -1086,6 +1273,9 @@ export default function Attendance() {
 
     const fetchData = async () => {
       try {
+        // 1. Kick off robust student roster fetch immediately in parallel with attendance documents
+        const rosterPromise = resolveStudentsRosterData({ programme, department, batch, section });
+
         const legacyCodes = Array.isArray(selectedSubjectObj?.legacy_codes) ? selectedSubjectObj.legacy_codes : [];
         const candidateDocIds = getAllCandidateAttendanceDocIds({
           programme,
@@ -1167,13 +1357,9 @@ export default function Attendance() {
 
         // Capped chunked fetch: the candidate permutation space is huge (tens of
         // thousands of IDs) — firing getDoc for all of them hangs the page.
-        // Fetch in small chunks and stop once a full chunk adds no new records
-        // (cap 240 reads worst case). Runs in two phases so base (no-section)
-        // docs always merge after Sec-A docs (Sec-A wins ties in processDocData).
         const CHUNK = 40;
         const PROBE = 12;
         const MAX_READS_PER_PHASE = 160;
-        // Source-doc tracker: which attendance doc contributed which record keys
         const docHits = [];
         const fetchChunk = async (chunk) => {
           const snaps = await Promise.allSettled(chunk.map(id => getDoc(doc(db, "attendance", id))));
@@ -1188,7 +1374,6 @@ export default function Attendance() {
         };
         const fetchIds = async (ids) => {
           let fetchedCount = 0;
-          // Fast probe: canonical + closest variants first (usually hits in 1 round trip)
           const probe = ids.slice(0, PROBE);
           fetchedCount += probe.length;
           await fetchChunk(probe);
@@ -1198,36 +1383,61 @@ export default function Attendance() {
             fetchedCount += chunk.length;
             await fetchChunk(chunk);
             const after = Object.keys(mergedRecords).length;
-            // Stop early: records found and this whole chunk added nothing new.
-            // Same-class duplicates collapse inside processDocData, so later,
-            // increasingly exotic permutations cannot add anything.
             if (after > 0 && after === before) break;
           }
         };
-        if (secCleanKey) {
-          await fetchIds(withSecIds);
-          await fetchIds(withoutSecIds);
-        } else {
-          await fetchIds(candidateDocIds);
-        }
-        setRecordSources(docHits);
 
-        let studentSnap = await getDoc(doc(db, "students", compositeKey));
-        if (!studentSnap.exists() && sectionSuffix) {
-          const baseKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}`;
-          studentSnap = await getDoc(doc(db, "students", baseKey));
+        // Run attendance doc fetches concurrently with roster resolution
+        const attendanceDocsPromise = (async () => {
+          if (secCleanKey) {
+            await fetchIds(withSecIds);
+            await fetchIds(withoutSecIds);
+          } else {
+            await fetchIds(candidateDocIds);
+          }
+        })();
+
+        // Resolve students IMMEDIATELY (sub-200ms)
+        const resolvedRoster = await rosterPromise;
+        let rawMaster = resolvedRoster?.data ? { ...resolvedRoster.data } : {};
+        let studentDocId = resolvedRoster?.docId || compositeKey;
+        let studentDocFound = Boolean(resolvedRoster?.data);
+
+        // Populate early student array so the user never sees an empty screen
+        if (Object.keys(rawMaster).filter(k => !k.startsWith('_')).length > 0 && fetchRunRef.current === runId) {
+          const joiningAY = rawMaster._joiningAY || {};
+          let earlyStudentArray = Object.entries(rawMaster)
+            .filter(([key]) => !key.startsWith('_'))
+            .filter(([reg]) => {
+              if (!academicYear) return true;
+              const jAY = joiningAY[reg];
+              return !jAY || jAY <= academicYear;
+            })
+            .map(([reg, nameVal]) => ({
+              reg,
+              name: typeof nameVal === 'object' ? (nameVal.name || 'Unknown') : nameVal,
+              hours: 1,
+              status: 'P',
+              percentage: "100.00"
+            }));
+          earlyStudentArray.sort((a, b) => String(a.reg).localeCompare(String(b.reg), undefined, { numeric: true, sensitivity: 'base' }));
+          setMasterList({ ...rawMaster });
+          setStudents(earlyStudentArray);
         }
+
+        // Wait for attendance records to finish
+        await attendanceDocsPromise;
+        setRecordSources(docHits);
 
         const attData = {
           _meta: mergedMeta,
           records: mergedRecords
         };
 
-        let rawMaster = studentSnap.data() || {};
         // Load diagnostics: why the roster may resolve empty (shown on screen)
         const dbg = {
-          docFound: !!studentSnap?.exists(),
-          docId: studentSnap?.exists() ? studentSnap.id : compositeKey,
+          docFound: studentDocFound,
+          docId: studentDocId,
           preKeys: Object.keys(rawMaster).filter(k => !k.startsWith('_')).length,
           enrol: 'no enrolment doc',
           derived: 0,
@@ -1324,6 +1534,10 @@ export default function Attendance() {
             }
           }
         } catch (e) { console.warn('Enrollment filter failed:', e); }
+        // Drop stale runs BEFORE committing any state — otherwise an older
+        // in-flight run (e.g. for a subject with no namelist) briefly wipes the
+        // roster ("No students found") until the latest run finishes.
+        if (fetchRunRef.current !== runId) { clearTimeout(safetyTimer); return; }
 
         // Build regNo↔admissionNo pairs from every available source so old
         // register-number-keyed records resolve to current master-list keys
@@ -1371,9 +1585,9 @@ export default function Attendance() {
           .map(([reg, nameVal]) => ({
             reg,
             name: typeof nameVal === 'object' ? (nameVal.name || 'Unknown') : nameVal,
-            hours: 0,
-            status: '',
-            percentage: "0.00"
+            hours: 1,
+            status: 'P',
+            percentage: "100.00"
           }));
 
         // Fallback: namelist doc missing/empty but attendance records hold student
@@ -1405,9 +1619,9 @@ export default function Attendance() {
             studentArray = derivedRegs.map(reg => ({
               reg,
               name: derivedMap[reg] || reg,
-              hours: 0,
-              status: '',
-              percentage: "0.00"
+              hours: 1,
+              status: 'P',
+              percentage: "100.00"
             }));
             if (fetchRunRef.current === runId) setRosterFallback({ count: derivedRegs.length });
           } else if (fetchRunRef.current === runId) {
@@ -1562,8 +1776,8 @@ export default function Attendance() {
       let stuMethod = parsedVal ? parsedVal.teachingMethodology : '';
       let storedStatus = parsedVal ? parsedVal.status : '';
 
-      // If record exists and student is recorded, use storedStatus; otherwise leave empty for user marking
-      let status = studentExists ? storedStatus : '';
+      // If record exists and student is recorded with a status, use storedStatus; otherwise default to Present 'P' so faculty only needs to toggle absentees
+      let status = (studentExists && storedStatus) ? storedStatus : 'P';
       if (status === 'P' && !hours) {
         hours = totalH;
       }
@@ -1724,7 +1938,23 @@ export default function Attendance() {
       }
 
       const rawVal = getStudentData(rec.students, reg);
-      const parsedVal = parseStudentAttendanceVal(rawVal);
+      let parsedVal = parseStudentAttendanceVal(rawVal);
+
+      // Robust fallback: if ID didn't match directly, try student's name in rec.students
+      if (!parsedVal && rec.students && typeof rec.students === 'object') {
+        const studentName = (masterList?.[reg] && typeof masterList[reg] === 'object' ? masterList[reg].name : masterList?.[reg]) || '';
+        const normName = String(studentName || '').trim().toLowerCase();
+        if (normName) {
+          for (const [sKey, sVal] of Object.entries(rec.students)) {
+            if (sKey.startsWith('_')) continue;
+            const entryName = typeof sVal === 'object' && sVal !== null ? (sVal.name || sVal.studentName || '') : '';
+            if (entryName && String(entryName).trim().toLowerCase() === normName) {
+              parsedVal = parseStudentAttendanceVal(sVal);
+              break;
+            }
+          }
+        }
+      }
 
       if (isEvent) {
         const isPresent = parsedVal ? (parsedVal.status === 'P' || parsedVal.hours > 0) : true;
@@ -1732,19 +1962,22 @@ export default function Attendance() {
         return;
       }
 
+      // Check if this entire class record was corrupted by the historical bug where ALL students were saved with '-'
+      // (If a record contains >0 students and EVERY SINGLE ONE has status '-', that record was saved under the default '-' bug!)
+      const allEntries = rec.students && typeof rec.students === 'object' ? Object.entries(rec.students).filter(([k]) => !k.startsWith('_')) : [];
+      const isCorruptedAllHyphen = allEntries.length > 0 && allEntries.every(([, v]) => {
+        const p = parseStudentAttendanceVal(v);
+        return p?.status === '-' || p?.isNA;
+      });
+
       // If student has '-' (exempt / other elective / not applicable), do not count in totalClasses or absent
-      if (parsedVal && (parsedVal.status === '-' || parsedVal.isNA || parsedVal.status === '—')) {
+      // EXCEPT when the entire class record was corrupted by the old bug, in which case students should be Present 'P'!
+      if (parsedVal && (parsedVal.status === '-' || parsedVal.isNA || parsedVal.status === '—') && !isCorruptedAllHyphen) {
         dailyRecords[key] = '—';
         return;
       }
-      // No usable marking (unknown ID, empty entry, or student absent from a
-      // populated record): exclude from this class — never default to P/A here.
       // Records with zero student entries carry no signal for anyone.
       if (!rec.students || Object.keys(rec.students).length === 0) {
-        dailyRecords[key] = '—';
-        return;
-      }
-      if (!parsedVal) {
         dailyRecords[key] = '—';
         return;
       }
@@ -1753,7 +1986,7 @@ export default function Attendance() {
       totalClasses++;
 
       let status = 'P';
-      if (parsedVal) {
+      if (parsedVal && !isCorruptedAllHyphen) {
         if (parsedVal.status === 'OD' || parsedVal.hours === -1) {
           odCount++;
           status = 'OD';
@@ -1768,7 +2001,7 @@ export default function Attendance() {
           status = 'P';
         }
       } else {
-        // System standard: unmarked students default to Present 'P'
+        // System standard: unmarked students, unbridged roster students, or corrupted-record students default to Present 'P'
         attended++;
         status = 'P';
       }
@@ -2116,8 +2349,9 @@ export default function Attendance() {
     };
 
     students.forEach(s => {
-      // If student is marked, use their status; if left blank, save as '-' (Other Subject / Exempt)
-      const finalStatus = s.status ? s.status : '-';
+      // If student is marked, use their status; if left blank, default to 'P' (Present) so faculty only needs to mark absentees.
+      // Explicit '-' (Exempt / Other Subject in electives) is preserved.
+      const finalStatus = s.status ? s.status : 'P';
       const finalHours = finalStatus === 'P' ? (parseInt(totalConducted, 10) || 1) : (finalStatus === 'OD' ? -1 : 0);
       const studentObj = { ...s, status: finalStatus, hours: finalHours };
       // Skip only entries that actually parse — null shells must be
@@ -2569,7 +2803,7 @@ export default function Attendance() {
                 <CalendarCheck2 size={20} className="text-white" />
               </div>
               <div>
-                <h2 className="text-white font-bold text-base md:text-lg leading-tight">Attendance Entry</h2>
+                <h2 className="text-white font-bold text-base md:text-lg leading-tight">Attendance Entry <span className="ml-1 text-[9px] font-mono font-normal text-white/40 align-middle">v10</span></h2>
               </div>
             </div>
 
@@ -2633,142 +2867,7 @@ export default function Attendance() {
             </div>
           </div>
 
-          {/* Why-empty diagnostics (roster resolved to zero) */}
-          {students.length === 0 && !loading && loadInfo && (
-            <div className="mx-5 md:mx-7 mt-4 p-4 bg-slate-50 border border-slate-300 rounded-2xl flex gap-3">
-              <AlertCircle size={18} className="text-slate-500 shrink-0 mt-0.5" />
-              <div className="text-xs leading-relaxed font-mono">
-                <p className="font-black text-slate-700 uppercase tracking-wider mb-1 font-sans">Why is the namelist empty?</p>
-                <div className="text-slate-600 space-y-0.5">
-                  <div>Students doc: <strong>{loadInfo.docFound ? `FOUND (${loadInfo.preKeys} students)` : 'NOT FOUND'}</strong>{!loadInfo.docFound && <span className="opacity-70"> — checked {loadInfo.docId}</span>}</div>
-                  <div>Enrolment filter: <strong>{loadInfo.enrol}</strong></div>
-                  <div>Recovered from attendance records: <strong>{loadInfo.derived}</strong></div>
-                  <div>Attendance records loaded: <strong>{loadInfo.records}</strong></div>
-                </div>
-                <p className="text-slate-500 font-sans font-medium mt-1.5">Fix: re-upload the namelist (Upload page) or check HOD section allotment for this batch/section.</p>
-              </div>
-            </div>
-          )}
-          {/* Record-vs-roster mismatch diagnostics */}
-          {rosterFallback && (
-            <div className="mx-5 md:mx-7 mt-4 p-4 bg-sky-50 border border-sky-300 rounded-2xl flex gap-3">
-              <AlertCircle size={18} className="text-sky-600 shrink-0 mt-0.5" />
-              <div className="text-xs leading-relaxed">
-                <p className="font-black text-sky-800 uppercase tracking-wider mb-1">
-                  Namelist missing — roster rebuilt from attendance records
-                </p>
-                <p className="text-sky-700 font-medium">
-                  No namelist found for this class, so {rosterFallback.count} students were restored from
-                  marked attendance records. Names may show register numbers — re-upload the namelist
-                  (Upload page / HOD allotment) to restore full names.
-                </p>
-              </div>
-            </div>
-          )}
-          {enrolWarn && (
-            <div className="mx-5 md:mx-7 mt-4 p-4 bg-sky-50 border border-sky-300 rounded-2xl flex gap-3">
-              <AlertCircle size={18} className="text-sky-600 shrink-0 mt-0.5" />
-              <div className="text-xs leading-relaxed">
-                <p className="font-black text-sky-800 uppercase tracking-wider mb-1">
-                  Enrolment list doesn't match namelist IDs
-                </p>
-                <p className="text-sky-700 font-medium">
-                  Course enrolment for {enrolWarn.subject} has {enrolWarn.count} entries but none match this
-                  roster's IDs — showing all students instead of an empty list. Ask HOD to re-check the
-                  Course Enrolment upload (register no vs admission no series).
-                </p>
-              </div>
-            </div>
-          )}
-          {recordNotice && (recordNotice.type === 'mismatch' || recordNotice.type === 'empty') && (
-            <div className="mx-5 md:mx-7 mt-4 p-4 bg-amber-50 border border-amber-300 rounded-2xl flex gap-3">
-              <AlertCircle size={18} className="text-amber-600 shrink-0 mt-0.5" />
-              <div className="text-xs leading-relaxed">
-                <p className="font-black text-amber-800 uppercase tracking-wider mb-1">
-                  {recordNotice.type === 'empty'
-                    ? 'Saved record has empty entries — no statuses were stored'
-                    : 'Saved record found, but no student IDs match this roster'}
-                </p>
-                <p className="text-amber-700 font-medium">
-                  {recordNotice.type === 'empty' ? (
-                    <>{recordNotice.date} · Period {recordNotice.period} lists the roster students but every entry is empty (<span className="font-mono font-bold">{`{}`}</span>) — attendance was never actually marked for this period, so there is nothing to display.</>
-                  ) : (
-                    <>{recordNotice.date} · Period {recordNotice.period} has entries, but none resolve to the
-                    listed register numbers — usually admission-no vs register-no series with no bridge
-                    record in <span className="font-mono font-bold">student_section_index</span>.</>
-                  )}
-                </p>
-                <p className="text-amber-700 font-medium mt-1">
-                  Record keys: <span className="font-mono font-bold">{(recordNotice.recordKeys || []).join(', ') || '—'}</span>
-                  <span className="mx-1.5">|</span>
-                  Roster: <span className="font-mono font-bold">{(recordNotice.rosterSample || []).join(', ') || '—'}</span>
-                </p>
-                <div className="mt-2">
-                  <p className="text-amber-800 font-black uppercase tracking-wider">
-                    Firestore source docs ({(recordSources || []).length} found for this class):
-                  </p>
-                  <div className="mt-1 space-y-1">
-                    {(recordSources || []).slice(0, 6).map(h => {
-                      const normK = (rk) => {
-                        const s = String(rk || '');
-                        const m = s.match(/^(.*?)_+[pP](\d+)\s*$/);
-                        if (m) return `${m[1].trim().toLowerCase()}__p${parseInt(m[2], 10)}`;
-                        return `legacy__${s.trim().toLowerCase()}`;
-                      };
-                      const tNk = normK(`${recordNotice.date}_P${recordNotice.period}`);
-                      const hasTarget = (h.keys || []).some(k => normK(k) === tNk);
-                      return (
-                        <div key={h.id} className={`font-mono text-[11px] px-2 py-1 rounded ${hasTarget ? 'bg-amber-200/70 text-amber-900 font-bold' : 'bg-white/60 text-amber-700'}`}>
-                          {hasTarget ? '★ ' : ''}{h.id} <span className="opacity-70">({(h.keys || []).length} records)</span>
-                        </div>
-                      );
-                    })}
-                    {(recordSources || []).length === 0 && (
-                      <span className="font-mono text-[11px] text-amber-700">none (all reads missed)</span>
-                    )}
-                  </div>
-                </div>
-                {(recordNotice.rosterCount !== undefined || recordNotice.sampleValue) && (
-                  <div className="mt-2 font-mono text-[11px] text-amber-800 bg-white/50 rounded-lg p-2 space-y-0.5">
-                    <div>Roster students: <strong>{recordNotice.rosterCount ?? '—'}</strong> · Record entries: <strong>{(recordNotice.allKeys || []).length}</strong> · Section-index entries: <strong>{recordNotice.sectionIndexCount ?? '—'}</strong></div>
-                    {recordNotice.sampleValue && (
-                      <div className="break-all">First entry value: <strong>{recordNotice.sampleValue}</strong></div>
-                    )}
-                  </div>
-                )}
-                <button
-                  type="button"
-                  onClick={() => {
-                    const info = {
-                      recordKey: `${recordNotice.date}_P${recordNotice.period}`,
-                      recordKeysTotal: (recordNotice.allKeys || []).length,
-                      recordKeys: (recordNotice.allKeys || []).slice(0, 60),
-                      sampleValue: recordNotice.sampleValue,
-                      rosterCount: recordNotice.rosterCount,
-                      rosterSample: (recordNotice.rosterSample || []).slice(0, 10),
-                      sectionIndexEntries: recordNotice.sectionIndexCount,
-                      sourceDocs: (recordSources || []).map(h => ({ id: h.id, records: (h.keys || []).length })),
-                    };
-                    console.log('[Attendance][diag]', info);
-                    if (navigator.clipboard?.writeText) {
-                      navigator.clipboard.writeText(JSON.stringify(info, null, 1))
-                        .then(() => alert('Diagnostics copied — paste it in chat'))
-                        .catch(() => alert('Copy failed — open Console (F12) and copy the [Attendance][diag] line'));
-                    } else {
-                      alert('Clipboard unavailable — open Console (F12) and copy the [Attendance][diag] line');
-                    }
-                  }}
-                  className="mt-2 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-[11px] font-bold transition-all cursor-pointer"
-                >
-                  Copy debug info
-                </button>
-                <p className="text-amber-700 font-medium mt-1">
-                  You can mark fresh below — saving overwrites this period with the roster IDs.
-                </p>
-              </div>
-            </div>
-          )}
-
+          {/* Table body */}
           {/* Table body */}
           <div className="overflow-x-auto">
             {loading ? (
@@ -2776,12 +2875,32 @@ export default function Attendance() {
                 <div className="w-10 h-10 border-[3px] border-indigo-500 border-t-transparent rounded-full animate-spin" />
                 <p className="text-xs text-slate-400 font-medium">Loading attendance data...</p>
               </div>
+            ) : (!programme || !department || !batch || !subject) ? (
+              <div className="py-16 flex flex-col items-center gap-3">
+                <div className="p-4 rounded-2xl bg-indigo-50 text-indigo-500">
+                  <Calendar size={36} />
+                </div>
+                <p className="text-sm font-semibold text-slate-700">Select class filters above to view attendance records</p>
+                <p className="text-xs text-slate-400">Choose Programme, Department, Subject, and Batch to load the student list.</p>
+              </div>
             ) : !students.length ? (
               <div className="py-16 flex flex-col items-center gap-4">
                 <div className="p-4 rounded-2xl bg-slate-50">
                   <FileX size={40} className="text-slate-300" />
                 </div>
-                <p className="text-sm text-slate-400 font-medium">No students found for this selection.</p>
+                <p className="text-sm text-slate-500 font-medium">No students found for this selection.</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    studentRosterCache.clear();
+                    setLoading(true);
+                    fetchRunRef.current++;
+                    setProgramme(p => String(p));
+                  }}
+                  className="px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold transition-all border border-indigo-200/60 cursor-pointer flex items-center gap-1.5"
+                >
+                  Retry / Refresh Roster
+                </button>
               </div>
             ) : (
               <table className="w-full border-collapse">

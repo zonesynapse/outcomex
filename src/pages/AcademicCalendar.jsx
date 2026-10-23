@@ -236,7 +236,7 @@ export default function AcademicCalendar() {
       .sort((a, b) => b.localeCompare(a));
   }, [semesterForm.programme, batchRegulations, durations, existingBatches]);
 
-  const isMaster = userEmail === 'cselab2022@gmail.com';
+  const isMaster = userEmail === (import.meta.env.VITE_MASTER_ADMIN_EMAIL || 'cselab2022@gmail.com');
   const isAdmin = userRole === 'Admin' || isMaster;
   const canManage = userRole === 'Admin' || userRole === 'HOD' || isMaster;
 

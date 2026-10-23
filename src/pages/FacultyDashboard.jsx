@@ -27,7 +27,7 @@ import {
 import Layout from "../components/Layout";
 import { auth, db } from "../firebase";
 import { fetchAllCourseNamesMap, getCourseName } from "../utils/courseUtils";
-import { getAttendanceRecords, parseSubjectField, isWrittenTestQp, formatQPSetDisplay, formatProgrammeKey, sanitizeKey, isSameExamEvent } from "../lib/utils";
+import { getAttendanceRecords, parseSubjectField, isWrittenTestQp, formatQPSetDisplay, formatProgrammeKey, sanitizeKey, isSameExamEvent, findRecordForPeriod } from "../lib/utils";
 import { getQuestionPaperHTML } from "../utils/questionPaperUtils";
 import { typesetMath } from "../utils/mathJaxUtils";
 import { useRegulations } from "../hooks/useRegulations";
@@ -758,49 +758,56 @@ export default function FacultyDashboard() {
       return;
     }
     setFacultyAttendanceLoading(true);
-    let cancelled = false;
-    const fetchAttendance = async () => {
-      const results = {};
-      const enrolResults = {};
-      // Use batch-level prefixes so we fetch ALL attendance docs for the batch,
-      // not just the faculty's own subject codes — needed for substitute detection
-      const batchPrefixes = [];
-      for (const g of visibleGroups) {
+
+    const matchesAnyVisibleGroup = (docId) => {
+      const cleanDocId = normAlpha(docId);
+      return visibleGroups.some(g => {
+        const batchMatch = isBatchMatch(docId, g.batch);
+        if (!batchMatch) return false;
+
+        // 1. Direct subject code check: if doc contains this group's subject code and batch matches
+        const hasCode = (g.codes || []).some(code => code && cleanDocId.includes(normAlpha(code)));
+        if (hasCode) return true;
+
+        // 2. Class-wide check (for substitute subjects taught to the same class)
+        const deptMatch = isDeptMatch(docId, g.department);
         const semNum = String(g.semester).match(/\d+/)?.[0] || g.semester;
-        const prefix1 = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}_`;
-        const prefix2 = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_`;
-        if (!batchPrefixes.includes(prefix1)) batchPrefixes.push(prefix1);
-        if (!batchPrefixes.includes(prefix2)) batchPrefixes.push(prefix2);
-        // Legacy prefixes: Attendance.jsx local sanitizeKey doesn't replace spaces/slashes
-        const lp1 = `${g.progKey}_${(g.department || '').replace(/[.#$[\]]/g, '_')}_${(g.batch || '').replace(/[.#$[\]]/g, '_')}_${(g.academicYear || '').replace(/[.#$[\]]/g, '_')}_${semNum}_`;
-        const lp2 = `${g.progKey}_${(g.department || '').replace(/[.#$[\]]/g, '_')}_${(g.batch || '').replace(/[.#$[\]]/g, '_')}_${(g.academicYear || '').replace(/[.#$[\]]/g, '_')}_${g.semester}_`;
-        if (lp1 !== prefix1 && !batchPrefixes.includes(lp1)) batchPrefixes.push(lp1);
-        if (lp2 !== prefix2 && !batchPrefixes.includes(lp2)) batchPrefixes.push(lp2);
-      }
-      try {
-        const [allSnap, enrolSnap] = await Promise.all([
-          getDocs(collection(db, 'attendance')),
-          getDocs(collection(db, 'course_enrolments'))
-        ]);
-        allSnap.forEach(d => {
-          if (batchPrefixes.some(p => d.id.startsWith(p))) {
-            results[d.id] = d.data();
-          }
-        });
-        enrolSnap.forEach(d => {
-          if (batchPrefixes.some(p => d.id.startsWith(p))) {
-            enrolResults[d.id] = d.data();
-          }
-        });
-      } catch (e) { console.warn('[FacultyDashboard] Fetch error:', e); }
-      if (!cancelled) {
-        setFacultyAttendanceData(results);
-        setFacultyCourseEnrolments(enrolResults);
-        setFacultyAttendanceLoading(false);
-      }
+        const semMatch = cleanDocId.includes(`_${semNum}_`) || cleanDocId.includes(`sem${semNum}`) || cleanDocId.includes(String(semNum));
+
+        return deptMatch && semMatch;
+      });
     };
-    fetchAttendance();
-    return () => { cancelled = true; };
+
+    const unsubAttendance = onSnapshot(collection(db, 'attendance'), (allSnap) => {
+      const results = {};
+      allSnap.forEach(d => {
+        if (matchesAnyVisibleGroup(d.id)) {
+          results[d.id] = d.data();
+        }
+      });
+      setFacultyAttendanceData(results);
+      setFacultyAttendanceLoading(false);
+    }, (err) => {
+      console.warn('[FacultyDashboard] Error listening to attendance:', err);
+      setFacultyAttendanceLoading(false);
+    });
+
+    const unsubEnrol = onSnapshot(collection(db, 'course_enrolments'), (enrolSnap) => {
+      const enrolResults = {};
+      enrolSnap.forEach(d => {
+        if (matchesAnyVisibleGroup(d.id)) {
+          enrolResults[d.id] = d.data();
+        }
+      });
+      setFacultyCourseEnrolments(enrolResults);
+    }, (err) => {
+      console.warn('[FacultyDashboard] Error listening to enrolments:', err);
+    });
+
+    return () => {
+      unsubAttendance();
+      unsubEnrol();
+    };
   }, [currentUid, visibleGroups]);
 
   useEffect(() => {
@@ -1715,7 +1722,8 @@ export default function FacultyDashboard() {
               for (const [dId, aData] of Object.entries(facultyAttendanceData || {})) {
                 const cleanDId = normClean(dId);
                 if (!cleanDId.includes(cleanCode)) continue;
-                if (cleanDept && !cleanDId.includes(cleanDept) && !cleanDept.includes(cleanDId)) continue;
+                if (!isDeptMatch(dId, g.department)) continue;
+                if (!isBatchMatch(dId, g.batch)) continue;
                 if (cleanSec && !cleanDId.includes(cleanSec) && dId.includes('_Sec-')) continue;
 
                 const recs = getAttendanceRecords(aData);
@@ -1724,32 +1732,35 @@ export default function FacultyDashboard() {
                 }
               }
 
-              const recordKey = `${dateStr}_P${period}`;
-              let rec = recordsMap[recordKey];
+              let rec = findRecordForPeriod(recordsMap, dateStr, period);
               let recordFound = !!rec;
 
-              // 1. Direct record: if it exists (even if marked by substitute or self), attendance was done
-              if (rec) {
-                recordFound = true;
-              } else {
-                // 2. No direct record — check if a substitute marked a different subject for same group/period/section
-                const groupPrefixNum = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}_`;
-                const groupPrefixFull = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_`;
-                const legacyGroupPrefixNum = `${g.progKey}_${(g.department || '').replace(/[.#$[\]]/g, '_')}_${(g.batch || '').replace(/[.#$[\]]/g, '_')}_${(g.academicYear || '').replace(/[.#$[\]]/g, '_')}_${semNum}_`;
-                const legacyGroupPrefixFull = `${g.progKey}_${(g.department || '').replace(/[.#$[\]]/g, '_')}_${(g.batch || '').replace(/[.#$[\]]/g, '_')}_${(g.academicYear || '').replace(/[.#$[\]]/g, '_')}_${g.semester}_`;
-                const secSuffix = currentSec ? `_${sanitizeKey(currentSec)}` : '';
-                for (const [dId, aData] of Object.entries(facultyAttendanceData || {})) {
-                  if (!getAttendanceRecords(aData)?.[recordKey]) continue;
-                  const matchedPrefix = dId.startsWith(groupPrefixNum) ? groupPrefixNum : (dId.startsWith(groupPrefixFull) ? groupPrefixFull : (dId.startsWith(legacyGroupPrefixNum) ? legacyGroupPrefixNum : (dId.startsWith(legacyGroupPrefixFull) ? legacyGroupPrefixFull : null)));
-                  if (!matchedPrefix) continue;
-                  if (currentSec) {
-                    if (!dId.endsWith(secSuffix)) continue;
-                  } else {
-                    if (dId.includes('_Sec-')) continue;
+              // Check multi-period span lookback: if an earlier period was marked with hours covering this period
+              if (!recordFound) {
+                const pNum = parseInt(period, 10);
+                if (pNum > 1) {
+                  for (let prevP = 1; prevP < pNum; prevP++) {
+                    const prevRec = findRecordForPeriod(recordsMap, dateStr, prevP);
+                    if (prevRec) {
+                      const totalH = parseInt(prevRec.totalHours || prevRec.conductedHours || prevRec.hours || 1, 10);
+                      if (prevP + totalH > pNum) {
+                        recordFound = true;
+                        rec = prevRec;
+                        break;
+                      }
+                    }
                   }
-                  let rest = dId.slice(matchedPrefix.length);
-                  if (secSuffix && rest.endsWith(secSuffix)) rest = rest.slice(0, rest.length - secSuffix.length);
-                  if (rest && rest !== code) {
+                }
+              }
+
+              // 2. No direct record — check if a substitute marked a different subject for same group/period/section
+              if (!recordFound) {
+                for (const [dId, aData] of Object.entries(facultyAttendanceData || {})) {
+                  if (!isBatchMatch(dId, g.batch) || !isDeptMatch(dId, g.department)) continue;
+                  if (cleanSec && !normClean(dId).includes(cleanSec) && dId.includes('_Sec-')) continue;
+                  const aRecords = getAttendanceRecords(aData);
+                  const subRec = findRecordForPeriod(aRecords, dateStr, period);
+                  if (subRec) {
                     recordFound = true;
                     break;
                   }
@@ -2109,11 +2120,37 @@ export default function FacultyDashboard() {
           const legacyAttDocIdFull = `${g.progKey}_${oldSan(g.department)}_${oldSan(g.batch)}_${oldSan(g.academicYear)}_${g.semester}_${code}${legacySecSuffix}`;
           const legacyBaseAttDocIdFull = `${g.progKey}_${oldSan(g.department)}_${oldSan(g.batch)}_${oldSan(g.academicYear)}_${g.semester}_${code}`;
 
-          const attData = facultyAttendanceData[exactAttDocIdNum] || facultyAttendanceData[baseAttDocIdNum] || facultyAttendanceData[exactAttDocIdFull] || facultyAttendanceData[baseAttDocIdFull]
+          let attData = facultyAttendanceData[exactAttDocIdNum] || facultyAttendanceData[baseAttDocIdNum] || facultyAttendanceData[exactAttDocIdFull] || facultyAttendanceData[baseAttDocIdFull]
             || facultyAttendanceData[legacyAttDocIdNum] || facultyAttendanceData[legacyBaseAttDocIdNum] || facultyAttendanceData[legacyAttDocIdFull] || facultyAttendanceData[legacyBaseAttDocIdFull];
-          const recordKey = `${attendanceDate}_P${period}`;
+
+          if (!attData) {
+            const cleanCode = normAlpha(code);
+            for (const [dId, aData] of Object.entries(facultyAttendanceData || {})) {
+              if (normAlpha(dId).includes(cleanCode) && isBatchMatch(dId, g.batch) && isDeptMatch(dId, g.department)) {
+                attData = aData;
+                break;
+              }
+            }
+          }
+
           const recordsMap = getAttendanceRecords(attData);
-          let rec = recordsMap[recordKey];
+          let rec = findRecordForPeriod(recordsMap, attendanceDate, period);
+          if (!rec) {
+            const pNum = parseInt(period, 10);
+            if (pNum > 1) {
+              for (let prevP = 1; prevP < pNum; prevP++) {
+                const prevRec = findRecordForPeriod(recordsMap, attendanceDate, prevP);
+                if (prevRec) {
+                  const totalH = parseInt(prevRec.totalHours || prevRec.conductedHours || prevRec.hours || 1, 10);
+                  if (prevP + totalH > pNum) {
+                    rec = prevRec;
+                    break;
+                  }
+                }
+              }
+            }
+          }
+
           let subFound = false;
           let subSubjectCode = '';
           let subFacultyName = '';
@@ -2127,42 +2164,19 @@ export default function FacultyDashboard() {
             }
           } else {
             // 2. Scheduled subject has no record. Check if another subject was taught
-            // to THIS EXACT group (programme, department, batch, academicYear, semester, section)
-            const groupPrefixNum = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}_`;
-            const groupPrefixFull = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${g.semester}_`;
-            const secSuffix = currentSec ? `_${sanitizeKey(currentSec)}` : '';
-            // Legacy prefixes: old Attendance.jsx preserved spaces
-            const legacyGroupPrefixNum = `${g.progKey}_${oldSan(g.department)}_${oldSan(g.batch)}_${oldSan(g.academicYear)}_${semNum}_`;
-            const legacyGroupPrefixFull = `${g.progKey}_${oldSan(g.department)}_${oldSan(g.batch)}_${oldSan(g.academicYear)}_${g.semester}_`;
-            const legacySecSuffix = currentSec ? `_${oldSan(currentSec)}` : '';
-
-            for (const [dId, aData] of Object.entries(facultyAttendanceData)) {
+            // to THIS group (programme, department, batch, academicYear, semester, section)
+            for (const [dId, aData] of Object.entries(facultyAttendanceData || {})) {
+              if (!isBatchMatch(dId, g.batch) || !isDeptMatch(dId, g.department)) continue;
+              if (currentSec && !normAlpha(dId).includes(normAlpha(currentSec)) && dId.includes('_Sec-')) continue;
               const aRecords = getAttendanceRecords(aData);
-              if (!aRecords?.[recordKey]) continue;
+              const subRec = findRecordForPeriod(aRecords, attendanceDate, period);
+              if (!subRec) continue;
 
-              let matchedPrefix = dId.startsWith(groupPrefixNum) ? groupPrefixNum : (dId.startsWith(groupPrefixFull) ? groupPrefixFull : null);
-              if (!matchedPrefix) matchedPrefix = dId.startsWith(legacyGroupPrefixNum) ? legacyGroupPrefixNum : (dId.startsWith(legacyGroupPrefixFull) ? legacyGroupPrefixFull : null);
-              if (!matchedPrefix) continue;
-
-              // Must match the exact section
-              const effectiveSecSuffix = (matchedPrefix === legacyGroupPrefixNum || matchedPrefix === legacyGroupPrefixFull) ? legacySecSuffix : secSuffix;
-              if (currentSec) {
-                if (!dId.endsWith(effectiveSecSuffix)) continue;
-              } else {
-                if (dId.includes('_Sec-')) continue;
-              }
-
-              // Extract substitute subject code
-              let rest = dId.slice(matchedPrefix.length);
-              if (effectiveSecSuffix && rest.endsWith(effectiveSecSuffix)) {
-                rest = rest.slice(0, rest.length - effectiveSecSuffix.length);
-              }
-              const subCode = rest;
-
-              if (subCode && subCode !== code) {
-                rec = aRecords[recordKey];
+              if (!normAlpha(dId).includes(normAlpha(code))) {
+                rec = subRec;
                 subFound = true;
-                subSubjectCode = subCode;
+                const dIdParts = dId.split('_');
+                subSubjectCode = dIdParts[dIdParts.length - 1] || 'SUB';
                 const markerUid = rec.markedBy;
                 if (markerUid) {
                   subFacultyName = facultyNames[markerUid] || markerUid;

@@ -37,7 +37,8 @@ import {
   BadgePercent,
   ArrowRight,
   ArrowUpRight,
-  Lock
+  Lock,
+  Crown
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -181,6 +182,7 @@ export default function HRGrossAnalytics() {
   const [facultyAppraisals, setFacultyAppraisals] = useState([]);
   const [nonTeachingAppraisals, setNonTeachingAppraisals] = useState([]);
   const [hodAppraisals, setHodAppraisals] = useState([]);
+  const [principalAppraisals, setPrincipalAppraisals] = useState([]);
   const [usersMap, setUsersMap] = useState({});
   const [salariesMap, setSalariesMap] = useState({});
   const [promotionsMap, setPromotionsMap] = useState({});
@@ -322,6 +324,18 @@ export default function HRGrossAnalytics() {
     }, (err) => console.error("Error loading HOD appraisals:", err));
     unsubs.push(unsubHOD);
 
+    // 9. Fetch Principal Appraisals
+    const unsubPrincipal = onSnapshot(collection(db, "principal_appraisals"), (snap) => {
+      const list = snap.docs.map((d) => ({
+        id: d.id,
+        collectionType: "principal",
+        ...d.data()
+      }));
+      setPrincipalAppraisals(list);
+      setLoading(false);
+    }, (err) => console.error("Error loading principal appraisals:", err));
+    unsubs.push(unsubPrincipal);
+
     return () => unsubs.forEach((u) => u && u());
   }, []);
 
@@ -365,7 +379,7 @@ export default function HRGrossAnalytics() {
 
   // Process and compute combined gross records
   const allRecords = useMemo(() => {
-    const rawList = [...facultyAppraisals, ...nonTeachingAppraisals, ...hodAppraisals];
+    const rawList = [...facultyAppraisals, ...nonTeachingAppraisals, ...hodAppraisals, ...principalAppraisals];
 
     return rawList.map((app) => {
       // Find matching user from usersMap
@@ -422,15 +436,18 @@ export default function HRGrossAnalytics() {
         app.recommendedPromotion
       );
 
-      // Faculty Name resolution
+      const isPrincipal = app.formType === "principal" || app.collectionType === "principal";
+
+      // Faculty / Member Name resolution
       const facultyName = (
+        app.principalName ||
         app.facultyName ||
         app.formData?.name ||
         app.staffName ||
         app.hodName ||
         matchedUser.displayName ||
         matchedUser.facultyName ||
-        "Faculty Member"
+        (isPrincipal ? "Principal" : "Faculty Member")
       );
 
       // Designation resolution
@@ -439,7 +456,7 @@ export default function HRGrossAnalytics() {
         app.formData?.designation ||
         app.staffDesignation ||
         matchedUser.designation ||
-        "Faculty"
+        (isPrincipal ? "Principal" : "Faculty")
       );
 
       // Department resolution
@@ -447,21 +464,42 @@ export default function HRGrossAnalytics() {
         app.department ||
         app.formData?.department ||
         matchedUser.department ||
-        "General"
+        (isPrincipal ? "Administration" : "General")
       );
 
-      // Date of Joining (DOJ) resolution
-      const dateOfJoining = (
+      // Helper to cleanly extract a date string if val is a string, Firestore Timestamp, or Date
+      const extractDojString = (val) => {
+        if (!val) return "";
+        if (typeof val === "string") return val.trim();
+        if (val.toDate && typeof val.toDate === "function") {
+          return val.toDate().toISOString().split("T")[0];
+        }
+        if (val instanceof Date) {
+          return val.toISOString().split("T")[0];
+        }
+        return String(val).trim();
+      };
+
+      // Date of Joining (DOJ) resolution - supports Non-Teaching (dojSchool), Teachers (dojCollege/dojSchool), Faculty (dojCollege), and user profiles
+      const rawDoj = (
+        app.formData?.dojSchool ||
         app.formData?.dojCollege ||
         app.formData?.dateOfJoining ||
         app.formData?.doj ||
+        app.formData?.dojPresentPost ||
+        app.dojSchool ||
         app.dojCollege ||
         app.dateOfJoining ||
         app.doj ||
+        app.dojPresentPost ||
         matchedUser.dateOfJoining ||
+        matchedUser.doj ||
+        matchedUser.dojSchool ||
         matchedUser.dojCollege ||
-        "-"
+        matchedUser.dojPresentPost ||
+        ""
       );
+      const dateOfJoining = extractDojString(rawDoj) || "-";
 
       // 1. Appraisal Review Form Mark (out of 100)
       // The Principal's explicit Final Rating entered in AppraisalReviews.jsx takes highest priority
@@ -469,7 +507,14 @@ export default function HRGrossAnalytics() {
       const rawFinalRating = app.principalReview?.finalRating ?? app.principalReview?.rating ?? app.performanceEvaluation?.finalRating ?? app.finalRating;
       const hasFinalRating = rawFinalRating !== undefined && rawFinalRating !== null && rawFinalRating !== "" && !isNaN(Number(rawFinalRating));
 
-      if (hasFinalRating) {
+      if (isPrincipal) {
+        const principalScore = app.managementReview?.score ?? app.totalScore ?? app.principalReview?.finalRating ?? app.grossMark ?? (hasFinalRating ? rawFinalRating : null);
+        if (principalScore !== undefined && principalScore !== null && !isNaN(Number(principalScore))) {
+          appraisalMark = Number(principalScore);
+        } else {
+          appraisalMark = 100;
+        }
+      } else if (hasFinalRating) {
         // Principal's entered Final Rating (e.g. 85 in AppraisalReviews.jsx)
         appraisalMark = Number(rawFinalRating);
       } else if (app.principalReview?.principalTotalScore !== undefined && app.principalReview?.principalTotalScore !== null && !isNaN(Number(app.principalReview.principalTotalScore))) {
@@ -505,10 +550,10 @@ export default function HRGrossAnalytics() {
             : attitudePercentage)
         : 0;
 
-      // 3. Mark = (0.6 * appraisal review form mark) + (0.4 * attitude form mark)
-      const weightedAppraisal = 0.6 * appraisalMark;
-      const weightedAttitude = 0.4 * attitudeMarkNormalized;
-      const grossMark = Number((weightedAppraisal + weightedAttitude).toFixed(2));
+      // 3. Mark Computation: For Principal executive rubric, gross mark is 100% of the evaluated appraisal score.
+      const weightedAppraisal = isPrincipal ? appraisalMark : 0.6 * appraisalMark;
+      const weightedAttitude = isPrincipal ? 0 : 0.4 * attitudeMarkNormalized;
+      const grossMark = isPrincipal ? Number(appraisalMark.toFixed(2)) : Number((weightedAppraisal + weightedAttitude).toFixed(2));
 
       // 4. Performance Tier & Increment Percentage Evaluation (Criteria Matrix)
       const tier = getCandidateTier(grossMark, criteriaConfig);
@@ -603,10 +648,12 @@ export default function HRGrossAnalytics() {
         incrementAmount: totalIncrementAmount, // Backward-compat
         totalIncrementAmount,   // Col U: INCREMENT AMOUNT
         totalIncrementAmountPA,
-        isPrincipalApproved: app.status === "Approved" || Boolean(app.principalReview)
+        isPrincipalApproved: isPrincipal
+          ? (app.status === "Approved" || Boolean(app.managementReview) || Boolean(app.principalReview))
+          : (app.status === "Approved" || Boolean(app.principalReview))
       };
     });
-  }, [facultyAppraisals, nonTeachingAppraisals, hodAppraisals, usersMap, salariesMap, criteriaConfig, promotionsMap, salaryAdjustmentsMap]);
+  }, [facultyAppraisals, nonTeachingAppraisals, hodAppraisals, principalAppraisals, usersMap, salariesMap, criteriaConfig, promotionsMap, salaryAdjustmentsMap]);
 
   // Filtered & Sorted Records
   const filteredRecords = useMemo(() => {
@@ -626,6 +673,7 @@ export default function HRGrossAnalytics() {
         if (selectedType === "Faculty" && rec.collectionType !== "faculty") return false;
         if (selectedType === "Non-Teaching" && rec.collectionType !== "non_teaching") return false;
         if (selectedType === "HOD" && rec.collectionType !== "hod") return false;
+        if (selectedType === "Principal" && rec.collectionType !== "principal") return false;
       }
 
       // Academic Year Filter
@@ -1205,7 +1253,7 @@ export default function HRGrossAnalytics() {
                 <BarChart3 className="text-blue-400 stroke-[2.5]" size={30} />
                 Gross Analytics & Increment Engine
               </h1>
-              <p className="text-zinc-300 text-xs sm:text-sm mt-1.5 max-w-2xl leading-relaxed">
+              <p className="text-blue-100/90 text-xs sm:text-sm mt-1.5 max-w-2xl leading-relaxed">
                 Consolidated performance metrics for Principal-approved appraisals calculating monthly gross salary
                 increment amounts based on the institutional appraisal score matrix.
               </p>
@@ -1221,7 +1269,7 @@ export default function HRGrossAnalytics() {
                 <div className="text-sm font-extrabold text-white tracking-wide font-mono">
                   Gross Mark = <span className="text-sky-300">(0.6 × Appraisal)</span> + <span className="text-emerald-300">(0.4 × Attitude)</span>
                 </div>
-                <div className="text-[10px] text-zinc-300 mt-0.5">
+                <div className="text-[10px] text-slate-200 mt-0.5">
                   Increment % derived from Gross Mark slab • Increment ₹ = Gross PM × Increment %
                 </div>
               </div>
@@ -1462,6 +1510,7 @@ export default function HRGrossAnalytics() {
                 <option value="Faculty">Teaching Faculty</option>
                 <option value="Non-Teaching">Non-Teaching Staff</option>
                 <option value="HOD">Head of Department (HOD)</option>
+                <option value="Principal">Principal</option>
               </select>
             </div>
 
@@ -1734,7 +1783,11 @@ export default function HRGrossAnalytics() {
                           <div className="text-[10px] text-zinc-400 truncate max-w-[180px]">{rec.email}</div>
                         )}
                         <div className="text-[10px] text-indigo-600 font-bold uppercase tracking-wider mt-0.5">
-                          {rec.collectionType === "faculty" ? "Teaching Faculty" : rec.collectionType === "hod" ? "HOD" : "Non-Teaching Staff"}
+                          {rec.collectionType === "principal" ? (
+                            <span className="text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 inline-flex items-center gap-1 font-black">
+                              <Crown size={10} /> Principal
+                            </span>
+                          ) : rec.collectionType === "faculty" ? "Teaching Faculty" : rec.collectionType === "hod" ? "HOD" : "Non-Teaching Staff"}
                         </div>
                       </td>
 
@@ -1773,27 +1826,39 @@ export default function HRGrossAnalytics() {
                         )}
                       </td>
 
-                      {/* 6. Appraisal Review Form Mark (60%) */}
+                      {/* 6. Appraisal Review Form Mark */}
                       <td className="p-3.5 text-center bg-blue-50/20">
                         <div className="font-black text-blue-950 text-xs">
                           {rec.appraisalMark} <span className="text-[10px] font-bold text-blue-500">/ 100</span>
                         </div>
                         <div className="text-[10px] font-bold text-blue-700 mt-0.5">
-                          60% = <strong className="text-blue-900">{rec.weightedAppraisal} pts</strong>
+                          {rec.collectionType === "principal" ? (
+                            <strong className="text-purple-900 bg-purple-50 px-1.5 py-0.2 rounded border border-purple-200">100% Executive</strong>
+                          ) : (
+                            <>60% = <strong className="text-blue-900">{rec.weightedAppraisal} pts</strong></>
+                          )}
                         </div>
                       </td>
 
-                      {/* 7. Attitude Form Mark (40%) */}
+                      {/* 7. Attitude Form Mark */}
                       <td className="p-3.5 text-center bg-emerald-50/20">
-                        <div className="font-black text-emerald-950 text-xs">
-                          {rec.attitudeMarkNormalized}%
-                          <span className="text-[10px] font-bold text-zinc-400 ml-1">
-                            ({rec.attitudeTotalScore}/{rec.attitudeMaxScore})
-                          </span>
-                        </div>
-                        <div className="text-[10px] font-bold text-emerald-700 mt-0.5">
-                          40% = <strong className="text-emerald-900">{rec.weightedAttitude} pts</strong>
-                        </div>
+                        {rec.collectionType === "principal" ? (
+                          <div className="text-[10px] text-zinc-400 font-medium italic">
+                            N/A (Direct)
+                          </div>
+                        ) : (
+                          <>
+                            <div className="font-black text-emerald-950 text-xs">
+                              {rec.attitudeMarkNormalized}%
+                              <span className="text-[10px] font-bold text-zinc-400 ml-1">
+                                ({rec.attitudeTotalScore}/{rec.attitudeMaxScore})
+                              </span>
+                            </div>
+                            <div className="text-[10px] font-bold text-emerald-700 mt-0.5">
+                              40% = <strong className="text-emerald-900">{rec.weightedAttitude} pts</strong>
+                            </div>
+                          </>
+                        )}
                       </td>
 
                       {/* 8. Gross Total Mark */}
@@ -2348,15 +2413,27 @@ export default function HRGrossAnalytics() {
                   <div className="flex items-center gap-2 text-amber-900 font-extrabold text-xs">
                     <Calculator size={15} /> Formula Weightage Computation:
                   </div>
-                  <div className="font-mono text-xs bg-white p-3 rounded-xl border border-amber-200 text-slate-800 space-y-1">
-                    <div>Gross Mark = (0.60 × Appraisal Review Mark) + (0.40 × Attitude Form Mark)</div>
-                    <div className="text-amber-800 font-bold">
-                      Gross Mark = (0.60 × {selectedCandidate.appraisalMark}) + (0.40 × {selectedCandidate.attitudeMarkNormalized})
+                  {selectedCandidate.collectionType === "principal" ? (
+                    <div className="font-mono text-xs bg-white p-3 rounded-xl border border-amber-200 text-slate-800 space-y-1">
+                      <div>Executive Leadership Rubric: Gross Mark = Management Evaluated Mark (100% Direct)</div>
+                      <div className="text-amber-800 font-bold">
+                        Management Review Score = {selectedCandidate.appraisalMark} / 100
+                      </div>
+                      <div className="text-emerald-700 font-black text-sm pt-1 border-t border-zinc-100">
+                        Gross Mark = <span className="underline">{selectedCandidate.grossMark} / 100</span>
+                      </div>
                     </div>
-                    <div className="text-emerald-700 font-black text-sm pt-1 border-t border-zinc-100">
-                      = {selectedCandidate.weightedAppraisal} + {selectedCandidate.weightedAttitude} = <span className="underline">{selectedCandidate.grossMark} / 100</span>
+                  ) : (
+                    <div className="font-mono text-xs bg-white p-3 rounded-xl border border-amber-200 text-slate-800 space-y-1">
+                      <div>Gross Mark = (0.60 × Appraisal Review Mark) + (0.40 × Attitude Form Mark)</div>
+                      <div className="text-amber-800 font-bold">
+                        Gross Mark = (0.60 × {selectedCandidate.appraisalMark}) + (0.40 × {selectedCandidate.attitudeMarkNormalized})
+                      </div>
+                      <div className="text-emerald-700 font-black text-sm pt-1 border-t border-zinc-100">
+                        = {selectedCandidate.weightedAppraisal} + {selectedCandidate.weightedAttitude} = <span className="underline">{selectedCandidate.grossMark} / 100</span>
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
 
                 {/* Score Breakdown Comparison Cards */}

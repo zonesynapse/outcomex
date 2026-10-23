@@ -68,7 +68,7 @@ service cloud.firestore {
     }
 
     match /courses/{courseId} {
-      allow read: if isApproved();
+      allow read: if true;
       allow write: if isApproved();
     }
 
@@ -103,6 +103,31 @@ service cloud.firestore {
     }
 
     match /coe_patterns/{docId} {
+      allow read: if true;
+      allow write: if isApproved();
+    }
+
+    match /coe_exam_sessions/{docId} {
+      allow read: if true;
+      allow write: if isApproved();
+    }
+
+    match /coe_session_guidelines_doc/{docId} {
+      allow read: if true;
+      allow write: if isApproved();
+    }
+
+    match /co_configuration/{docId} {
+      allow read: if true;
+      allow write: if isApproved();
+    }
+
+    match /syllabus_data/{docId} {
+      allow read: if true;
+      allow write: if isApproved();
+    }
+
+    match /coe_settings/{docId} {
       allow read: if true;
       allow write: if isApproved();
     }

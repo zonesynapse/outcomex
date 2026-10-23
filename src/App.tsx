@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-d
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
 import { auth, db } from "./firebase";
+import { Users } from "lucide-react";
 import Auth from "./pages/Auth";
 import Reports from "./pages/Reports";
 import VisionMission from "./pages/VisionMission";
@@ -99,6 +100,7 @@ import StudentRevaluation from "./pages/student/Revaluation";
 import FacultyAppraisal from "./pages/FacultyAppraisal";
 import NonTeachingAppraisal from "./pages/NonTeachingAppraisal";
 import HODAppraisal from "./pages/HODAppraisal";
+import PrincipalAppraisal from "./pages/PrincipalAppraisal";
 import AppraisalReviews from "./pages/AppraisalReviews";
 import AppraisalSettings from "./pages/AppraisalSettings";
 import HRGrossAnalytics from "./pages/HRGrossAnalytics";
@@ -124,6 +126,8 @@ import ResourceApprovals from "./pages/resourceHub/ResourceApprovals";
 import StudentResourceHub from "./pages/student/ResourceHub";
 import CoeDashboard from "./pages/COE/CoeDashboard";
 import ExternalSetterWorkbench from "./pages/COE/ExternalSetterWorkbench";
+import TransportBusFleet from "./pages/TransportBusFleet";
+import TransportRoutesStages from "./pages/TransportRoutesStages";
 
 function RootRedirect() {
   const [role, setRole] = useState(null);
@@ -245,6 +249,7 @@ export default function App() {
         <Route path="/hr/appraisal" element={<ProtectedRoute><FacultyAppraisal /></ProtectedRoute>} />
         <Route path="/hr/non-teaching-appraisal" element={<ProtectedRoute><NonTeachingAppraisal /></ProtectedRoute>} />
         <Route path="/hr/hod-appraisal" element={<ProtectedRoute><HODAppraisal /></ProtectedRoute>} />
+        <Route path="/hr/principal-appraisal" element={<ProtectedRoute><PrincipalAppraisal /></ProtectedRoute>} />
         <Route path="/hr/reviews" element={<ProtectedRoute><AppraisalReviews /></ProtectedRoute>} />
         <Route path="/hr/gross-analytics" element={<ProtectedRoute><HRGrossAnalytics /></ProtectedRoute>} />
         <Route path="/hr/settings" element={<ProtectedRoute><AppraisalSettings /></ProtectedRoute>} />
@@ -290,6 +295,11 @@ export default function App() {
         <Route path="/exam-cell/exam-hall-suite" element={<ProtectedRoute><ExamHallSuitePage /></ProtectedRoute>} />
         <Route path="/exam-cell/fee-configuration" element={<ProtectedRoute><FeeConfigurationPage /></ProtectedRoute>} />
         <Route path="/exam-cell/exam-form-setting" element={<ProtectedRoute><ExamFormSettingPage /></ProtectedRoute>} />
+
+        {/* Transport Configuration Routes */}
+        <Route path="/transport/bus-fleet" element={<ProtectedRoute><TransportBusFleet /></ProtectedRoute>} />
+        <Route path="/transport/routes-stages" element={<ProtectedRoute><TransportRoutesStages /></ProtectedRoute>} />
+        <Route path="/transport/driver-database" element={<ProtectedRoute><div className="min-h-screen bg-gradient-to-br from-[#f0f0fa] to-[#BBDEFB] p-4 md:p-6"><div className="rounded-3xl bg-gradient-to-br from-blue-800 via-[#120c7a] to-indigo-950 p-8 text-white text-center"><Users size={64} className="mx-auto mb-4" /><h1 className="text-3xl font-black mb-2">Driver Database</h1><p className="text-blue-100">Coming Soon — Driver database configuration will be added here</p></div></div></ProtectedRoute>} />
 
         {/* Resource Hub Routes */}
         <Route path="/resource-hub" element={<ProtectedRoute><ResourceHubDashboard /></ProtectedRoute>} />

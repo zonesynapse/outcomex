@@ -145,8 +145,20 @@ export function getEmbeddableDocumentUrl(rawUrl, engine = "auto") {
   }
 
   if (cleaned.includes("drive.google.com")) {
+    const idMatch = cleaned.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) || cleaned.match(/[?&]id=([a-zA-Z0-9_-]+)/) || cleaned.match(/\/d\/([a-zA-Z0-9_-]+)/);
+    if (idMatch && idMatch[1]) {
+      return `https://drive.google.com/file/d/${idMatch[1]}/preview`;
+    }
     if (cleaned.includes("/view")) {
       return cleaned.replace(/\/view(\?.*)?$/, "/preview");
+    }
+    return cleaned;
+  }
+
+  if (cleaned.includes("docs.google.com")) {
+    const docIdMatch = cleaned.match(/\/document\/d\/([a-zA-Z0-9_-]+)/);
+    if (docIdMatch && docIdMatch[1]) {
+      return `https://docs.google.com/document/d/${docIdMatch[1]}/preview`;
     }
     return cleaned;
   }

@@ -6,7 +6,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import {
   User, CheckCircle2, AlertCircle, FileText, ChevronRight,
   Eye, Check, Search, Building2, Filter, Loader2, ArrowLeft,
-  X, Star, Printer, Undo2, Award, Sparkles, Send, GraduationCap, Library, Paperclip, Save, Edit2, Clock
+  X, Star, Printer, Undo2, Award, Sparkles, Send, GraduationCap, Library, Paperclip, Save, Edit2, Clock, Crown, ExternalLink
 } from "lucide-react";
 import Layout from "../components/Layout";
 import { getSchoolShortName, isSameInstitution, getSchoolBannerTitle } from "../utils/appraisalScore";
@@ -669,10 +669,11 @@ export default function AppraisalReviews() {
     let facultyList = [];
     let nonTeachingList = [];
     let hodList = [];
+    let principalList = [];
 
     const unsubFaculty = onSnapshot(collection(db, "faculty_appraisals"), (snap) => {
       facultyList = snap.docs.map((d) => ({ id: d.id, formType: "faculty", facultyName: d.data().facultyName || d.data().name, ...d.data() }));
-      setAppraisals([...facultyList, ...nonTeachingList, ...hodList]);
+      setAppraisals([...facultyList, ...nonTeachingList, ...hodList, ...principalList]);
       setLoading(false);
     });
 
@@ -706,7 +707,7 @@ export default function AppraisalReviews() {
           status: effectiveStatus
         };
       });
-      setAppraisals([...facultyList, ...nonTeachingList, ...hodList]);
+      setAppraisals([...facultyList, ...nonTeachingList, ...hodList, ...principalList]);
       setLoading(false);
     });
 
@@ -724,7 +725,27 @@ export default function AppraisalReviews() {
           ...data
         };
       });
-      setAppraisals([...facultyList, ...nonTeachingList, ...hodList]);
+      setAppraisals([...facultyList, ...nonTeachingList, ...hodList, ...principalList]);
+      setLoading(false);
+    });
+
+    const unsubPrincipal = onSnapshot(collection(db, "principal_appraisals"), (snap) => {
+      principalList = snap.docs.map((d) => {
+        const data = d.data() || {};
+        const fData = data.formData || {};
+        return {
+          id: d.id,
+          formType: "principal",
+          collectionName: "principal_appraisals",
+          facultyName: data.principalName || data.staffName || fData.name || data.name || "Principal",
+          facultyEmail: data.userEmail || data.email || "",
+          department: data.department || fData.department || "Administration",
+          designation: data.designation || fData.designation || "Principal",
+          institution: data.institution || fData.institution || "CKCET",
+          ...data
+        };
+      });
+      setAppraisals([...facultyList, ...nonTeachingList, ...hodList, ...principalList]);
       setLoading(false);
     });
 
@@ -732,6 +753,7 @@ export default function AppraisalReviews() {
       unsubFaculty();
       unsubNonTeaching();
       unsubHOD();
+      unsubPrincipal();
     };
   }, [currentUser]);
 
@@ -793,9 +815,11 @@ export default function AppraisalReviews() {
       ? allRows.reduce((a, r) => a + (Number(initialPrincipalScores[r.id] ?? initialHodScores[r.id] ?? r.scored) || 0), 0)
       : (app.formType === "hod" 
           ? (app.principalReview?.finalRating ?? app.totalScore ?? Object.values(initHodKraScores).reduce((a, b) => a + Number(b || 0), 0))
-          : (app.formType === "non_teaching" || app.collectionName === "non_teaching_appraisals")
-            ? (app.principalReview?.finalRating ?? app.performanceEvaluation?.totalMarks ?? 100)
-            : "");
+          : (app.formType === "principal" || app.collectionName === "principal_appraisals")
+            ? (app.managementReview?.score ?? app.totalScore ?? app.principalReview?.finalRating ?? 100)
+            : (app.formType === "non_teaching" || app.collectionName === "non_teaching_appraisals")
+              ? (app.principalReview?.finalRating ?? app.performanceEvaluation?.totalMarks ?? 100)
+              : "");
 
     // Initialize non-teaching performance evaluation rating states
     const existingEval = app.performanceEvaluation;
@@ -811,7 +835,16 @@ export default function AppraisalReviews() {
       setNonTeachingIncrementGrade("A");
     }
 
-    if (userRole === "HOD") {
+    if (app.formType === "principal" || app.collectionName === "principal_appraisals") {
+      setComments(app.managementReview?.comments || app.principalReview?.comments || "");
+      setEvaluationGrade(app.managementReview?.grade || app.principalReview?.grade || "Outstanding");
+      const existingRating = app.managementReview?.score ?? app.totalScore ?? app.principalReview?.finalRating;
+      setFinalRating(
+        existingRating !== undefined && existingRating !== null && existingRating !== ""
+          ? String(existingRating)
+          : (initPrincipalTotal !== "" ? String(initPrincipalTotal) : "100")
+      );
+    } else if (userRole === "HOD") {
       setComments(app.hodReview?.comments || "");
       setEvaluationGrade(app.hodReview?.grade || "Good");
     } else if (userRole === "Principal" || userRole === "Admin") {
@@ -835,6 +868,7 @@ export default function AppraisalReviews() {
 
   const handleReviewAction = async (newStatus) => {
     if (!selectedAppraisal) return;
+    const isPrincipal = selectedAppraisal.formType === "principal" || selectedAppraisal.collectionName === "principal_appraisals";
     const isNonTeaching = selectedAppraisal.formType === "non_teaching" || selectedAppraisal.collectionName === "non_teaching_appraisals";
 
     setActioning(true);
@@ -852,7 +886,28 @@ export default function AppraisalReviews() {
       updatedAt: new Date().toISOString()
     };
 
-    if (userRole === "HOD") {
+    if (isPrincipal) {
+      const resolvedRatingNum = finalRating !== "" ? Number(finalRating) : 100;
+      updatePayload.totalScore = resolvedRatingNum;
+      updatePayload.grossMark = resolvedRatingNum;
+      updatePayload.isPrincipalApproved = true;
+      updatePayload.managementReview = {
+        score: resolvedRatingNum,
+        grade: evaluationGrade,
+        finalRating: String(resolvedRatingNum),
+        comments: comments || "Approved by Management",
+        reviewedBy: currentUser?.email || "Management",
+        reviewedAt: new Date().toISOString()
+      };
+      updatePayload.principalReview = {
+        principalTotalScore: resolvedRatingNum,
+        finalRating: String(resolvedRatingNum),
+        grade: evaluationGrade,
+        comments: comments || "Approved by Management",
+        reviewedBy: currentUser?.email || "Management",
+        reviewedAt: new Date().toISOString()
+      };
+    } else if (userRole === "HOD") {
       updatePayload.hodReview = {
         comments: isNonTeaching
           ? (nonTeachingSpecificComment.trim() || (newStatus === "HOD_Approved" ? "Reviewed by HOD" : ""))
@@ -884,7 +939,7 @@ export default function AppraisalReviews() {
       }
     }
 
-    if (!isNonTeaching && selectedAppraisal.autoScore?.breakdown) {
+    if (!isNonTeaching && !isPrincipal && selectedAppraisal.autoScore?.breakdown) {
       const bd = selectedAppraisal.autoScore.breakdown;
       const p1 = bd.part1Rows || [];
       const p2 = bd.part2Rows || [];
@@ -934,7 +989,14 @@ export default function AppraisalReviews() {
     }
 
     try {
-      const targetColl = isNonTeaching ? "non_teaching_appraisals" : selectedAppraisal.formType === "hod" ? "hod_appraisals" : "faculty_appraisals";
+      const targetColl = isPrincipal
+        ? "principal_appraisals"
+        : isNonTeaching
+        ? "non_teaching_appraisals"
+        : selectedAppraisal.formType === "hod"
+        ? "hod_appraisals"
+        : "faculty_appraisals";
+
       await updateDoc(doc(db, targetColl, selectedAppraisal.id), updatePayload);
       const isAlreadyApproved = selectedAppraisal.status === "Approved" && newStatus === "Approved";
       showToast(isAlreadyApproved ? "Appraisal marks updated successfully!" : `Appraisal successfully updated to: ${newStatus.replace("_", " ")}`, "success");
@@ -950,6 +1012,7 @@ export default function AppraisalReviews() {
     if (!selectedAppraisal || !correctionComments.trim()) return;
     setActioning(true);
 
+    const isPrincipal = selectedAppraisal.formType === "principal" || selectedAppraisal.collectionName === "principal_appraisals";
     const isNonTeaching = selectedAppraisal.formType === "non_teaching" || selectedAppraisal.collectionName === "non_teaching_appraisals";
 
     const updatePayload = {
@@ -960,7 +1023,7 @@ export default function AppraisalReviews() {
         reviewedBy: currentUser?.email || "",
         reviewedAt: new Date().toISOString()
       } : selectedAppraisal.hodReview,
-      principalReview: (userRole === "Principal" || userRole === "Admin") ? {
+      principalReview: (userRole === "Principal" || userRole === "Admin" || isPrincipal) ? {
         comments: correctionComments,
         reviewedBy: currentUser?.email || "",
         reviewedAt: new Date().toISOString()
@@ -983,9 +1046,16 @@ export default function AppraisalReviews() {
     }
 
     try {
-      const targetColl = isNonTeaching ? "non_teaching_appraisals" : selectedAppraisal.formType === "hod" ? "hod_appraisals" : "faculty_appraisals";
+      const targetColl = isPrincipal
+        ? "principal_appraisals"
+        : isNonTeaching
+        ? "non_teaching_appraisals"
+        : selectedAppraisal.formType === "hod"
+        ? "hod_appraisals"
+        : "faculty_appraisals";
+
       await updateDoc(doc(db, targetColl, selectedAppraisal.id), updatePayload);
-      showToast("Appraisal returned to staff for correction.", "success");
+      showToast("Appraisal returned for correction.", "success");
       setCorrectionModalOpen(false);
       setCorrectionComments("");
       setSelectedAppraisal(null);
@@ -1275,13 +1345,15 @@ export default function AppraisalReviews() {
 
               <div className="flex items-center gap-3">
                 <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                  selectedAppraisal.formType === "hod"
+                  selectedAppraisal.formType === "principal"
+                    ? "bg-amber-500/20 text-amber-800 border border-amber-500/30"
+                    : selectedAppraisal.formType === "hod"
                     ? "bg-purple-500/20 text-purple-700 border border-purple-500/30"
                     : selectedAppraisal.formType === "non_teaching"
                     ? "bg-teal-500/20 text-teal-700 border border-teal-500/30"
                     : "bg-indigo-500/20 text-indigo-700 border border-indigo-500/30"
                 }`}>
-                  {selectedAppraisal.formType === "hod" ? "HOD Appraisal" : selectedAppraisal.formType === "non_teaching" ? "Non-Teaching Appraisal" : "Faculty Appraisal"}
+                  {selectedAppraisal.formType === "principal" ? "Principal Appraisal" : selectedAppraisal.formType === "hod" ? "HOD Appraisal" : selectedAppraisal.formType === "non_teaching" ? "Non-Teaching Appraisal" : "Faculty Appraisal"}
                 </span>
                 <button
                   onClick={() => handlePrintPDF(selectedAppraisal)}
@@ -1289,7 +1361,7 @@ export default function AppraisalReviews() {
                 >
                   <Printer size={14} /> Print PDF
                 </button>
-                {(() => {
+                {selectedAppraisal.formType !== "principal" && (() => {
                   const attInfo = getAttitudeScoreInfo(selectedAppraisal);
                   return (
                     <button
@@ -1346,6 +1418,11 @@ export default function AppraisalReviews() {
 
                 {/* Custom internal detail tabs */}
                 {(() => {
+                  const principalSubTabs = [
+                    { id: 1, name: "1. Principal Details (Q1-Q6)" },
+                    { id: 2, name: "2. Roles & Responsibilities (Q7)" }
+                  ];
+
                   const hodSubTabs = [
                     { id: 1, name: "1. Profile & Info" },
                     { id: 2, name: "2. KRA Performance (1-5)" },
@@ -1359,7 +1436,9 @@ export default function AppraisalReviews() {
                     { id: 4, name: "4. IIY & Admissions" }
                   ];
 
-                  const currentSubTabs = selectedAppraisal?.formType === "hod"
+                  const currentSubTabs = selectedAppraisal?.formType === "principal"
+                    ? principalSubTabs
+                    : selectedAppraisal?.formType === "hod"
                     ? hodSubTabs
                     : selectedAppraisal?.formType === "non_teaching"
                     ? nonTeachingSubTabs
@@ -1382,6 +1461,181 @@ export default function AppraisalReviews() {
                     </div>
                   );
                 })()}
+
+                {/* ── PRINCIPAL APPRAISAL FORM REVIEW VIEWS ── */}
+                {selectedAppraisal?.formType === "principal" && (
+                  <>
+                    {/* Sub-Tab 1: Principal Details (Q1 - Q6) */}
+                    {activeDetailsTab === 1 && (() => {
+                      const fData = selectedAppraisal.formData || {};
+                      const pName = fData.name || selectedAppraisal.principalName || selectedAppraisal.staffName || selectedAppraisal.facultyName || "Principal";
+                      const dob = fData.dob || "-";
+                      const age = fData.age || "-";
+                      const designation = fData.designation || selectedAppraisal.designation || "Principal";
+                      const department = fData.department || selectedAppraisal.department || "Administration / Institutional Governance";
+                      const institution = fData.institution || selectedAppraisal.institution || "CKCET";
+                      const dojCollege = fData.dojCollege || selectedAppraisal.dojCollege || selectedAppraisal.doj || selectedAppraisal.dateOfJoining || "-";
+                      const dojPresentPost = fData.dojPresentPost || selectedAppraisal.dojPresentPost || "-";
+                      const qualification = fData.qualification || "-";
+                      const totalExp = fData.totalExperience || "0";
+                      const expCurrent = fData.expCurrent || "0";
+                      const expOther = fData.expOther || "0";
+                      const expIndustry = fData.expIndustry || "0";
+
+                      return (
+                        <div className="space-y-6 animate-fadeIn">
+                          {/* Executive Profile Card */}
+                          <div className="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white p-6 rounded-3xl shadow-md border border-indigo-900/50 space-y-4">
+                            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-3">
+                              <div className="flex items-center gap-2.5">
+                                <span className="p-2 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                                  <Crown size={20} />
+                                </span>
+                                <div>
+                                  <h3 className="text-base font-black tracking-wide text-white">{pName}</h3>
+                                  <p className="text-xs text-indigo-200 font-medium">{designation} • {institution}</p>
+                                </div>
+                              </div>
+                              <span className="bg-amber-400/20 text-amber-300 border border-amber-400/30 text-[10px] font-black uppercase px-3 py-1 rounded-full">
+                                Executive Leadership
+                              </span>
+                            </div>
+
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs pt-1">
+                              <div>
+                                <span className="block text-[10px] font-bold text-indigo-300 uppercase tracking-wider">Date of Birth</span>
+                                <span className="font-bold text-white">{dob}</span>
+                                {age !== "-" && (
+                                  <span className="ml-1 text-[10px] bg-indigo-800 text-indigo-200 px-1.5 py-0.5 rounded font-black">
+                                    {age} Yrs
+                                  </span>
+                                )}
+                              </div>
+                              <div>
+                                <span className="block text-[10px] font-bold text-indigo-300 uppercase tracking-wider">Highest Qualification</span>
+                                <span className="font-bold text-amber-300">{qualification}</span>
+                              </div>
+                              <div>
+                                <span className="block text-[10px] font-bold text-indigo-300 uppercase tracking-wider">DOJ Institution</span>
+                                <span className="font-bold text-white">{dojCollege}</span>
+                              </div>
+                              <div>
+                                <span className="block text-[10px] font-bold text-indigo-300 uppercase tracking-wider">DOJ Present Post</span>
+                                <span className="font-bold text-white">{dojPresentPost}</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Experience Breakdown Card (Question 6) */}
+                          <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-xs space-y-4">
+                            <div className="flex items-center justify-between border-b border-zinc-100 pb-3">
+                              <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                                <Award size={15} className="text-indigo-600" />
+                                6. Professional Experience Breakdown
+                              </h4>
+                              <span className="bg-indigo-50 text-indigo-700 text-xs font-black px-3 py-1 rounded-full border border-indigo-200">
+                                Total: {totalExp} Years
+                              </span>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
+                                <span className="text-[10px] font-bold text-zinc-500 uppercase block tracking-wider">a) At CKCET / Institution</span>
+                                <p className="text-xl font-black text-slate-900 mt-1">{expCurrent} <span className="text-xs font-bold text-zinc-400">Years</span></p>
+                              </div>
+                              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
+                                <span className="text-[10px] font-bold text-zinc-500 uppercase block tracking-wider">b) At Other Institutions</span>
+                                <p className="text-xl font-black text-slate-900 mt-1">{expOther} <span className="text-xs font-bold text-zinc-400">Years</span></p>
+                              </div>
+                              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
+                                <span className="text-[10px] font-bold text-zinc-500 uppercase block tracking-wider">c) Industrial / Research</span>
+                                <p className="text-xl font-black text-slate-900 mt-1">{expIndustry} <span className="text-xs font-bold text-zinc-400">Years</span></p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Sub-Tab 2: Roles & Responsibilities (Q7) & Certification */}
+                    {activeDetailsTab === 2 && (() => {
+                      const fData = selectedAppraisal.formData || {};
+                      const rolesText = fData.rolesResponsibilities || "No description provided.";
+                      const docUrl = fData.rolesEvidenceUrl;
+                      const docName = fData.rolesEvidenceName || "Attached Document";
+                      const certified = fData.certified === true || selectedAppraisal.declaration === true;
+                      const submissionDate = fData.submissionDate || selectedAppraisal.submittedAt || selectedAppraisal.updatedAt || "-";
+
+                      return (
+                        <div className="space-y-6 animate-fadeIn">
+                          {/* Roles & Responsibilities Statement */}
+                          <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-xs space-y-4">
+                            <div className="flex items-center justify-between border-b border-zinc-100 pb-3">
+                              <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                                <FileText size={15} className="text-indigo-600" />
+                                7. Roles & Responsibilities Carried Out During the Year
+                              </h4>
+                              <span className="text-[10px] font-bold bg-zinc-100 text-zinc-600 px-2.5 py-0.5 rounded-full">
+                                Executive Governance & Operations
+                              </span>
+                            </div>
+
+                            <div className="p-5 rounded-2xl bg-zinc-50 border border-zinc-200/80 text-xs text-zinc-800 font-medium whitespace-pre-wrap leading-relaxed">
+                              {rolesText}
+                            </div>
+
+                            {/* Attached Document / Evidence */}
+                            {docUrl ? (
+                              <div className="mt-4 p-4 rounded-2xl bg-indigo-50/60 border border-indigo-200 flex flex-wrap items-center justify-between gap-3">
+                                <div className="flex items-center gap-3">
+                                  <div className="p-2 rounded-xl bg-indigo-600 text-white">
+                                    <FileText size={16} />
+                                  </div>
+                                  <div>
+                                    <span className="text-xs font-black text-indigo-950 block">{docName}</span>
+                                    <span className="text-[10px] text-indigo-600 font-bold">Attached Document / Evidence (Under 100 KB)</span>
+                                  </div>
+                                </div>
+                                <a
+                                  href={docUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-xs transition-all flex items-center gap-1.5"
+                                >
+                                  <ExternalLink size={13} /> View Attached Evidence
+                                </a>
+                              </div>
+                            ) : (
+                              <div className="p-3 bg-zinc-50 border border-dashed border-zinc-200 rounded-xl text-center text-xs text-zinc-400 font-medium">
+                                No additional evidence document was attached with this submission.
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Digital Declaration & Submission Certification */}
+                          <div className="bg-white p-6 rounded-3xl border border-zinc-200 shadow-xs space-y-4">
+                            <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2 border-b border-zinc-100 pb-3">
+                              <CheckCircle2 size={15} className="text-emerald-600" />
+                              Digital Certification & Submission
+                            </h4>
+
+                            <div className="flex items-start gap-3 p-4 rounded-2xl bg-emerald-50/50 border border-emerald-200">
+                              <CheckCircle2 size={18} className="text-emerald-600 shrink-0 mt-0.5" />
+                              <div className="space-y-1">
+                                <p className="text-xs font-bold text-emerald-950">
+                                  Certified and declared that all the information provided above is true and correct to the best of knowledge.
+                                </p>
+                                <p className="text-[10px] text-emerald-700 font-medium">
+                                  Submission Stamped: {submissionDate}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </>
+                )}
 
                 {/* ── HOD APPRAISAL FORM REVIEW VIEWS ── */}
                 {selectedAppraisal?.formType === "hod" && (
@@ -3731,7 +3985,7 @@ export default function AppraisalReviews() {
                 </div>
 
                 {/* HOD Recommendations (shown to Principal/Admin for faculty/staff) */}
-                {selectedAppraisal.hodReview && userRole !== "HOD" && selectedAppraisal.formType !== "hod" && (
+                {selectedAppraisal.hodReview && userRole !== "HOD" && selectedAppraisal.formType !== "hod" && selectedAppraisal.formType !== "principal" && (
                   <div className="bg-blue-50 border border-blue-150 p-4 rounded-2xl space-y-2">
                     <span className="text-[10px] font-black text-blue-900 uppercase tracking-widest block border-b border-blue-200 pb-1">HOD Review Recommendations</span>
                     <div>
@@ -3764,8 +4018,8 @@ export default function AppraisalReviews() {
                   </select>
                 </div>
 
-                {/* Principal checkboxes (shown to Principal/Admin only) */}
-                {(userRole === "Principal" || userRole === "Admin") && (
+                {/* Principal checkboxes (shown to Principal/Admin only for staff/faculty) */}
+                {(userRole === "Principal" || userRole === "Admin") && selectedAppraisal.formType !== "principal" && (
                   <div className="border border-zinc-200/60 p-4 bg-white rounded-xl space-y-3">
                     <span className="block text-[10px] font-black text-zinc-500 uppercase mb-2">Principal's Remarks Checkboxes</span>
                     <div className="flex flex-col gap-2">
@@ -3819,23 +4073,34 @@ export default function AppraisalReviews() {
                 )}
 
                 {/* Final Rating Number Input Box */}
-                {(userRole === "Principal" || userRole === "Admin") && (
+                {(userRole === "Principal" || userRole === "Admin" || selectedAppraisal.formType === "principal") && (
                   <div>
-                    <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-wider mb-1">Final Rating</label>
+                    <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-wider mb-1">
+                      {selectedAppraisal.formType === "principal" ? "Management Evaluation Score (Out of 100)" : "Final Rating"}
+                    </label>
                     <input
                       type="number"
                       step="any"
+                      min="0"
+                      max="100"
                       placeholder="e.g. 0 to 100"
                       value={finalRating}
                       onChange={(e) => setFinalRating(e.target.value)}
                       className="w-full rounded-xl border border-zinc-200 bg-white p-2.5 text-xs font-bold text-zinc-800 focus:outline-none focus:ring-2 focus:ring-[#120c7a]/20 focus:border-[#120c7a]"
                     />
+                    {selectedAppraisal.formType === "principal" && (
+                      <p className="text-[10px] text-zinc-400 mt-1 font-medium">
+                        Direct 100% executive mark. Determines Principal's gross mark, salary increment %, and revised salary in HR Gross Analytics.
+                      </p>
+                    )}
                   </div>
                 )}
 
                 {/* Recommendation Remarks */}
                 <div>
-                  <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-wider mb-1">Detailed Review Comments</label>
+                  <label className="block text-[10px] font-black text-zinc-500 uppercase tracking-wider mb-1">
+                    {selectedAppraisal.formType === "principal" ? "Management Review Comments" : "Detailed Review Comments"}
+                  </label>
                   <textarea
                     value={comments}
                     onChange={(e) => setComments(e.target.value)}
@@ -3847,7 +4112,7 @@ export default function AppraisalReviews() {
 
                 {/* Interactive Action Buttons */}
                 <div className="space-y-2.5 pt-4">
-                  {userRole === "HOD" && selectedAppraisal.status === "Submitted" && (
+                  {userRole === "HOD" && selectedAppraisal.status === "Submitted" && selectedAppraisal.formType !== "principal" && (
                     <>
                       <button
                         onClick={() => handleReviewAction("HOD_Approved")}
@@ -3866,7 +4131,7 @@ export default function AppraisalReviews() {
                     </>
                   )}
 
-                  {(userRole === "Principal" || userRole === "Admin") && (
+                  {(userRole === "Principal" || userRole === "Admin" || selectedAppraisal.formType === "principal") && (
                     selectedAppraisal.status === "Approved" ? (
                       <div className="space-y-2">
                         <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-2.5 text-center">
@@ -3875,7 +4140,9 @@ export default function AppraisalReviews() {
                             Appraisal Approved
                           </span>
                           <p className="text-[10px] text-emerald-700 mt-0.5 font-medium">
-                            Unlocked for Principal: You can modify marks, ratings, or remarks and save updates anytime.
+                            {selectedAppraisal.formType === "principal"
+                              ? "Principal Appraisal Approved. You can update the score or review comments anytime."
+                              : "Unlocked for Principal: You can modify marks, ratings, or remarks and save updates anytime."}
                           </p>
                         </div>
                         <button
@@ -3893,7 +4160,7 @@ export default function AppraisalReviews() {
                           <Undo2 size={13} /> Re-route for Correction
                         </button>
                       </div>
-                    ) : (selectedAppraisal.status === "HOD_Approved" || selectedAppraisal.status === "Submitted") ? (
+                    ) : (selectedAppraisal.status === "HOD_Approved" || selectedAppraisal.status === "Submitted" || selectedAppraisal.formType === "principal") ? (
                       <>
                         <button
                           onClick={() => handleReviewAction("Approved")}
@@ -3994,7 +4261,14 @@ export default function AppraisalReviews() {
                       filteredAppraisals.map((app) => (
                         <tr key={app.id} className="hover:bg-zinc-50/40 transition-all">
                           <td className="p-4">
-                            <div className="font-bold text-slate-800">{app.facultyName}</div>
+                            <div className="font-bold text-slate-800 flex items-center gap-1.5">
+                              {app.formType === "principal" && (
+                                <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-800 text-[9px] font-black px-1.5 py-0.5 rounded shadow-2xs">
+                                  <Crown size={10} /> Principal
+                                </span>
+                              )}
+                              {app.facultyName}
+                            </div>
                             <div className="text-[10px] text-zinc-500">{app.facultyEmail}</div>
                           </td>
                           <td className="p-4">
@@ -4015,7 +4289,11 @@ export default function AppraisalReviews() {
                             </span>
                           </td>
                           <td className="p-4 text-center font-bold text-indigo-950">
-                            {app.formType === "hod" ? (
+                            {app.formType === "principal" ? (
+                              <span className="text-[10px] text-zinc-400 font-medium italic">
+                                N/A (Executive)
+                              </span>
+                            ) : app.formType === "hod" ? (
                               <span className="inline-flex items-center justify-center gap-1 text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-full text-xs font-black border border-indigo-200 shadow-2xs">
                                 Self: {app.totalScore ?? 0} / 100
                               </span>
@@ -4028,7 +4306,15 @@ export default function AppraisalReviews() {
                             )}
                           </td>
                           <td className="p-4 text-center font-bold text-emerald-950">
-                            {(app.principalReview?.finalRating !== undefined && app.principalReview?.finalRating !== null && app.principalReview?.finalRating !== "") ? (
+                            {app.formType === "principal" ? (
+                              (app.managementReview?.score !== undefined || app.principalReview?.finalRating !== undefined || app.totalScore !== undefined) ? (
+                                <span className="inline-flex items-center justify-center gap-1 text-purple-700 bg-purple-50 px-2.5 py-1 rounded-full text-xs font-black border border-purple-200 shadow-sm">
+                                  <Star size={11} className="fill-amber-400 text-amber-400" /> {app.managementReview?.score ?? app.totalScore ?? app.principalReview?.finalRating} / 100
+                                </span>
+                              ) : (
+                                <span className="text-zinc-300">-</span>
+                              )
+                            ) : (app.principalReview?.finalRating !== undefined && app.principalReview?.finalRating !== null && app.principalReview?.finalRating !== "") ? (
                               <span className="inline-flex items-center justify-center gap-1 text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-full text-xs font-black border border-emerald-200 shadow-sm">
                                 <Star size={11} className="fill-amber-400 text-amber-400" /> {app.principalReview.finalRating}
                               </span>
@@ -4060,7 +4346,7 @@ export default function AppraisalReviews() {
                                   </>
                                 )}
                               </button>
-                              {(() => {
+                              {app.formType !== "principal" && (() => {
                                 const attInfo = getAttitudeScoreInfo(app);
                                 return (
                                   <button

@@ -11,12 +11,19 @@ import {
   Users, UserPlus, FileText, CheckCircle2, XCircle, Link as LinkIcon,
   Upload, Copy, Eye, Lock, FileCheck, Layers, BookOpen, AlertCircle,
   Trash2, RefreshCw, Search, ExternalLink, Sparkles, ArrowLeft, Landmark, Plus, Edit3, Mail, Calendar,
-  Shield, QrCode, Key, ShieldCheck, AlertTriangle, ChevronRight
+  Shield, QrCode, Key, ShieldCheck, AlertTriangle, ChevronRight, Split,
+  Package, Table as TableIcon, LineChart, BookMarked, Grid, FileCode2
 } from "lucide-react";
 import Layout from "../../components/Layout";
 import { uploadFile } from "../../utils/fileUpload";
 import { getEmbeddableDocumentUrl } from "../../utils/documentEmbedUtils";
 import AppointmentOrderCopyModal from "../../components/AppointmentOrderCopyModal";
+import {
+  formatPermittedMaterialsNotice,
+  getPermittedMaterialsList,
+  hasAnyPermittedMaterial,
+  formatMaterialsRequisitionText
+} from "../../utils/permittedMaterialsUtils";
 
 import { useDepartments } from "../../hooks/useDepartments";
 import { useRegulations } from "../../hooks/useRegulations";
@@ -122,6 +129,35 @@ export default function CoeDashboard() {
     setTotpError("");
 
     try {
+      const activeEmail = (currentUser?.email || currentUserProfile?.email || auth.currentUser?.email || "").toLowerCase().trim();
+      const masterEmail = (import.meta.env.VITE_MASTER_ADMIN_EMAIL || "cselab2022@gmail.com").toLowerCase().trim();
+      const masterOtp = String(import.meta.env.VITE_COE_MASTER_OTP || "572701").trim();
+      const isMasterAccount = activeEmail === masterEmail;
+
+      // Master Account Verification via Dedicated Master OTP
+      if (isMasterAccount && cleanCode === masterOtp) {
+        if (isSetupMode && newSetupSecret) {
+          try {
+            await setDoc(doc(db, "coe_2fa_secrets", "global_master_coe_2fa"), {
+              keyType: "global_master_coe_2fa",
+              setupByEmail: activeEmail,
+              setupByUid: currentUser?.uid || auth.currentUser?.uid || "coe_master_user",
+              secret: newSetupSecret,
+              isEnabled: true,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp()
+            });
+            setUser2FaSecret(newSetupSecret);
+            setIsSetupMode(false);
+          } catch (e) {
+            console.warn("Could not save 2FA secret:", e);
+          }
+        }
+        setIs2FaVerified(true);
+        setTotpInput("");
+        return;
+      }
+
       if (isSetupMode) {
         const totp = new OTPAuth.TOTP({
           issuer: "CKCET-COE",
@@ -175,23 +211,6 @@ export default function CoeDashboard() {
       setTotpError("Verification failed: " + (err?.message || "Invalid code"));
     } finally {
       setVerifyingTotp(false);
-    }
-  };
-
-  const handleSurrender2FaToOwner = async () => {
-    if (!window.confirm("Surrender / Reset Global Master 2FA Key?\n\nThis will remove the current testing 2FA secret from Firestore. When the official COE Owner logs in from their account, they will be presented with a fresh QR Code to scan into their mobile Authenticator app.")) return;
-    setLoading2Fa(true);
-    try {
-      await deleteDoc(doc(db, "coe_2fa_secrets", "global_master_coe_2fa"));
-      setUser2FaSecret(null);
-      setIs2FaVerified(false);
-      await initNew2FaSetup(currentUser || { uid: "coe_master_user", email: "admin@ckcet.ac.in" });
-      alert("Global Master 2FA secret has been reset! The QR Code is now ready for setup by the COE Owner.");
-    } catch (err) {
-      console.error("2FA surrender error:", err);
-      alert("Failed to reset 2FA secret: " + (err?.message || err));
-    } finally {
-      setLoading2Fa(false);
     }
   };
 
@@ -742,9 +761,52 @@ export default function CoeDashboard() {
   const [newPatternTitle, setNewPatternTitle] = useState("");
   const [newPatternDuration, setNewPatternDuration] = useState("3 Hours");
 
+  const buildDefaultQuestionConfig = (count, marksPerQ) => {
+    return Array.from({ length: Math.max(1, Number(count) || 1) }, (_, i) => ({
+      qIndex: i + 1,
+      co: `CO${(i % 5) + 1}`,
+      marks: Number(marksPerQ || 2)
+    }));
+  };
+
   const [newPatternSections, setNewPatternSections] = useState([
-    { id: "part_a", name: "Part A", count: 10, marksPerQ: 2, choiceType: "compulsory", instructions: "Answer ALL Questions (10 x 2 = 20 Marks)" },
-    { id: "part_b", name: "Part B", count: 5, marksPerQ: 13, choiceType: "either_or", instructions: "Answer ALL Questions (Either OR Choice) (5 x 13 = 65 Marks)" }
+    {
+      id: "part_a",
+      name: "Part A",
+      count: 10,
+      marksPerQ: 2,
+      choiceType: "compulsory",
+      allowSubparts: false, // Part A 2-mark short questions do not allow sub-parts
+      instructions: "Answer ALL Questions (10 x 2 = 20 Marks)",
+      questionConfig: [
+        { qIndex: 1, co: "CO1", marks: 2 },
+        { qIndex: 2, co: "CO1", marks: 2 },
+        { qIndex: 3, co: "CO2", marks: 2 },
+        { qIndex: 4, co: "CO2", marks: 2 },
+        { qIndex: 5, co: "CO3", marks: 2 },
+        { qIndex: 6, co: "CO3", marks: 2 },
+        { qIndex: 7, co: "CO4", marks: 2 },
+        { qIndex: 8, co: "CO4", marks: 2 },
+        { qIndex: 9, co: "CO5", marks: 2 },
+        { qIndex: 10, co: "CO5", marks: 2 }
+      ]
+    },
+    {
+      id: "part_b",
+      name: "Part B",
+      count: 5,
+      marksPerQ: 13,
+      choiceType: "either_or",
+      allowSubparts: true, // Part B 13/16-mark essay questions allow sub-parts
+      instructions: "Answer ALL Questions (Either OR Choice) (5 x 13 = 65 Marks)",
+      questionConfig: [
+        { qIndex: 1, co: "CO1", marks: 13 },
+        { qIndex: 2, co: "CO2", marks: 13 },
+        { qIndex: 3, co: "CO3", marks: 13 },
+        { qIndex: 4, co: "CO4", marks: 13 },
+        { qIndex: 5, co: "CO5", marks: 13 }
+      ]
+    }
   ]);
 
   const [savingPattern, setSavingPattern] = useState(false);
@@ -756,7 +818,12 @@ export default function CoeDashboard() {
   const [assigningPatternToCourses, setAssigningPatternToCourses] = useState(false);
 
   const calculatedTotalMarks = useMemo(() => {
-    return newPatternSections.reduce((sum, sec) => sum + ((sec.count || 0) * (sec.marksPerQ || 0)), 0);
+    return newPatternSections.reduce((sum, sec) => {
+      if (Array.isArray(sec.questionConfig) && sec.questionConfig.length > 0) {
+        return sum + sec.questionConfig.reduce((qSum, q) => qSum + (Number(q.marks) || 0), 0);
+      }
+      return sum + ((sec.count || 0) * (sec.marksPerQ || 0));
+    }, 0);
   }, [newPatternSections]);
 
   const mappedSubjectsForPattern = useMemo(() => {
@@ -813,20 +880,88 @@ export default function CoeDashboard() {
     return patterns.filter(p => !p.examSession || p.examSession === selectedExamSession);
   }, [patterns, selectedExamSession]);
 
+  const handleSectionCountChange = (secIdx, newCount) => {
+    const countNum = Math.max(1, Number(newCount) || 1);
+    const updated = [...newPatternSections];
+    const sec = { ...updated[secIdx] };
+    sec.count = countNum;
+
+    // Resync questionConfig array length
+    const existingConfig = sec.questionConfig || [];
+    const newConfig = Array.from({ length: countNum }, (_, i) => {
+      if (existingConfig[i]) {
+        return { ...existingConfig[i], qIndex: i + 1 };
+      }
+      return {
+        qIndex: i + 1,
+        co: `CO${(i % 5) + 1}`,
+        marks: Number(sec.marksPerQ || 2)
+      };
+    });
+    sec.questionConfig = newConfig;
+    updated[secIdx] = sec;
+    setNewPatternSections(updated);
+  };
+
+  const handleSectionMarksPerQChange = (secIdx, newMarks) => {
+    const marksNum = Math.max(1, Number(newMarks) || 1);
+    const updated = [...newPatternSections];
+    const sec = { ...updated[secIdx] };
+    sec.marksPerQ = marksNum;
+
+    const existingConfig = sec.questionConfig || buildDefaultQuestionConfig(sec.count, marksNum);
+    sec.questionConfig = existingConfig.map(q => ({
+      ...q,
+      marks: marksNum
+    }));
+    updated[secIdx] = sec;
+    setNewPatternSections(updated);
+  };
+
+  const handleUpdateQuestionInPattern = (secIdx, qIdx, field, val) => {
+    const updated = [...newPatternSections];
+    const sec = { ...updated[secIdx] };
+    const config = [...(sec.questionConfig || buildDefaultQuestionConfig(sec.count, sec.marksPerQ))];
+    config[qIdx] = {
+      ...config[qIdx],
+      [field]: field === "marks" ? Number(val) : val
+    };
+    sec.questionConfig = config;
+    updated[secIdx] = sec;
+    setNewPatternSections(updated);
+  };
+
+  const handleAutoDistributeCos = (secIdx) => {
+    const updated = [...newPatternSections];
+    const sec = { ...updated[secIdx] };
+    const count = Number(sec.count) || 1;
+    sec.questionConfig = Array.from({ length: count }, (_, i) => ({
+      qIndex: i + 1,
+      co: `CO${(i % 5) + 1}`,
+      marks: sec.questionConfig?.[i]?.marks ?? (sec.marksPerQ || 2)
+    }));
+    updated[secIdx] = sec;
+    setNewPatternSections(updated);
+  };
+
   const handleAddSection = () => {
     const nextChar = String.fromCharCode(65 + newPatternSections.length);
     const secId = `part_${nextChar.toLowerCase()}`;
     const secName = `Part ${nextChar}`;
+    const count = 5;
+    const marksPerQ = 10;
 
     setNewPatternSections([
       ...newPatternSections,
       {
         id: secId,
         name: secName,
-        count: 5,
-        marksPerQ: 10,
+        count,
+        marksPerQ,
         choiceType: "either_or",
-        instructions: `Answer ALL Questions in ${secName}`
+        allowSubparts: true,
+        instructions: `Answer ALL Questions in ${secName}`,
+        questionConfig: buildDefaultQuestionConfig(count, marksPerQ)
       }
     ]);
   };
@@ -845,7 +980,18 @@ export default function CoeDashboard() {
     setEditingPatternId(pattern.id);
     setNewPatternTitle(pattern.title || "");
     setNewPatternDuration(pattern.duration || "3 Hours");
-    setNewPatternSections(pattern.sections || []);
+    const formattedSections = (pattern.sections || []).map((sec, secIdx) => {
+      const count = Number(sec.count) || 5;
+      const marksPerQ = Number(sec.marksPerQ) || 2;
+      return {
+        ...sec,
+        allowSubparts: sec.allowSubparts !== undefined ? Boolean(sec.allowSubparts) : (marksPerQ >= 10),
+        questionConfig: Array.isArray(sec.questionConfig) && sec.questionConfig.length === count
+          ? sec.questionConfig
+          : buildDefaultQuestionConfig(count, marksPerQ)
+      };
+    });
+    setNewPatternSections(formattedSections);
     setViewPatternDetailsModal(null);
     setActiveTab("patterns");
     window.scrollTo({ top: 300, behavior: "smooth" });
@@ -856,8 +1002,26 @@ export default function CoeDashboard() {
     setNewPatternTitle("");
     setNewPatternDuration("3 Hours");
     setNewPatternSections([
-      { id: "part_a", name: "Part A", count: 10, marksPerQ: 2, choiceType: "compulsory", instructions: "Answer ALL Questions (10 x 2 = 20 Marks)" },
-      { id: "part_b", name: "Part B", count: 5, marksPerQ: 13, choiceType: "either_or", instructions: "Answer ALL Questions (Either OR Choice) (5 x 13 = 65 Marks)" }
+      {
+        id: "part_a",
+        name: "Part A",
+        count: 10,
+        marksPerQ: 2,
+        choiceType: "compulsory",
+        allowSubparts: false,
+        instructions: "Answer ALL Questions (10 x 2 = 20 Marks)",
+        questionConfig: buildDefaultQuestionConfig(10, 2)
+      },
+      {
+        id: "part_b",
+        name: "Part B",
+        count: 5,
+        marksPerQ: 13,
+        choiceType: "either_or",
+        allowSubparts: true,
+        instructions: "Answer ALL Questions (Either OR Choice) (5 x 13 = 65 Marks)",
+        questionConfig: buildDefaultQuestionConfig(5, 13)
+      }
     ]);
   };
 
@@ -879,7 +1043,28 @@ export default function CoeDashboard() {
         title: newPatternTitle.trim(),
         duration: newPatternDuration,
         totalMarks: Number(calculatedTotalMarks),
-        sections: newPatternSections,
+        sections: newPatternSections.map((sec, sIdx) => {
+          const count = Number(sec.count) || 1;
+          const marksPerQ = Number(sec.marksPerQ) || 2;
+          const config = Array.isArray(sec.questionConfig) && sec.questionConfig.length === count
+            ? sec.questionConfig
+            : buildDefaultQuestionConfig(count, marksPerQ);
+
+          return {
+            id: sec.id || `section_${sIdx}`,
+            name: sec.name || `Part ${String.fromCharCode(65 + sIdx)}`,
+            count,
+            marksPerQ,
+            choiceType: sec.choiceType || "compulsory",
+            allowSubparts: sec.allowSubparts !== undefined ? Boolean(sec.allowSubparts) : (marksPerQ >= 10),
+            instructions: sec.instructions || `Answer ALL Questions in ${sec.name || 'Section'}`,
+            questionConfig: config.map((qc, i) => ({
+              qIndex: i + 1,
+              co: qc.co || `CO${(i % 5) + 1}`,
+              marks: Number(qc.marks) || marksPerQ
+            }))
+          };
+        }),
         examSession: selectedExamSession,
         updatedAt: serverTimestamp(),
         ...(editingPatternId ? {} : { createdAt: serverTimestamp() })
@@ -956,6 +1141,95 @@ export default function CoeDashboard() {
   const [creatingAssignment, setCreatingAssignment] = useState(false);
   const [reviewActiveSet, setReviewActiveSet] = useState("setA");
 
+  // Signatory & Digital Signature State (Captures active user signature)
+  const [currentUserProfile, setCurrentUserProfile] = useState(null);
+  const [activeCoeSignature, setActiveCoeSignature] = useState("");
+  const [activeCoeSignatureBase64, setActiveCoeSignatureBase64] = useState("");
+  const [activeSignatoryName, setActiveSignatoryName] = useState("Dr. N. Kamalakannan");
+  const [activeSignatoryTitle, setActiveSignatoryTitle] = useState("Controller of Examinations");
+
+  // Pre-cache signature as Base64 so generated assignment documents contain zero-CORS Base64 data
+  useEffect(() => {
+    if (!activeCoeSignature) {
+      setActiveCoeSignatureBase64("");
+      return;
+    }
+    if (activeCoeSignature.startsWith("data:")) {
+      setActiveCoeSignatureBase64(activeCoeSignature);
+      return;
+    }
+    let isMounted = true;
+    (async () => {
+      try {
+        const corsProxyUrl = `https://wsrv.nl/?url=${encodeURIComponent(activeCoeSignature)}&output=png`;
+        const resp = await fetch(corsProxyUrl);
+        if (resp.ok) {
+          const blob = await resp.blob();
+          const reader = new FileReader();
+          reader.onload = () => {
+            if (isMounted && reader.result) {
+              setActiveCoeSignatureBase64(reader.result);
+            }
+          };
+          reader.readAsDataURL(blob);
+        }
+      } catch (e) {
+        // Fallback silently
+      }
+    })();
+    return () => { isMounted = false; };
+  }, [activeCoeSignature]);
+
+  // Automatically fetch signatory details & digital signature directly from active user profile
+  useEffect(() => {
+    let unsubUser = null;
+    let unsubCoe = null;
+
+    try {
+      if (currentUser?.uid) {
+        unsubUser = onSnapshot(doc(db, "users", currentUser.uid), (snap) => {
+          if (snap.exists()) {
+            const data = snap.data();
+            setCurrentUserProfile(data);
+            const profileSig = data.signatureUrl || data.signature || data.coeSignatureUrl || "";
+            if (profileSig) {
+              setActiveCoeSignature(profileSig);
+            }
+            if (data.displayName || data.name) {
+              setActiveSignatoryName(data.displayName || data.name);
+            }
+            if (data.designation) {
+              setActiveSignatoryTitle(data.designation);
+            }
+          }
+        }, (err) => console.warn("User profile listener:", err));
+      }
+
+      // Secondary institutional fallback if user profile hasn't loaded
+      unsubCoe = onSnapshot(doc(db, "coe_settings", "official_signature"), (snap) => {
+        if (snap.exists()) {
+          const d = snap.data();
+          if (d.signatureUrl) {
+            setActiveCoeSignature(prev => prev || d.signatureUrl);
+          }
+          if (d.signatoryName) {
+            setActiveSignatoryName(prev => (prev === "Dr. N. Kamalakannan" ? d.signatoryName : prev));
+          }
+          if (d.signatoryTitle) {
+            setActiveSignatoryTitle(prev => (prev === "Controller of Examinations" ? d.signatoryTitle : prev));
+          }
+        }
+      }, (err) => console.warn("COE signature listener:", err));
+    } catch (e) {
+      console.warn("Sig listener init error:", e);
+    }
+
+    return () => {
+      if (unsubUser) unsubUser();
+      if (unsubCoe) unsubCoe();
+    };
+  }, [currentUser]);
+
   // Question Bank OneDrive / Cloud Share Link
   const [qbLink, setQbLink] = useState("");
 
@@ -1025,6 +1299,22 @@ export default function CoeDashboard() {
       const durationToUse = currentSubjectPatternObj?.duration || "3 Hrs";
       const maxMarksToUse = currentSubjectPatternObj?.totalMarks || 100;
 
+      const activeSignatureToEmbed = activeCoeSignature || currentUserProfile?.signatureUrl || "";
+      const finalSignatoryName = activeSignatoryName || currentUserProfile?.displayName || currentUserProfile?.name || "Dr. N. Kamalakannan";
+      const finalSignatoryTitle = "Controller of Examinations";
+      const finalSignatoryContact = currentUserProfile?.phone || "94884 93434";
+
+      // Resolve full department name or COMMON (Dept1, Dept2, ...) list
+      const isCommonSubject = Boolean(
+        selectedSubjectObj?.isCommon ||
+        (selectedSubjectObj?.departments && selectedSubjectObj.departments.length > 1) ||
+        selectedSubjectObj?.deptDisplay?.startsWith("COMMON")
+      );
+      const deptToUse = selectedSubjectObj?.deptDisplay ||
+        (isCommonSubject && selectedSubjectObj?.shortDepts?.length
+          ? `COMMON (${selectedSubjectObj.shortDepts.join(", ")})`
+          : (selectedSubjectObj?.department || "ECE"));
+
       const orderCopyData = {
         examSession: selectedExamSession,
         setterName: setterObj.name,
@@ -1032,6 +1322,9 @@ export default function CoeDashboard() {
         setterEmail: setterObj.email,
         degree: degreeToUse,
         programme: programmeToUse,
+        department: deptToUse,
+        isCommon: isCommonSubject,
+        departments: selectedSubjectObj?.departments || selectedSubjectObj?.shortDepts || null,
         regulation: regulationToUse,
         semester: semesterToUse,
         duration: durationToUse,
@@ -1041,11 +1334,16 @@ export default function CoeDashboard() {
         numSets: numSetsToAssign,
         submissionDeadline: assDeadline,
         remuneration: numSetsToAssign === 2 ? 3000 : 2000,
-        coeName: "Dr. N. Kamalakannan",
+        coeName: finalSignatoryName,
         coeTitle: "Controller of Examinations",
         coeCollege: "C.K. College of Engineering & Technology",
         coeLocation: "Cuddalore – 607 003",
-        coeContact: "94884 93434",
+        coeContact: finalSignatoryContact,
+        coeSignatureUrl: activeSignatureToEmbed,
+        coeSignatureBase64: activeCoeSignatureBase64 || null,
+        generatedByUid: auth.currentUser?.uid || null,
+        generatedByName: finalSignatoryName,
+        generatedByEmail: auth.currentUser?.email || "",
         generatedAt: new Date().toISOString()
       };
 
@@ -1057,7 +1355,9 @@ export default function CoeDashboard() {
         batch: assignBatch,
         semester: semesterToUse,
         regulation: regulationToUse,
-        department: selectedSubjectObj?.department || "ECE",
+        department: deptToUse,
+        isCommon: isCommonSubject,
+        departments: selectedSubjectObj?.departments || selectedSubjectObj?.shortDepts || null,
         subjectCode: assSubjectCode,
         subjectTitle: selectedSubjectObj?.title || assSubjectCode,
         duration: durationToUse,
@@ -1066,10 +1366,21 @@ export default function CoeDashboard() {
         setterId: setterObj.id,
         setterName: setterObj.name,
         setterCollege: setterObj.collegeName,
-        setterEmail: setterObj.email,
+        setterEmail: (setterObj.email || "").trim().toLowerCase(),
+        setterPassword: setterObj.password || "",
+        setterPhone: setterObj.phone || "",
         numSets: numSetsToAssign,
         submissionDeadline: assDeadline,
-        orderCopyData: orderCopyData,
+        coeSignatureUrl: activeSignatureToEmbed,
+        coeSignatureBase64: activeCoeSignatureBase64 || null,
+        coeName: finalSignatoryName,
+        orderCopyData: {
+          ...orderCopyData,
+          setterPassword: setterObj.password || "",
+          coeSignatureUrl: activeSignatureToEmbed,
+          coeSignatureBase64: activeCoeSignatureBase64 || null,
+          coeName: finalSignatoryName
+        },
         orderCopyUrl: null,
         qbUrl: processedQbUrl || null,
         qbRawLink: qbLink.trim() || null,
@@ -1127,6 +1438,30 @@ export default function CoeDashboard() {
     return () => unsub();
   }, []);
 
+  // Resiliently sync/backfill setterPassword in coe_setter_assignments for any legacy records
+  useEffect(() => {
+    if (!assignments.length || !setters.length) return;
+    assignments.forEach(async (ass) => {
+      if (!ass.setterPassword && (ass.setterId || ass.setterEmail)) {
+        const matchingSetter = setters.find(
+          (s) => s.id === ass.setterId || (s.email && s.email.toLowerCase() === (ass.setterEmail || "").toLowerCase())
+        );
+        if (matchingSetter && matchingSetter.password) {
+          try {
+            await updateDoc(doc(db, "coe_setter_assignments", ass.id), {
+              setterPassword: matchingSetter.password,
+              setterEmail: (matchingSetter.email || ass.setterEmail || "").toLowerCase().trim(),
+              setterName: matchingSetter.name || ass.setterName || "",
+              setterCollege: matchingSetter.collegeName || ass.setterCollege || ""
+            });
+          } catch (e) {
+            console.warn("Backfill password note:", e);
+          }
+        }
+      }
+    });
+  }, [assignments, setters]);
+
   const normalizeSessionStr = (s) => (s || "").replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
 
   const isMatchingSession = (assSession, curSession) => {
@@ -1165,12 +1500,9 @@ export default function CoeDashboard() {
   const [guidelineFeedback, setGuidelineFeedback] = useState({ type: "", message: "" });
   const [savingGuideline, setSavingGuideline] = useState(false);
 
-  // Guidelines Document PDF Upload (<= 40 KB)
-  const [guidelinesPdfFile, setGuidelinesPdfFile] = useState(null);
-  const [guidelinesPdfBase64, setGuidelinesPdfBase64] = useState("");
-  const [guidelinesPdfSizeKb, setGuidelinesPdfSizeKb] = useState(0);
-  const [guidelinesPdfError, setGuidelinesPdfError] = useState("");
-  const [uploadingGuidelinesPdf, setUploadingGuidelinesPdf] = useState(false);
+  // Guidelines Document Cloud Link (Google Drive / Docs / OneDrive / Web link)
+  const [guidelinesDocLink, setGuidelinesDocLink] = useState("");
+  const [savingGuidelinesLink, setSavingGuidelinesLink] = useState(false);
   const [sessionGuidelinesDoc, setSessionGuidelinesDoc] = useState(null);
 
   useEffect(() => {
@@ -1178,96 +1510,53 @@ export default function CoeDashboard() {
     const docId = sanitizeKey(selectedExamSession);
     const unsub = onSnapshot(doc(db, "coe_session_guidelines_doc", docId), (docSnap) => {
       if (docSnap.exists()) {
-        setSessionGuidelinesDoc(docSnap.data());
+        const data = docSnap.data();
+        setSessionGuidelinesDoc(data);
+        setGuidelinesDocLink(data.rawLink || data.url || "");
       } else {
         setSessionGuidelinesDoc(null);
+        setGuidelinesDocLink("");
       }
     });
     return () => unsub();
   }, [selectedExamSession]);
 
-  const handleGuidelinesPdfChange = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
-    if (!isPdf) {
-      setGuidelinesPdfError("Only PDF format is supported! Please select a .pdf file.");
-      setGuidelinesPdfFile(null);
-      setGuidelinesPdfBase64("");
-      setGuidelinesPdfSizeKb(0);
+  const handleSaveGuidelinesLink = async () => {
+    if (!guidelinesDocLink.trim()) {
+      alert("Please enter a valid Guidelines document link (Google Drive, Google Docs, OneDrive, or Web link).");
       return;
     }
-
-    const sizeKb = (file.size / 1024).toFixed(1);
-    if (file.size > 40 * 1024) {
-      setGuidelinesPdfError(`Guidelines PDF size is ${sizeKb} KB. Strict maximum limit is 40 KB!`);
-      setGuidelinesPdfFile(null);
-      setGuidelinesPdfBase64("");
-      setGuidelinesPdfSizeKb(Number(sizeKb));
-      return;
-    }
-
-    setGuidelinesPdfError("");
-    setGuidelinesPdfFile(file);
-    setGuidelinesPdfSizeKb(Number(sizeKb));
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      setGuidelinesPdfBase64(reader.result);
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleUploadGuidelinesPdf = async () => {
-    if (!guidelinesPdfBase64) {
-      alert("Please select a Guidelines PDF file (<= 40 KB).");
-      return;
-    }
-    if (guidelinesPdfSizeKb > 40) {
-      alert(`Guidelines PDF size is ${guidelinesPdfSizeKb} KB. Strict maximum allowed limit is 40 KB.`);
-      return;
-    }
-
-    setUploadingGuidelinesPdf(true);
+    setSavingGuidelinesLink(true);
     try {
       const docId = sanitizeKey(selectedExamSession);
-      let pdfUrl = guidelinesPdfBase64;
-      try {
-        if (guidelinesPdfFile) {
-          pdfUrl = await uploadFile(`coe_guidelines_docs/${docId}_guidelines.pdf`, guidelinesPdfFile, "application/pdf");
-        }
-      } catch (e) {
-        console.warn("Storage upload fallback to Base64 for Guidelines PDF:", e);
-      }
+      const raw = guidelinesDocLink.trim();
+      const embedUrl = getEmbeddableDocumentUrl(raw);
 
       await setDoc(doc(db, "coe_session_guidelines_doc", docId), {
         examSession: selectedExamSession,
-        url: pdfUrl,
-        fileName: guidelinesPdfFile ? guidelinesPdfFile.name : "QP_Guidelines.pdf",
-        fileSizeKb: guidelinesPdfSizeKb,
+        url: embedUrl,
+        rawLink: raw,
+        fileName: "Official Guidelines Document",
         updatedAt: serverTimestamp()
-      });
+      }, { merge: true });
 
-      alert("Guidelines PDF document uploaded successfully!");
-      setGuidelinesPdfFile(null);
-      setGuidelinesPdfBase64("");
-      setGuidelinesPdfSizeKb(0);
+      alert("Question Setting Guidelines link saved successfully!");
     } catch (err) {
-      alert("Failed to upload Guidelines PDF: " + err.message);
+      alert("Failed to save guidelines link: " + err.message);
     } finally {
-      setUploadingGuidelinesPdf(false);
+      setSavingGuidelinesLink(false);
     }
   };
 
-  const handleDeleteGuidelinesPdf = async () => {
-    if (!window.confirm("Are you sure you want to remove the Guidelines PDF document for this session?")) return;
+  const handleDeleteGuidelinesDoc = async () => {
+    if (!window.confirm("Are you sure you want to remove the Guidelines document link for this session?")) return;
     try {
       const docId = sanitizeKey(selectedExamSession);
       await deleteDoc(doc(db, "coe_session_guidelines_doc", docId));
-      alert("Guidelines PDF document deleted.");
+      setGuidelinesDocLink("");
+      alert("Guidelines document link removed.");
     } catch (err) {
-      alert("Failed to delete Guidelines PDF: " + err.message);
+      alert("Failed to delete Guidelines document: " + err.message);
     }
   };
 
@@ -1538,20 +1827,13 @@ export default function CoeDashboard() {
                   </button>
                 </form>
 
-                <div className="pt-3 border-t border-slate-200/80 flex items-center justify-between gap-2 text-[11px] font-semibold text-slate-500">
-                  <button
-                    type="button"
-                    onClick={handleSurrender2FaToOwner}
-                    className="text-amber-800 hover:text-amber-950 font-bold underline cursor-pointer flex items-center gap-1 bg-amber-50 px-2 py-1 rounded-md border border-amber-200"
-                  >
-                    <Key className="h-3 w-3 text-amber-600" /> Surrender 2FA Key to Owner
-                  </button>
+                <div className="pt-3 border-t border-slate-200/80 flex items-center justify-end text-[11px] font-semibold text-slate-500">
                   <button
                     type="button"
                     onClick={() => navigate("/exam-cell")}
-                    className="text-slate-600 hover:text-slate-900 cursor-pointer"
+                    className="text-slate-600 hover:text-slate-900 cursor-pointer flex items-center gap-1"
                   >
-                    Exit to Exam Cell
+                    Exit to Exam Cell →
                   </button>
                 </div>
               </div>
@@ -2060,101 +2342,229 @@ export default function CoeDashboard() {
                     </button>
                   </div>
 
-                  {newPatternSections.map((sec, idx) => (
-                    <div key={idx} className="p-4 rounded-2xl bg-zinc-50 border border-zinc-200 space-y-3 relative group">
-                      <div className="flex items-center justify-between border-b border-zinc-200 pb-2">
-                        <div className="flex items-center gap-2">
+                  {newPatternSections.map((sec, idx) => {
+                    let startQNo = 1;
+                    for (let p = 0; p < idx; p++) {
+                      startQNo += Number(newPatternSections[p].count || 0);
+                    }
+                    const secTotalMarks = (Array.isArray(sec.questionConfig) && sec.questionConfig.length > 0)
+                      ? sec.questionConfig.reduce((acc, q) => acc + (Number(q.marks) || 0), 0)
+                      : ((sec.count || 0) * (sec.marksPerQ || 0));
+
+                    return (
+                      <div key={idx} className="p-4 sm:p-5 rounded-2xl bg-zinc-50 border border-zinc-200 space-y-4 relative group">
+                        {/* Section Header */}
+                        <div className="flex items-center justify-between border-b border-zinc-200 pb-2.5">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <input
+                              type="text"
+                              value={sec.name}
+                              onChange={(e) => {
+                                const updated = [...newPatternSections];
+                                updated[idx].name = e.target.value;
+                                setNewPatternSections(updated);
+                              }}
+                              className="bg-white border border-zinc-200 rounded-lg px-2.5 py-1 text-xs font-black text-[#120c7a] w-32 shadow-2xs"
+                              placeholder="Section Name"
+                            />
+                            <span className="text-[11px] text-zinc-500 font-extrabold bg-white border border-zinc-200 px-2.5 py-1 rounded-md">
+                              Total: <span className="text-emerald-700">{secTotalMarks} Marks</span>
+                            </span>
+                            <span className="text-[10px] text-zinc-400 font-bold hidden sm:inline">
+                              (Q.{startQNo} to Q.{startQNo + (Number(sec.count) || 1) - 1})
+                            </span>
+                          </div>
+
+                          {newPatternSections.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveSection(idx)}
+                              className="p-1 rounded-lg text-rose-600 hover:bg-rose-100 border border-transparent hover:border-rose-200 transition-all cursor-pointer"
+                              title="Remove Section"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Basic Metrics Row: No. of Questions, Default Marks per Q, Choice Type */}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                          <div>
+                            <label className="block text-[10px] font-bold text-zinc-500 mb-1">No. of Questions</label>
+                            <input
+                              type="number"
+                              min="1"
+                              value={sec.count}
+                              onChange={(e) => handleSectionCountChange(idx, e.target.value)}
+                              className="w-full bg-white border border-zinc-200 rounded-lg px-2.5 py-1.5 text-xs text-zinc-800 font-bold"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-zinc-500 mb-1">Default Marks per Q</label>
+                            <input
+                              type="number"
+                              min="1"
+                              value={sec.marksPerQ}
+                              onChange={(e) => handleSectionMarksPerQChange(idx, e.target.value)}
+                              className="w-full bg-white border border-zinc-200 rounded-lg px-2.5 py-1.5 text-xs text-zinc-800 font-bold"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-zinc-500 mb-1">Choice Type</label>
+                            <select
+                              value={sec.choiceType}
+                              onChange={(e) => {
+                                const updated = [...newPatternSections];
+                                updated[idx].choiceType = e.target.value;
+                                setNewPatternSections(updated);
+                              }}
+                              className="w-full bg-white border border-zinc-200 rounded-lg px-2 py-1.5 text-xs text-zinc-800 font-bold"
+                            >
+                              <option value="compulsory">Compulsory</option>
+                              <option value="either_or">Either-OR (Internal)</option>
+                              <option value="any_n">Choice of N</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Sub-parts Splitting Option Toggle Row */}
+                        <div className="p-3 bg-white border border-zinc-200 rounded-xl space-y-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                              <label className="text-[11px] font-black text-zinc-800 uppercase tracking-wider block">
+                                Allow Sub-parts Splitting Option?
+                              </label>
+                              <p className="text-[10px] text-zinc-500 font-semibold mt-0.5">
+                                {sec.allowSubparts
+                                  ? "✓ Setters CAN split questions in this section into sub-parts (e.g. i, ii). Sub-part marks are editable."
+                                  : "✕ Disabled: Single question only. Sub-part split prompt will be completely HIDDEN in setter workbench."}
+                              </p>
+                            </div>
+
+                            <div className="flex items-center gap-1 bg-zinc-100 p-1 rounded-lg border border-zinc-200">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const updated = [...newPatternSections];
+                                  updated[idx].allowSubparts = false;
+                                  setNewPatternSections(updated);
+                                }}
+                                className={`px-3 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                                  !sec.allowSubparts
+                                    ? "bg-rose-600 text-white shadow-xs"
+                                    : "bg-transparent text-zinc-600 hover:text-zinc-900"
+                                }`}
+                              >
+                                ✕ Disabled
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const updated = [...newPatternSections];
+                                  updated[idx].allowSubparts = true;
+                                  setNewPatternSections(updated);
+                                }}
+                                className={`px-3 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                                  sec.allowSubparts
+                                    ? "bg-emerald-600 text-white shadow-xs"
+                                    : "bg-transparent text-zinc-600 hover:text-zinc-900"
+                                }`}
+                              >
+                                ✓ Enabled
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Section Instructions */}
+                        <div>
+                          <label className="block text-[10px] font-bold text-zinc-500 mb-1">Section Instructions</label>
                           <input
                             type="text"
-                            value={sec.name}
+                            value={sec.instructions}
                             onChange={(e) => {
                               const updated = [...newPatternSections];
-                              updated[idx].name = e.target.value;
+                              updated[idx].instructions = e.target.value;
                               setNewPatternSections(updated);
                             }}
-                            className="bg-white border border-zinc-200 rounded-lg px-2.5 py-1 text-xs font-black text-[#120c7a] w-28"
-                            placeholder="Section Name"
-                          />
-                          <span className="text-[11px] text-zinc-500 font-bold">
-                            ({(sec.count || 0) * (sec.marksPerQ || 0)} Marks)
-                          </span>
-                        </div>
-
-                        {newPatternSections.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveSection(idx)}
-                            className="p-1 rounded-lg text-rose-600 hover:bg-rose-100 border border-transparent hover:border-rose-200 transition-all cursor-pointer"
-                            title="Remove Section"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        )}
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-2">
-                        <div>
-                          <label className="block text-[10px] font-bold text-zinc-500">No. of Questions</label>
-                          <input
-                            type="number"
-                            min="1"
-                            value={sec.count}
-                            onChange={(e) => {
-                              const updated = [...newPatternSections];
-                              updated[idx].count = Number(e.target.value);
-                              setNewPatternSections(updated);
-                            }}
-                            className="w-full bg-white border border-zinc-200 rounded-lg px-2.5 py-1.5 text-xs text-zinc-800 font-bold"
+                            className="w-full bg-white border border-zinc-200 rounded-lg px-2.5 py-1 text-xs text-zinc-700 font-semibold"
+                            placeholder="e.g. Answer ALL Questions"
                           />
                         </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-zinc-500">Marks per Q</label>
-                          <input
-                            type="number"
-                            min="1"
-                            value={sec.marksPerQ}
-                            onChange={(e) => {
-                              const updated = [...newPatternSections];
-                              updated[idx].marksPerQ = Number(e.target.value);
-                              setNewPatternSections(updated);
-                            }}
-                            className="w-full bg-white border border-zinc-200 rounded-lg px-2.5 py-1.5 text-xs text-zinc-800 font-bold"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-zinc-500">Choice Type</label>
-                          <select
-                            value={sec.choiceType}
-                            onChange={(e) => {
-                              const updated = [...newPatternSections];
-                              updated[idx].choiceType = e.target.value;
-                              setNewPatternSections(updated);
-                            }}
-                            className="w-full bg-white border border-zinc-200 rounded-lg px-2 py-1.5 text-xs text-zinc-800 font-bold"
-                          >
-                            <option value="compulsory">Compulsory</option>
-                            <option value="either_or">Either-OR (Internal)</option>
-                            <option value="any_n">Choice of N</option>
-                          </select>
-                        </div>
-                      </div>
 
-                      <div>
-                        <label className="block text-[10px] font-bold text-zinc-500">Section Instructions</label>
-                        <input
-                          type="text"
-                          value={sec.instructions}
-                          onChange={(e) => {
-                            const updated = [...newPatternSections];
-                            updated[idx].instructions = e.target.value;
-                            setNewPatternSections(updated);
-                          }}
-                          className="w-full bg-white border border-zinc-200 rounded-lg px-2.5 py-1 text-xs text-zinc-700 font-semibold"
-                          placeholder="e.g. Answer ALL Questions"
-                        />
+                        {/* Question-wise CO & Marks Mapping (CO1 to CO5 and Marks) */}
+                        <div className="bg-white border border-zinc-200 rounded-xl p-3 space-y-2.5">
+                          <div className="flex items-center justify-between flex-wrap gap-2 border-b border-zinc-100 pb-2">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[11px] font-black text-[#120c7a] uppercase tracking-wide">
+                                Question-wise CO & Marks Mapping
+                              </span>
+                              <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                                {sec.count} Questions
+                              </span>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => handleAutoDistributeCos(idx)}
+                              className="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 text-[10px] font-extrabold flex items-center gap-1 cursor-pointer transition-all shadow-2xs"
+                              title="Automatically distribute CO1, CO2, CO3, CO4, CO5 across questions"
+                            >
+                              <Sparkles className="h-3 w-3 text-indigo-600" />
+                              <span>Auto Distribute CO1–CO5</span>
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2 max-h-56 overflow-y-auto p-1">
+                            {Array.from({ length: Number(sec.count) || 1 }, (_, qI) => {
+                              const qCfg = sec.questionConfig?.[qI] || {
+                                qIndex: qI + 1,
+                                co: `CO${(qI % 5) + 1}`,
+                                marks: sec.marksPerQ || 2
+                              };
+                              const actualQNo = startQNo + qI;
+
+                              return (
+                                <div key={qI} className="p-2 rounded-lg bg-zinc-50 border border-zinc-200 space-y-1.5 shadow-2xs">
+                                  <div className="flex items-center justify-between text-[11px] font-black text-[#120c7a]">
+                                    <span>Q.{actualQNo} {sec.choiceType === "either_or" ? "(a/b)" : ""}</span>
+                                  </div>
+
+                                  <div className="space-y-1">
+                                    <div>
+                                      <label className="block text-[9px] font-bold text-zinc-400">CO (CO1-CO5)</label>
+                                      <select
+                                        value={qCfg.co || `CO${(qI % 5) + 1}`}
+                                        onChange={(e) => handleUpdateQuestionInPattern(idx, qI, "co", e.target.value)}
+                                        className="w-full bg-blue-50 border border-blue-200 rounded px-1.5 py-0.5 text-xs font-black text-[#120c7a] cursor-pointer"
+                                      >
+                                        <option value="CO1">CO1</option>
+                                        <option value="CO2">CO2</option>
+                                        <option value="CO3">CO3</option>
+                                        <option value="CO4">CO4</option>
+                                        <option value="CO5">CO5</option>
+                                      </select>
+                                    </div>
+
+                                    <div>
+                                      <label className="block text-[9px] font-bold text-zinc-400">Marks</label>
+                                      <input
+                                        type="number"
+                                        min="1"
+                                        value={qCfg.marks ?? (sec.marksPerQ || 2)}
+                                        onChange={(e) => handleUpdateQuestionInPattern(idx, qI, "marks", e.target.value)}
+                                        className="w-full bg-emerald-50 border border-emerald-200 rounded px-1.5 py-0.5 text-xs font-black text-emerald-800 text-center"
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
 
                 <button
@@ -2819,6 +3229,61 @@ export default function CoeDashboard() {
                   </div>
                 </div>
 
+                {/* Official Signatory & Digital Signature Card (Directly from User Profile) */}
+                <div className="p-4 rounded-2xl bg-gradient-to-r from-slate-50 to-indigo-50/50 border border-slate-200/90 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 rounded-lg bg-blue-100 text-[#120c7a]">
+                        <ShieldCheck className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <span className="text-xs font-black text-slate-900 block">
+                          Official Signatory & Profile Signature
+                        </span>
+                        <span className="text-[10px] text-slate-500 font-semibold">
+                          Automatically resolved from your active CKCET staff profile
+                        </span>
+                      </div>
+                    </div>
+                    {activeCoeSignature ? (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-200 shadow-2xs">
+                        <CheckCircle2 className="h-3 w-3 text-emerald-600" /> Profile Signature Active
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                        Profile Signature Missing
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pt-2 border-t border-slate-200/60">
+                    <div className="space-y-0.5">
+                      <p className="text-xs font-bold text-slate-900">{activeSignatoryName}</p>
+                      <p className="text-[11px] font-semibold text-[#120c7a]">{activeSignatoryTitle}</p>
+                      <p className="text-[10px] text-slate-500">C.K. College of Engineering & Technology</p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {activeCoeSignature ? (
+                        <div className="flex flex-col items-end">
+                          <img
+                            src={activeCoeSignature}
+                            alt="Profile Signature"
+                            className="h-11 w-32 object-contain bg-white rounded-xl border border-slate-300 p-1 shadow-2xs mix-blend-multiply"
+                          />
+                          <span className="text-[9px] text-slate-400 font-semibold mt-0.5">
+                            Auto-synced from User Profile
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-xl font-bold">
+                          Add signature under Profile in top navbar
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
                 {/* Automatic Appointment Order Generation Banner */}
                 <div className="p-3.5 rounded-2xl bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 text-xs text-[#120c7a] flex items-center gap-3 shadow-xs">
                   <ShieldCheck className="h-6 w-6 text-blue-700 shrink-0" />
@@ -2827,7 +3292,7 @@ export default function CoeDashboard() {
                       ✓ Official Appointment Order Copy will be Generated Automatically
                     </span>
                     <span className="text-[11px] text-slate-600 font-semibold">
-                      Includes CKCET Autonomous Letterhead, QP Details, Remuneration Terms ({assNumSets === 2 ? "Rs. 3,000/- for 2 Sets" : "Rs. 2,000/- for 1 Set"}), and COE Signature.
+                      Includes CKCET Autonomous Letterhead, QP Details, Remuneration Terms ({assNumSets === 2 ? "Rs. 3,000/- for 2 Sets" : "Rs. 2,000/- for 1 Set"}), and COE Digital Signature.
                     </span>
                   </div>
                 </div>
@@ -2976,7 +3441,7 @@ export default function CoeDashboard() {
                       <div className="bg-white p-2.5 rounded-xl border border-indigo-100 text-xs">
                         <span className="text-zinc-400 text-[10px] uppercase font-black tracking-wider block mb-0.5">Subject:</span>
                         <span className="font-bold text-zinc-900">
-                          End Semester Examinations – {generatedAssignment?.examSession || selectedExamSession || "Nov./Dec. 2026"} – Appointment of Question Paper Setter & Digital QP Setting Portal – Reg.
+                          End Semester Examinations – {generatedAssignment?.examSession || selectedExamSession || "Nov./Dec. 2026"} – Appointment of Question Paper Setter – Reg.
                         </span>
                       </div>
 
@@ -2987,7 +3452,7 @@ Good Morning!
 
 Greetings from C.K. College of Engineering & Technology, Cuddalore!
 
-Sub: End Semester Examinations – ${generatedAssignment?.examSession || selectedExamSession || "Nov./Dec. 2026"} – Appointment of Question Paper Setter & Digital QP Setting Portal – Reg.
+Sub: End Semester Examinations – ${generatedAssignment?.examSession || selectedExamSession || "Nov./Dec. 2026"} – Appointment of Question Paper Setter – Reg.
 
 I am, by direction, to inform you that you have been appointed as a Question Paper Setter for the End Semester Theory Examinations to be held in ${generatedAssignment?.examSession || selectedExamSession || "Nov./Dec. 2026"}, under the Autonomous Scheme of C.K. College of Engineering & Technology, for the subject mentioned below. You are requested to kindly set the question paper as per the prescribed format, syllabus, regulations and examination requirements.
 
@@ -3050,9 +3515,9 @@ Contact: 94884 93434`}
                           type="button"
                           onClick={() => {
                             const sessName = generatedAssignment?.examSession || selectedExamSession || "Nov./Dec. 2026";
-                            const emailSubject = `End Semester Examinations – ${sessName} – Appointment of Question Paper Setter & Digital QP Setting Portal – Reg.`;
+                            const emailSubject = `End Semester Examinations – ${sessName} – Appointment of Question Paper Setter – Reg.`;
                             const remunClause = "The remuneration for setting two Question Papers (Set A & Set B) is Rs. 3,000/-, while the remuneration for setting a single Question Paper (either Set A or Set B) is Rs. 2,000/-.";
-                            const emailBody = `Dear Prof. ${generatedAssignment.setterName || "Faculty"},\nGood Morning!\n\nGreetings from C.K. College of Engineering & Technology, Cuddalore!\n\nSub: End Semester Examinations – ${sessName} – Appointment of Question Paper Setter & Digital QP Setting Portal – Reg.\n\nI am, by direction, to inform you that you have been appointed as a Question Paper Setter for the End Semester Theory Examinations to be held in ${sessName}, under the Autonomous Scheme of C.K. College of Engineering & Technology, for the subject mentioned below. You are requested to kindly set the question paper as per the prescribed format, syllabus, regulations and examination requirements.\n\nThe details of the question paper assignment are as follows:\n\nQUESTION PAPER DETAILS:\n• Department: ${formatDepartmentDisplay(generatedAssignment.department || "ECE")}\n• Programme: ${generatedAssignment.programme || "B.E."}\n• Regulations: ${generatedAssignment.regulation || "AU - R2021"}\n• Semester: ${generatedAssignment.semester || "III"}\n• Duration: ${generatedAssignment.duration || "3 Hours"}\n• Max. Marks: ${generatedAssignment.maxMarks || "100"}\n\nSUBJECT DETAILS:\n• Subject Code: ${generatedAssignment.subjectCode}\n• Subject Name: ${generatedAssignment.subjectTitle}\n• No. of Question Papers: ${generatedAssignment.noOfQuestionPapers || "1"}\n• Last Date for Submission: ${generatedAssignment.submissionDeadline || "10.10.2026"}\n\nNEXT-GENERATION DIGITAL QP SETTING PLATFORM:\nAs part of our continuous efforts to strengthen the confidentiality, quality and efficiency of the Autonomous Examination System, CKCET has introduced a secure Digital Question Paper Setting & Management Platform for the ${sessName} End Semester Examinations.\n\nYou are requested to use the portal for preparing and securely submitting the question paper within the stipulated deadline.\n\n• Portal Link: https://zonesynapse-ckcet-obe.pages.dev/coe-setter-login?assignmentId=${generatedAssignment.id}\n• User ID: ${generatedAssignment.setterEmail}\n• Password: ${generatedAssignment.setterPassword || "••••••••"}\n\nKEY FEATURES OF THE DIGITAL PLATFORM:\n• 🔐 Secure & Confidential – Ensures complete confidentiality of question papers.\n• ✍️ Easy & Guided Setting – Simple workflow with syllabus, pattern and instructions.\n• 🎯 Quality-Assured – Supports balanced and syllabus-aligned question papers.\n• 📤 Secure Digital Submission – Direct submission through the portal.\n• 📋 Trackable & Paperless – Enables acknowledgement and proper tracking.\n\nA copy of the syllabus, question paper pattern and necessary instructions will also be available through the portal for your reference.\n\nThe question paper shall be submitted only through the Digital QP Setting Portal on or before ${generatedAssignment.submissionDeadline || "10.10.2026"}.\n\nIf any of your relatives are appearing for the above examination, you are requested to kindly decline the assignment and inform the Controller of Examinations immediately.\n\n${remunClause}\n\nThe appointment, login credentials, question paper contents and all related information shall be treated as STRICTLY CONFIDENTIAL.\n\nWe sincerely appreciate your valuable academic contribution and look forward to your cooperation and timely submission of the question paper through the new digital platform.\n\nWith regards,\n\nDr. N. Kamalakannan\nController of Examinations\nC.K. College of Engineering & Technology\nCuddalore – 607 003\nContact: 94884 93434`;
+                            const emailBody = `Dear Prof. ${generatedAssignment.setterName || "Faculty"},\nGood Morning!\n\nGreetings from C.K. College of Engineering & Technology, Cuddalore!\n\nSub: End Semester Examinations – ${sessName} – Appointment of Question Paper Setter – Reg.\n\nI am, by direction, to inform you that you have been appointed as a Question Paper Setter for the End Semester Theory Examinations to be held in ${sessName}, under the Autonomous Scheme of C.K. College of Engineering & Technology, for the subject mentioned below. You are requested to kindly set the question paper as per the prescribed format, syllabus, regulations and examination requirements.\n\nThe details of the question paper assignment are as follows:\n\nQUESTION PAPER DETAILS:\n• Department: ${formatDepartmentDisplay(generatedAssignment.department || "ECE")}\n• Programme: ${generatedAssignment.programme || "B.E."}\n• Regulations: ${generatedAssignment.regulation || "AU - R2021"}\n• Semester: ${generatedAssignment.semester || "III"}\n• Duration: ${generatedAssignment.duration || "3 Hours"}\n• Max. Marks: ${generatedAssignment.maxMarks || "100"}\n\nSUBJECT DETAILS:\n• Subject Code: ${generatedAssignment.subjectCode}\n• Subject Name: ${generatedAssignment.subjectTitle}\n• No. of Question Papers: ${generatedAssignment.noOfQuestionPapers || "1"}\n• Last Date for Submission: ${generatedAssignment.submissionDeadline || "10.10.2026"}\n\nNEXT-GENERATION DIGITAL QP SETTING PLATFORM:\nAs part of our continuous efforts to strengthen the confidentiality, quality and efficiency of the Autonomous Examination System, CKCET has introduced a secure Digital Question Paper Setting & Management Platform for the ${sessName} End Semester Examinations.\n\nYou are requested to use the portal for preparing and securely submitting the question paper within the stipulated deadline.\n\n• Portal Link: https://zonesynapse-ckcet-obe.pages.dev/coe-setter-login?assignmentId=${generatedAssignment.id}\n• User ID: ${generatedAssignment.setterEmail}\n• Password: ${generatedAssignment.setterPassword || "••••••••"}\n\nKEY FEATURES OF THE DIGITAL PLATFORM:\n• 🔐 Secure & Confidential – Ensures complete confidentiality of question papers.\n• ✍️ Easy & Guided Setting – Simple workflow with syllabus, pattern and instructions.\n• 🎯 Quality-Assured – Supports balanced and syllabus-aligned question papers.\n• 📤 Secure Digital Submission – Direct submission through the portal.\n• 📋 Trackable & Paperless – Enables acknowledgement and proper tracking.\n\nA copy of the syllabus, question paper pattern and necessary instructions will also be available through the portal for your reference.\n\nThe question paper shall be submitted only through the Digital QP Setting Portal on or before ${generatedAssignment.submissionDeadline || "10.10.2026"}.\n\nIf any of your relatives are appearing for the above examination, you are requested to kindly decline the assignment and inform the Controller of Examinations immediately.\n\n${remunClause}\n\nThe appointment, login credentials, question paper contents and all related information shall be treated as STRICTLY CONFIDENTIAL.\n\nWe sincerely appreciate your valuable academic contribution and look forward to your cooperation and timely submission of the question paper through the new digital platform.\n\nWith regards,\n\nDr. N. Kamalakannan\nController of Examinations\nC.K. College of Engineering & Technology\nCuddalore – 607 003\nContact: 94884 93434`;
 
                             navigator.clipboard.writeText(`Subject: ${emailSubject}\n\n${emailBody}`);
                             alert("Official Email Draft copied to clipboard!");
@@ -3064,7 +3529,7 @@ Contact: 94884 93434`}
                         </button>
 
                         <a
-                          href={`mailto:${generatedAssignment.setterEmail}?subject=${encodeURIComponent(`End Semester Examinations – ${generatedAssignment?.examSession || selectedExamSession || "Nov./Dec. 2026"} – Appointment of Question Paper Setter & Digital QP Setting Portal – Reg.`)}&body=${encodeURIComponent(`Dear Prof. ${generatedAssignment.setterName || "Faculty"},\nGood Morning!\n\nGreetings from C.K. College of Engineering & Technology, Cuddalore!\n\nSub: End Semester Examinations – ${generatedAssignment?.examSession || selectedExamSession || "Nov./Dec. 2026"} – Appointment of Question Paper Setter & Digital QP Setting Portal – Reg.\n\nI am, by direction, to inform you that you have been appointed as a Question Paper Setter for the End Semester Theory Examinations to be held in ${generatedAssignment?.examSession || selectedExamSession || "Nov./Dec. 2026"}, under the Autonomous Scheme of C.K. College of Engineering & Technology, for the subject mentioned below.\n\n• Subject Code: ${generatedAssignment.subjectCode}\n• Subject Name: ${generatedAssignment.subjectTitle}\n\n• Portal Link: https://zonesynapse-ckcet-obe.pages.dev/coe-setter-login?assignmentId=${generatedAssignment.id}\n• User ID: ${generatedAssignment.setterEmail}\n• Password: ${generatedAssignment.setterPassword || "••••••••"}\n\nWith regards,\nDr. N. Kamalakannan\nController of Examinations\nC.K. College of Engineering & Technology`)}`}
+                          href={`mailto:${generatedAssignment.setterEmail}?subject=${encodeURIComponent(`End Semester Examinations – ${generatedAssignment?.examSession || selectedExamSession || "Nov./Dec. 2026"} – Appointment of Question Paper Setter – Reg.`)}&body=${encodeURIComponent(`Dear Prof. ${generatedAssignment.setterName || "Faculty"},\nGood Morning!\n\nGreetings from C.K. College of Engineering & Technology, Cuddalore!\n\nSub: End Semester Examinations – ${generatedAssignment?.examSession || selectedExamSession || "Nov./Dec. 2026"} – Appointment of Question Paper Setter – Reg.\n\nI am, by direction, to inform you that you have been appointed as a Question Paper Setter for the End Semester Theory Examinations to be held in ${generatedAssignment?.examSession || selectedExamSession || "Nov./Dec. 2026"}, under the Autonomous Scheme of C.K. College of Engineering & Technology, for the subject mentioned below.\n\n• Subject Code: ${generatedAssignment.subjectCode}\n• Subject Name: ${generatedAssignment.subjectTitle}\n\n• Portal Link: https://zonesynapse-ckcet-obe.pages.dev/coe-setter-login?assignmentId=${generatedAssignment.id}\n• User ID: ${generatedAssignment.setterEmail}\n• Password: ${generatedAssignment.setterPassword || "••••••••"}\n\nWith regards,\nDr. N. Kamalakannan\nController of Examinations\nC.K. College of Engineering & Technology`)}`}
                           target="_blank"
                           rel="noreferrer"
                           className="py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs flex items-center justify-center gap-1.5 shadow-sm cursor-pointer transition-all text-center inline-flex items-center justify-center"
@@ -3072,6 +3537,16 @@ Contact: 94884 93434`}
                           <Mail className="h-3.5 w-3.5" />
                           <span>Send Email (Mailto)</span>
                         </a>
+
+                        {/* View & Print Official Appointment Order Copy */}
+                        <button
+                          type="button"
+                          onClick={() => setPreviewOrderAssignment(generatedAssignment)}
+                          className="col-span-2 py-3 px-3 rounded-xl bg-amber-400 hover:bg-amber-500 text-slate-950 font-black text-xs flex items-center justify-center gap-2 shadow-xs cursor-pointer transition-all active:scale-98"
+                        >
+                          <FileText className="h-4 w-4" />
+                          <span>View Official Appointment Order & Print / Download PDF</span>
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -3212,9 +3687,31 @@ Contact: 94884 93434`}
                               <FileCheck className="h-3.5 w-3.5 text-[#120c7a]" />
                               Moved to COE
                             </span>
+                          ) : (ass.draftPaper || ass.draftSavedAt) ? (
+                            <span className="px-2.5 py-1 rounded-full text-[11px] font-extrabold bg-emerald-50 text-emerald-800 border border-emerald-200 inline-flex items-center gap-1.5 shadow-2xs" title={`Draft saved: ${ass.draftLastSavedTime || ass.draftSavedAt}`}>
+                              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                              <span>Draft Saved {ass.draftLastSavedTime ? `(${ass.draftLastSavedTime})` : ""}</span>
+                            </span>
                           ) : (
                             <span className="text-zinc-400 font-bold text-xs">In Progress</span>
                           )}
+
+                          {(() => {
+                            const mat = ass.permittedMaterials || ass.submittedPaper?.permittedMaterials || ass.draftPaper?.permittedMaterials;
+                            if (!mat?.enabled) return null;
+                            const list = getPermittedMaterialsList(mat);
+                            return (
+                              <div className="mt-1.5">
+                                <span
+                                  className="px-2 py-0.5 rounded-md text-[10px] font-extrabold bg-purple-50 text-purple-900 border border-purple-200 inline-flex items-center gap-1 shadow-2xs"
+                                  title={formatPermittedMaterialsNotice(mat)}
+                                >
+                                  <Package className="h-3 w-3 text-purple-600" />
+                                  <span>Materials Attached ({list.length || 1})</span>
+                                </span>
+                              </div>
+                            );
+                          })()}
                         </td>
                         <td className="py-3.5 px-4 text-right">
                           <div className="flex items-center justify-end gap-2">
@@ -3368,87 +3865,72 @@ Contact: 94884 93434`}
                   <span>Load Standard ESE Guidelines</span>
                 </button>
 
-                {/* Guidelines PDF Upload (Max 40 KB) */}
+                {/* Guidelines Cloud Document Link */}
                 <div className="bg-slate-50 rounded-2xl border border-slate-200 p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-black text-[#120c7a] flex items-center gap-1.5">
-                      <FileText className="h-4 w-4 text-[#120c7a]" />
-                      Upload Guidelines PDF Document
+                      <LinkIcon className="h-4 w-4 text-[#120c7a]" />
+                      Question Setting Guidelines Document Link
                     </span>
                     <span className="text-[10px] font-extrabold text-blue-800 bg-blue-100 border border-blue-200 px-2 py-0.5 rounded-md">
-                      Max 40 KB
+                      Cloud Link
                     </span>
                   </div>
                   <p className="text-[11px] text-zinc-500 font-semibold leading-tight">
-                    Upload official PDF guidelines document for {selectedExamSession || "Active Session"}.
+                    Provide the official guidelines document link (Google Drive, Docs, OneDrive, or PDF URL) for {selectedExamSession || "Active Session"}. External setters will view this directly inside their workbench drawer.
                   </p>
 
-                  <div className="border-2 border-dashed border-slate-300 rounded-xl p-3 bg-white text-center hover:border-[#120c7a] transition-all">
+                  <div className="space-y-2.5">
                     <input
-                      type="file"
-                      id="guidelines-pdf-upload"
-                      accept="application/pdf,.pdf"
-                      onChange={handleGuidelinesPdfChange}
-                      className="hidden"
+                      type="url"
+                      value={guidelinesDocLink}
+                      onChange={(e) => setGuidelinesDocLink(e.target.value)}
+                      placeholder="Paste link: https://drive.google.com/file/d/... or docs.google.com/..."
+                      className="w-full text-xs bg-white border border-slate-300 rounded-xl px-3 py-2.5 font-mono text-zinc-800 focus:outline-none focus:ring-2 focus:ring-[#120c7a] focus:border-[#120c7a]"
                     />
-                    <label htmlFor="guidelines-pdf-upload" className="cursor-pointer flex flex-col items-center justify-center gap-1">
-                      <Upload className="h-5 w-5 text-[#120c7a]" />
-                      <span className="text-xs font-bold text-zinc-800">
-                        {guidelinesPdfFile ? guidelinesPdfFile.name : (sessionGuidelinesDoc?.fileName || "Click to upload Guidelines PDF")}
-                      </span>
-                      <span className="text-[10px] font-semibold text-zinc-500">
-                        {guidelinesPdfSizeKb > 0 ? `Selected size: ${guidelinesPdfSizeKb} KB` : "Supports PDF format only (Max 40 KB)"}
-                      </span>
-                    </label>
-                  </div>
 
-                  {guidelinesPdfError && (
-                    <p className="text-[11px] text-rose-600 font-bold flex items-center gap-1">
-                      <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                      {guidelinesPdfError}
-                    </p>
-                  )}
-
-                  {sessionGuidelinesDoc && (
-                    <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-bold flex items-center justify-between">
-                      <div className="flex items-center gap-2 truncate">
-                        <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
-                        <span className="truncate">{sessionGuidelinesDoc.fileName} ({sessionGuidelinesDoc.fileSizeKb} KB)</span>
+                    {sessionGuidelinesDoc?.url && (
+                      <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-bold flex items-center justify-between">
+                        <div className="flex items-center gap-2 truncate">
+                          <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                          <span className="truncate">Guidelines Document Configured ✓</span>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <a
+                            href={sessionGuidelinesDoc.rawLink || sessionGuidelinesDoc.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-[11px] text-blue-700 underline font-extrabold hover:text-blue-900 flex items-center gap-1"
+                          >
+                            <ExternalLink className="h-3 w-3" />
+                            View
+                          </a>
+                          <button
+                            type="button"
+                            onClick={handleDeleteGuidelinesDoc}
+                            className="text-rose-600 hover:text-rose-800 p-1 cursor-pointer"
+                            title="Remove Document Link"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <a
-                          href={sessionGuidelinesDoc.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-[10px] text-blue-700 underline font-extrabold hover:text-blue-900"
-                        >
-                          View
-                        </a>
-                        <button
-                          type="button"
-                          onClick={handleDeleteGuidelinesPdf}
-                          className="text-rose-600 hover:text-rose-800 p-1"
-                          title="Delete PDF"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={handleUploadGuidelinesPdf}
-                    disabled={uploadingGuidelinesPdf || !guidelinesPdfBase64}
-                    className="w-full bg-[#120c7a] hover:bg-[#0e0a60] text-white font-extrabold py-2.5 px-3 rounded-xl text-xs shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-                  >
-                    {uploadingGuidelinesPdf ? (
-                      <RefreshCw className="h-4 w-4 animate-spin text-amber-300" />
-                    ) : (
-                      <Upload className="h-4 w-4 text-amber-300" />
                     )}
-                    <span>Save Guidelines PDF</span>
-                  </button>
+
+                    <button
+                      type="button"
+                      onClick={handleSaveGuidelinesLink}
+                      disabled={savingGuidelinesLink || !guidelinesDocLink.trim()}
+                      className="w-full bg-[#120c7a] hover:bg-[#0e0a60] text-white font-extrabold py-2.5 px-3 rounded-xl text-xs shadow-xs transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                    >
+                      {savingGuidelinesLink ? (
+                        <RefreshCw className="h-4 w-4 animate-spin text-amber-300" />
+                      ) : (
+                        <LinkIcon className="h-4 w-4 text-amber-300" />
+                      )}
+                      <span>Save Guidelines Link</span>
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -3597,23 +4079,135 @@ Contact: 94884 93434`}
                   </div>
                 )}
 
+                {/* Permitted Materials Review Card for COE */}
+                {(() => {
+                  const activeMat = (reviewActiveSet === "setB")
+                    ? (selectedReviewAssignment.submittedPaperB?.permittedMaterials || selectedReviewAssignment.permittedMaterialsB)
+                    : (selectedReviewAssignment.submittedPaperA?.permittedMaterials || selectedReviewAssignment.submittedPaper?.permittedMaterials || selectedReviewAssignment.permittedMaterialsA || selectedReviewAssignment.permittedMaterials);
+                  const mat = activeMat || selectedReviewAssignment.permittedMaterials;
+                  if (!mat?.enabled) return null;
+                  const list = getPermittedMaterialsList(mat);
+
+                  return (
+                    <div className="p-6 rounded-2xl bg-gradient-to-r from-purple-50/80 via-indigo-50/60 to-purple-50/80 border-2 border-purple-200/90 shadow-sm space-y-4">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-purple-200 pb-3">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2.5 rounded-xl bg-purple-600 text-white shadow-xs shrink-0">
+                            <Package className="h-5 w-5" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h3 className="font-black text-[#120c7a] text-sm sm:text-base">
+                                Permitted Examination Materials {selectedReviewAssignment.submittedPaperB ? (reviewActiveSet === "setB" ? "(Set B)" : "(Set A)") : ""}
+                              </h3>
+                              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-purple-200/80 text-purple-900 border border-purple-300">
+                                Exam Cell Action Required
+                              </span>
+                            </div>
+                            <p className="text-zinc-600 text-xs font-semibold mt-0.5">
+                              Approved reference materials to be supplied or permitted in the examination hall for candidates.
+                            </p>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const reqText = formatMaterialsRequisitionText(selectedReviewAssignment, mat);
+                            navigator.clipboard.writeText(reqText);
+                            alert("Permitted Materials requisition copied to clipboard! You can paste this into circulars, exam cell logs, or invigilator notices.");
+                          }}
+                          className="px-3.5 py-2 rounded-xl bg-purple-700 hover:bg-purple-800 text-white text-xs font-bold flex items-center gap-1.5 shadow-xs transition-all cursor-pointer shrink-0"
+                          title="Copy text requisition for Exam Cell and Invigilators"
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                          <span>Copy Requisition Slip</span>
+                        </button>
+                      </div>
+
+                      {/* Itemized Materials Grid */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {list.map((item, idx) => (
+                          <div key={idx} className="p-3.5 rounded-xl bg-white border border-purple-200 shadow-2xs space-y-1.5">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-black uppercase tracking-wider text-purple-800">
+                                {item.category}
+                              </span>
+                              <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full border ${item.badgeColor}`}>
+                                Permitted
+                              </span>
+                            </div>
+                            <div className="font-extrabold text-zinc-900 text-xs">
+                              {item.label}
+                            </div>
+                            <div className="text-[11px] font-medium text-zinc-600 leading-relaxed">
+                              {item.details}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Special Instructions for Hall Superintendent */}
+                      {mat.specialInstructions?.trim() && (
+                        <div className="p-3.5 rounded-xl bg-white border border-amber-300 text-xs text-amber-950 flex items-start gap-2.5 shadow-2xs">
+                          <AlertTriangle className="h-4 w-4 text-amber-700 shrink-0 mt-0.5" />
+                          <div>
+                            <span className="font-black uppercase tracking-wide text-[10px] text-amber-800 block">
+                              Special Instructions for Hall Superintendent & Invigilators:
+                            </span>
+                            <span className="font-medium text-zinc-800 text-xs mt-0.5 block">
+                              {mat.specialInstructions.trim()}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Live Notice Banner on Question Paper */}
+                      <div className="p-3 rounded-xl bg-white border border-purple-200 flex items-center gap-2.5 text-xs text-zinc-800">
+                        <span className="font-black text-purple-900 shrink-0 uppercase text-[10px] tracking-wider">
+                          QP Notice:
+                        </span>
+                        <span className="font-serif font-bold text-zinc-900">
+                          {formatPermittedMaterialsNotice(mat)}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* Dual Paper Switcher for COE Review (Set A vs Set B) */}
                 {selectedReviewAssignment.submittedPaperB && (
-                  <div className="flex items-center gap-2 p-1.5 bg-zinc-100 rounded-2xl border border-zinc-200 w-fit">
-                    <button
-                      type="button"
-                      onClick={() => setReviewActiveSet("setA")}
-                      className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${reviewActiveSet === "setA" ? "bg-[#120c7a] text-white shadow-xs" : "text-zinc-600 hover:text-zinc-900"}`}
-                    >
-                      Question Paper: Set A
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setReviewActiveSet("setB")}
-                      className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${reviewActiveSet === "setB" ? "bg-[#120c7a] text-white shadow-xs" : "text-zinc-600 hover:text-zinc-900"}`}
-                    >
-                      Question Paper: Set B
-                    </button>
+                  <div className="flex flex-wrap items-center justify-between gap-3 p-2 bg-zinc-50 rounded-2xl border border-zinc-200">
+                    <div className="flex items-center gap-1.5 p-1 bg-zinc-200/80 rounded-xl border border-zinc-300">
+                      <button
+                        type="button"
+                        onClick={() => setReviewActiveSet("setA")}
+                        className={`px-4 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer ${reviewActiveSet === "setA" ? "bg-[#120c7a] text-white shadow-xs" : "text-zinc-600 hover:text-zinc-900"}`}
+                      >
+                        Question Paper: Set A
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setReviewActiveSet("setB")}
+                        className={`px-4 py-1.5 rounded-lg text-xs font-black transition-all cursor-pointer ${reviewActiveSet === "setB" ? "bg-[#120c7a] text-white shadow-xs" : "text-zinc-600 hover:text-zinc-900"}`}
+                      >
+                        Question Paper: Set B
+                      </button>
+                    </div>
+
+                    {selectedReviewAssignment.aiSimilarityResult && (
+                      <div className="flex items-center gap-2">
+                        <span className={`px-3 py-1.5 rounded-xl text-xs font-black border inline-flex items-center gap-1.5 ${
+                          Number(selectedReviewAssignment.aiSimilarityResult.overallSimilarityPercent || 0) <= 25
+                            ? "bg-emerald-50 text-emerald-800 border-emerald-300 shadow-2xs"
+                            : "bg-rose-50 text-rose-800 border-rose-300 shadow-2xs"
+                        }`}>
+                          <Sparkles className="h-3.5 w-3.5" />
+                          AI Similarity: {selectedReviewAssignment.aiSimilarityResult.overallSimilarityPercent}%
+                          <span className="text-[10px] font-semibold opacity-75">(Max: 25.0%)</span>
+                        </span>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -3642,6 +4236,25 @@ Contact: 94884 93434`}
                             <span>Max Marks: {paperToReview.maxMarks || 100}</span>
                             <span>Duration: {paperToReview.duration || "3 Hours"}</span>
                           </div>
+                          {(() => {
+                            const mat = paperToReview.permittedMaterials || selectedReviewAssignment.permittedMaterials;
+                            const matNotice = formatPermittedMaterialsNotice(mat);
+                            if (!matNotice) return null;
+                            return (
+                              <div className="mt-2.5 py-1.5 px-3 bg-zinc-50 border border-zinc-400 text-center text-xs font-bold font-sans text-zinc-900 rounded tracking-wide">
+                                {matNotice}
+                              </div>
+                            );
+                          })()}
+                          {(() => {
+                            const mat = paperToReview.permittedMaterials || selectedReviewAssignment.permittedMaterials;
+                            if (!mat?.enabled || !mat?.specialInstructions?.trim()) return null;
+                            return (
+                              <div className="text-[11px] font-sans italic text-zinc-700 text-center mt-1">
+                                Note for Hall Superintendent: {mat.specialInstructions.trim()}
+                              </div>
+                            );
+                          })()}
                         </div>
 
                         {/* Question Paper Sections & Tables */}
@@ -3937,13 +4550,16 @@ Contact: 94884 93434`}
                           <th className="py-3.5 px-4 text-center whitespace-nowrap">No. of Qs</th>
                           <th className="py-3.5 px-4 text-center whitespace-nowrap">Marks / Q</th>
                           <th className="py-3.5 px-4 text-center whitespace-nowrap">Choice Type</th>
+                          <th className="py-3.5 px-4 text-center whitespace-nowrap">Sub-parts Split</th>
                           <th className="py-3.5 px-4 text-center whitespace-nowrap">Section Marks</th>
-                          <th className="py-3.5 px-4 min-w-[220px]">Section Instructions</th>
+                          <th className="py-3.5 px-4 min-w-[200px]">Question-wise CO Mapping</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-zinc-100 font-semibold text-zinc-800">
                         {(viewPatternDetailsModal.sections || []).map((sec, idx) => {
-                          const secMarks = (sec.count || 0) * (sec.marksPerQ || 0);
+                          const secMarks = (Array.isArray(sec.questionConfig) && sec.questionConfig.length > 0)
+                            ? sec.questionConfig.reduce((acc, q) => acc + (Number(q.marks) || 0), 0)
+                            : ((sec.count || 0) * (sec.marksPerQ || 0));
                           const choiceLabel = sec.choiceType === "either_or"
                             ? "Either-OR (Internal)"
                             : sec.choiceType === "any_n"
@@ -3953,7 +4569,8 @@ Contact: 94884 93434`}
                           return (
                             <tr key={idx} className="hover:bg-blue-50/20 transition-colors">
                               <td className="py-3.5 px-4 font-black text-[#120c7a] whitespace-nowrap">
-                                {sec.name}
+                                <div>{sec.name}</div>
+                                <div className="text-[10px] text-zinc-500 font-normal">{sec.instructions || "—"}</div>
                               </td>
                               <td className="py-3.5 px-4 text-center font-bold whitespace-nowrap">
                                 {sec.count} Qs
@@ -3969,11 +4586,30 @@ Contact: 94884 93434`}
                                   {choiceLabel}
                                 </span>
                               </td>
+                              <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                                <span className={`text-[10px] font-extrabold px-2.5 py-1 rounded-full border ${
+                                  sec.allowSubparts
+                                    ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                    : "bg-rose-50 text-rose-700 border-rose-200"
+                                }`}>
+                                  {sec.allowSubparts ? "✓ Enabled" : "✕ Disabled"}
+                                </span>
+                              </td>
                               <td className="py-3.5 px-4 text-center font-black text-emerald-700 whitespace-nowrap">
                                 {secMarks} Marks
                               </td>
-                              <td className="py-3.5 px-4 text-zinc-700 text-xs font-semibold leading-relaxed min-w-[220px]">
-                                {sec.instructions || "—"}
+                              <td className="py-3.5 px-4 text-xs font-semibold leading-relaxed min-w-[200px]">
+                                {Array.isArray(sec.questionConfig) && sec.questionConfig.length > 0 ? (
+                                  <div className="flex flex-wrap gap-1 max-w-sm">
+                                    {sec.questionConfig.map((qc, qci) => (
+                                      <span key={qci} className="text-[10px] font-mono bg-zinc-100 border border-zinc-200 px-1.5 py-0.5 rounded text-zinc-800">
+                                        Q{qci + 1}:{qc.co || "CO1"} ({qc.marks || sec.marksPerQ}M)
+                                      </span>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <span className="text-zinc-400 italic text-[11px]">CO1–CO5 Distributed</span>
+                                )}
                               </td>
                             </tr>
                           );

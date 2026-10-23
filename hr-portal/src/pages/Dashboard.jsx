@@ -135,6 +135,7 @@ export default function Dashboard() {
 
     const checkAppraisals = async () => {
       const collectionsToCheck = [
+        "principal_appraisals",
         "faculty_appraisals",
         "teacher_appraisals",
         "non_teaching_appraisals",
@@ -365,6 +366,7 @@ export default function Dashboard() {
 
   // Determine user's active appraisal path
   const getAppraisalPath = () => {
+    if (normalizedRole.includes("principal") || normalizedRole.includes("hr") || normalizedRole.includes("admin")) return "/principal-appraisal";
     if (isCenterHead || isCoordinator) return "/coordinator-appraisal";
     if (isCKCOE) return "/faculty-appraisal";
     if (normalizedRole.includes("non-teaching") || normalizedRole.includes("staff")) return "/non-teaching-appraisal";
@@ -388,8 +390,8 @@ export default function Dashboard() {
               <h1 className="text-2xl sm:text-3xl font-bold font-heading text-white tracking-tight">
                 Welcome back, {userProfile?.name || currentUser?.displayName || currentUser?.email?.split("@")[0] || "Colleague"} 👋
               </h1>
-              <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs text-slate-300">
-                <span className="px-2.5 py-1 rounded-lg bg-white/10 backdrop-blur-xs font-semibold text-slate-200">
+              <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs text-slate-200">
+                <span className="px-2.5 py-1 rounded-lg bg-white/10 backdrop-blur-xs font-semibold text-slate-100">
                   {userInst}
                 </span>
                 <span className="px-2.5 py-1 rounded-lg bg-white/10 backdrop-blur-xs font-semibold text-indigo-200">
@@ -725,7 +727,7 @@ export default function Dashboard() {
                                     +{d.growthPct}% Increment
                                   </div>
                                 )}
-                                <div className="text-[10px] text-slate-300 pt-1 border-t border-slate-800">
+                                <div className="text-[10px] text-slate-200 pt-1 border-t border-slate-800">
                                   {d.isBase ? (
                                     <span>Base Gross: ₹{Number(salaryViewMode === "PM" ? d.salaryPM : d.salaryPA).toLocaleString("en-IN")} {salaryViewMode}</span>
                                   ) : (

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { Navigate } from "react-router-dom";
 import { db, auth } from "../firebase";
 import {
   doc,
@@ -134,7 +135,8 @@ export default function NonTeachingAppraisal() {
               name: prev.name || data.displayName || data.name || user.displayName || "",
               designation: prev.designation || data.designation || data.role || "",
               department: prev.department || data.department || "",
-              dojSchool: prev.dojSchool || data.doj || "",
+              dojSchool: prev.dojSchool || data.dojSchool || data.doj || data.dateOfJoining || data.dojCollege || "",
+              dojPresentPost: prev.dojPresentPost || data.dojPresentPost || "",
               qualification: prev.qualification || data.qualification || ""
             }));
           } else if (localProf) {
@@ -143,7 +145,9 @@ export default function NonTeachingAppraisal() {
               ...prev,
               name: prev.name || localProf.name || "",
               designation: prev.designation || localProf.role || "",
-              department: prev.department || localProf.department || ""
+              department: prev.department || localProf.department || "",
+              dojSchool: prev.dojSchool || localProf.dojSchool || localProf.doj || localProf.dateOfJoining || localProf.dojCollege || "",
+              dojPresentPost: prev.dojPresentPost || localProf.dojPresentPost || ""
             }));
           }
         } catch (err) {
@@ -188,6 +192,8 @@ export default function NonTeachingAppraisal() {
           setFormData((prev) => ({
             ...initialFormData,
             ...data.formData,
+            dojSchool: data.formData?.dojSchool || data.dojSchool || data.doj || data.dateOfJoining || data.formData?.dojCollege || prev.dojSchool || "",
+            dojPresentPost: data.formData?.dojPresentPost || data.dojPresentPost || prev.dojPresentPost || "",
             leaveDetails: {
               ...initialFormData.leaveDetails,
               ...(data.formData.leaveDetails || {})
@@ -301,6 +307,9 @@ export default function NonTeachingAppraisal() {
       const staffEmail = currentUser.email || userProfile?.email || "";
       const empId = userProfile?.empId || userProfile?.employeeId || formData.empId || "";
 
+      const resolvedDoj = formData.dojSchool || formData.doj || userProfile?.dojSchool || userProfile?.doj || userProfile?.dateOfJoining || "";
+      const resolvedDojPresent = formData.dojPresentPost || formData.dojSchool || resolvedDoj || "";
+
       const payload = {
         docId,
         formType: "non_teaching",
@@ -312,14 +321,22 @@ export default function NonTeachingAppraisal() {
         staffEmail,
         empId,
         employeeId: empId,
-        designation: formData.designation || userProfile?.designation || userProfile?.role || "",
+        designation: formData.designation || userProfile?.designation || userProfile?.role || (isPrincipalHR ? "Principal / HR" : ""),
         department: formData.department || userProfile?.department || "General",
         institution: userInst,
         academicYear,
+        doj: resolvedDoj,
+        dojSchool: resolvedDoj,
+        dateOfJoining: resolvedDoj,
+        dojPresentPost: resolvedDojPresent,
         formData: {
           ...formData,
           name: staffName,
-          institution: userInst
+          institution: userInst,
+          doj: resolvedDoj,
+          dojSchool: resolvedDoj,
+          dateOfJoining: resolvedDoj,
+          dojPresentPost: resolvedDojPresent
         },
         status: isSubmit ? "HOD_Approved" : (existingAppraisal?.status || "Draft"),
         submittedAt: isSubmit ? new Date().toISOString() : (existingAppraisal?.submittedAt || null),
@@ -327,7 +344,9 @@ export default function NonTeachingAppraisal() {
       };
 
       await setDoc(docRef, payload, { merge: true });
-      alert(isSubmit ? "Staff Appraisal Form submitted successfully! Forwarded to your Institution Principal for review." : "Progress saved as draft.");
+      alert(isSubmit 
+        ? "Staff Appraisal Form submitted successfully! Forwarded to your Institution Principal for review." 
+        : "Progress saved as draft.");
     } catch (error) {
       console.error("Save Non-Teaching Appraisal error:", error);
       alert("Failed to save appraisal: " + error.message);
@@ -336,6 +355,14 @@ export default function NonTeachingAppraisal() {
       setSubmitting(false);
     }
   };
+
+  const userRole = userProfile?.role || (currentUser ? JSON.parse(localStorage.getItem(`user_profile_${currentUser.uid}`) || "{}")?.role : "");
+  const normalizedRole = String(userRole).toLowerCase();
+  const isPrincipalHR = normalizedRole.includes("principal") || normalizedRole.includes("hr") || normalizedRole.includes("admin");
+
+  if (!loading && isPrincipalHR) {
+    return <Navigate to="/dashboard" replace />;
+  }
 
   if (loading || checkingSchedule) {
     return (
@@ -351,7 +378,8 @@ export default function NonTeachingAppraisal() {
   const status = existingAppraisal?.status || "Draft";
   const isReadOnly = !isPortalOpen || status === "Approved" || status === "HOD_Approved" || status === "Submitted";
 
-  const instName = userProfile?.institution || existingAppraisal?.institution || existingAppraisal?.formData?.institution || (currentUser ? JSON.parse(localStorage.getItem(`user_profile_${currentUser.uid}`) || "{}")?.institution : "") || "";
+  const userInst = userProfile?.institution || existingAppraisal?.institution || existingAppraisal?.formData?.institution || (currentUser ? JSON.parse(localStorage.getItem(`user_profile_${currentUser.uid}`) || "{}")?.institution : "") || "CKSPK (Matric)";
+  const instName = userInst;
   const schoolTitle = getSchoolBannerTitle(instName);
   const schoolShortName = getSchoolShortName(instName);
 
@@ -384,7 +412,7 @@ export default function NonTeachingAppraisal() {
               <h1 className="text-2xl md:text-3xl font-extrabold text-white tracking-tight font-heading">
                 Self-Appraisal Form for Staff Members
               </h1>
-              <p className="text-slate-300 text-xs md:text-sm mt-1 max-w-2xl font-medium">
+              <p className="text-teal-100/90 text-xs md:text-sm mt-1 max-w-2xl font-medium">
                 To be filled by each staff member. Questions are formulated to assess your views, decision making power, leave records, and institutional support.
               </p>
 
@@ -395,11 +423,11 @@ export default function NonTeachingAppraisal() {
                   <span>Staff: <strong className="text-white font-bold">{formData.name || userProfile?.name || currentUser?.displayName || currentUser?.email}</strong></span>
                 </div>
                 {currentUser?.email && (
-                  <div className="bg-white/10 backdrop-blur-md border border-white/15 px-3 py-1 rounded-xl text-slate-300 flex items-center gap-1.5 font-medium">
+                  <div className="bg-white/10 backdrop-blur-md border border-white/15 px-3 py-1 rounded-xl text-slate-200 flex items-center gap-1.5 font-medium">
                     <span>Email: <strong className="text-white font-mono">{currentUser.email}</strong></span>
                   </div>
                 )}
-                <div className="bg-white/10 backdrop-blur-md border border-white/15 px-3 py-1 rounded-xl text-slate-300 flex items-center gap-1.5 font-medium">
+                <div className="bg-white/10 backdrop-blur-md border border-white/15 px-3 py-1 rounded-xl text-slate-200 flex items-center gap-1.5 font-medium">
                   <Building className="w-3.5 h-3.5 text-amber-300" />
                   <span>{userInst} {formData.department ? `• ${formData.department}` : ""}</span>
                 </div>
@@ -412,7 +440,7 @@ export default function NonTeachingAppraisal() {
                 status === "Approved" ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40" :
                 status === "HOD_Approved" ? "bg-blue-500/20 text-blue-300 border-blue-500/40" :
                 status === "Submitted" ? "bg-amber-500/20 text-amber-300 border-amber-500/40" :
-                "bg-slate-700/50 text-slate-300 border-slate-600/50"
+                "bg-slate-800/80 text-slate-100 border-slate-600/80 shadow-xs"
               }`}>
                 Status: {status.replace("_", " ")}
               </span>
@@ -1196,6 +1224,30 @@ export default function NonTeachingAppraisal() {
                   Signature of the Staff Member: <span className="font-bold underline">{formData.name || "________________"}</span>
                 </div>
               </div>
+
+              {/* Bottom Submit Actions */}
+              {!isReadOnly && (
+                <div className="pt-4 border-t border-slate-200 flex items-center justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={() => handleSave(false)}
+                    disabled={saving}
+                    className="px-5 py-2.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer shadow-xs disabled:opacity-50"
+                  >
+                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                    Save Draft
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSave(true)}
+                    disabled={submitting}
+                    className="px-6 py-2.5 bg-teal-600 hover:bg-teal-500 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-lg shadow-teal-600/30 cursor-pointer disabled:opacity-50"
+                  >
+                    {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                    Submit to Principal
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}

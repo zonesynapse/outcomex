@@ -10,6 +10,7 @@ import FacultyAppraisal from "./pages/FacultyAppraisal";
 import TeacherAppraisal from "./pages/TeacherAppraisal";
 import NonTeachingAppraisal from "./pages/NonTeachingAppraisal";
 import HODAppraisal from "./pages/HODAppraisal";
+import PrincipalAppraisal from "./pages/PrincipalAppraisal";
 import AppraisalReviews from "./pages/AppraisalReviews";
 import AppraisalSettings from "./pages/AppraisalSettings";
 import UserManagement from "./pages/UserManagement";
@@ -171,6 +172,15 @@ export default function App() {
           element={
             <ProtectedRoute>
               <HODAppraisal />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/principal-appraisal" 
+          element={
+            <ProtectedRoute>
+              <PrincipalAppraisal />
             </ProtectedRoute>
           } 
         />
