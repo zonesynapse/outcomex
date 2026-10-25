@@ -508,8 +508,15 @@ export default function FacultyDashboard() {
           const isMyName = !setterUid && normFacultyName && normSetterName && (normSetterName === normFacultyName || setterEmail === userEmail);
           const isMyEmail = !setterUid && userEmail && (setterEmail === userEmail);
 
+          // Approval check:
+          // A task must ONLY show on Faculty Dashboard after Principal approval:
+          // Either the assignment item is approved (as.approved === true or as.principalApproved === true),
+          // or the document is approved (data.principalApproved === true or data.status === "Approved").
+          // If it is in Draft or Pending Principal Approval, it MUST NOT show to faculty!
+          const isApproved = as.approved === true || as.principalApproved === true || data.principalApproved === true || data.status === "Approved";
           const isDraft = data.status === "Draft";
-          const isEligibleStatus = !isDraft;
+          const isPending = data.status === "Pending Principal Approval" || data.status === "Pending";
+          const isEligibleStatus = isApproved && !isDraft && (!isPending || as.approved === true);
           const hasExamDate = as.examDate && String(as.examDate).trim().length > 0;
 
           if ((isMyUid || isMyName || isMyEmail) && isEligibleStatus && hasExamDate) {
@@ -1809,6 +1816,31 @@ export default function FacultyDashboard() {
         // Strictly require an assigned exam date for the subject to show on Faculty Dashboard
         const hasExamDate = task.examDate && String(task.examDate).trim().length > 0;
         if (!hasExamDate) return false;
+
+        // Submission window deadline check:
+        // "submission date mudinja odanae andha task poiranum"
+        // Once the submission deadline (toDate) has passed, or if toDate is missing and examDate has passed,
+        // the task must immediately be removed from the Faculty Dashboard.
+        const parseToIso = (dVal) => {
+          if (!dVal) return '';
+          const s = String(dVal).trim();
+          if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+          const parsed = new Date(s);
+          if (!isNaN(parsed.getTime())) {
+            const y = parsed.getFullYear();
+            const m = String(parsed.getMonth() + 1).padStart(2, '0');
+            const d = String(parsed.getDate()).padStart(2, '0');
+            return `${y}-${m}-${d}`;
+          }
+          return '';
+        };
+
+        const toDateIso = parseToIso(task.toDate);
+        const examDateIso = parseToIso(task.examDate);
+        const effectiveDeadline = toDateIso || examDateIso;
+        if (effectiveDeadline && effectiveDeadline < todayStr) {
+          return false;
+        }
 
         // Filter out obsolete/superseded subject codes that do not belong to the batch's regulation curriculum
         const excelFirstDept = Array.isArray(task.departments) && task.departments.length > 0 ? task.departments[0] : null;

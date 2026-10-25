@@ -6,7 +6,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import {
   IndianRupee, AlertCircle, Loader2, Wallet, Receipt, X, CheckCircle2,
   ArrowRight, ExternalLink, Clock, RefreshCw, Banknote, Copy, Check,
-  Ban, ShieldAlert,
+  Ban, ShieldAlert, Bus,
 } from "lucide-react";
 import { formatBatchDisplay, formatProgrammeKey, formatDepartmentDisplay, sanitizeKey } from "../../lib/utils";
 import { computePaidByConfig, yearStart } from "../../utils/feeAllocation";
@@ -15,6 +15,18 @@ const PAYMENT_STATUS = {
   PENDING: { label: "Pending", color: "text-amber-600", bg: "bg-amber-50", border: "border-amber-200" },
   SUCCESS: { label: "Paid", color: "text-emerald-600", bg: "bg-emerald-50", border: "border-emerald-200" },
   FAILED: { label: "Failed", color: "text-red-600", bg: "bg-red-50", border: "border-red-200" },
+};
+
+const normalizeAcademicYearStr = (y) => {
+  if (!y) return '';
+  const m = String(y).match(/(\d{4})[-/](\d{2,4})/);
+  if (m) {
+    const y1 = m[1];
+    let y2 = m[2];
+    if (y2.length === 2) y2 = String(Number(y1.slice(0, 2)) * 100 + Number(y2));
+    return `${y1}-${y2}`;
+  }
+  return String(y).trim();
 };
 
 const subscribeAppPaymentsForStudent = (student, setAppPayments) => {
@@ -145,6 +157,7 @@ export default function Fees() {
   const [studentCategoryState, setStudentCategoryState] = useState("");
   const [studentStage, setStudentStage] = useState("");
   const [transportStages, setTransportStages] = useState([]);
+  const [approvedTransportApps, setApprovedTransportApps] = useState([]);
   const [statusModal, setStatusModal] = useState({ open: false, success: false, orderId: "", amount: 0, feeHead: "", error: "", tampered: false, duplicate: false });
   const [receiptModal, setReceiptModal] = useState({ open: false, payment: null });
   const ignoreBeforeUnloadRef = useRef(false);
@@ -322,6 +335,199 @@ export default function Fees() {
     return () => unsub();
   }, [studentStage]);
 
+  // Real-time listener for current student's approved transport boarding passes & fee dues
+  useEffect(() => {
+    if (!studentData) {
+      setApprovedTransportApps([]);
+      return;
+    }
+    const reg = (studentData.regNo || studentData.examNumber || studentData.studentId || studentData.rollNo || "").trim();
+    const uid = auth.currentUser?.uid;
+    if (!reg && !uid) {
+      setApprovedTransportApps([]);
+      return;
+    }
+
+    let appsList = [];
+    let cancelsList = [];
+
+    const isStudentMatch = (data) => {
+      if (!data) return false;
+      if (uid && (data.studentUid === uid || data.uid === uid)) return true;
+      if (reg) {
+        const rLower = reg.toLowerCase();
+        const dReg = String(data.regNo || "").trim().toLowerCase();
+        const dStudentId = String(data.studentId || "").trim().toLowerCase();
+        const dRoll = String(data.rollNo || "").trim().toLowerCase();
+        if (dReg === rLower || dStudentId === rLower || dRoll === rLower) return true;
+      }
+      return false;
+    };
+
+    const recomputeTransportFees = () => {
+      const approvedList = [];
+
+      appsList.forEach((data) => {
+        if (!isStudentMatch(data)) return;
+
+        const status = String(data.status || "").trim();
+        const sLower = status.toLowerCase();
+
+        // Check if pass validity has expired (time elapsed or marked expired/deactivated)
+        const isPassExpired = Boolean(
+          data.isExpired ||
+          data.validityExpired ||
+          sLower.includes("expired") ||
+          sLower.includes("deactivated") ||
+          (data.validUntil && new Date(data.validUntil).getTime() < Date.now())
+        );
+
+        // Check if this application was ever approved / sanctioned / active / expired
+        const wasApproved =
+          status === "Approved" ||
+          status === "Active" ||
+          status === "Sanctioned" ||
+          status === "Issued" ||
+          sLower.includes("approved") ||
+          sLower.includes("sanctioned") ||
+          sLower.includes("issued") ||
+          sLower.includes("active") ||
+          sLower.includes("expired") ||
+          sLower.includes("deactivated") ||
+          data.wasApproved === true ||
+          data.isExpired === true ||
+          data.validityExpired === true ||
+          Boolean(
+            data.allocatedBusId ||
+            data.allocatedBusNumber ||
+            data.assignedBusNumber ||
+            data.busId ||
+            data.approvedAt ||
+            data.passIssued ||
+            data.cancellationStatus ||
+            data.seatReleased ||
+            data.seatReleasedAt ||
+            data.validUntil ||
+            data.validFrom
+          );
+
+        // A freshly submitted pending application that was never approved does not generate fee dues
+        const isPendingOnly =
+          (sLower === "pending" || sLower === "pending approval" || sLower.includes("under verification")) &&
+          !data.approvedAt &&
+          !data.passIssued &&
+          !data.allocatedBusId &&
+          !data.wasApproved;
+
+        if (!wasApproved || isPendingOnly) return;
+
+        // Check if cancellation & seat release completed
+        const isCancelledOrReleased =
+          status === "Cancelled" ||
+          sLower.startsWith("cancelled") ||
+          data.allocatedSeat === "Released" ||
+          data.seatReleased === true;
+
+        if (isCancelledOrReleased) {
+          // Look for corresponding cancellation record
+          const cancelDoc = cancelsList.find((c) =>
+            (c.passId && c.passId === data.id) ||
+            (c.applicationId && c.applicationId === data.id) ||
+            (c.applicationNo && data.applicationNo && c.applicationNo === data.applicationNo) ||
+            (c.regNo && reg && String(c.regNo).trim().toLowerCase() === reg.toLowerCase())
+          );
+
+          // User requirement:
+          // ONLY if dues were explicitly marked as "cleared" / paid by coordinator during seat release:
+          const isDuesCleared =
+            data.duesDecision === "cleared" ||
+            data.feesCleared === true ||
+            (cancelDoc && (cancelDoc.duesDecision === "cleared" || cancelDoc.feesCleared === true));
+
+          if (isDuesCleared) {
+            // Fee is cleared and goes away from Fees.jsx
+            return;
+          }
+          // If released with due (duesDecision === "waive" / releaseWithDue === true / not cleared):
+          // Fee MUST NOT go away ("ilana poga kudadhu") -> Keep in approvedList!
+          approvedList.push({
+            ...data,
+            isReleasedWithDue: true,
+            isPassExpired
+          });
+          return;
+        }
+
+        // Active or expired passes:
+        // User requirement: Even if pass validity has expired ("pass validity mudinjalum"),
+        // the fee due MUST remain until paid in full!
+        approvedList.push({
+          ...data,
+          isPassExpired
+        });
+      });
+
+      // Safety guarantee: If there is any cancellation with dues that was released with due,
+      // ensure it is present in approvedList even if the original application document was missing
+      cancelsList.forEach((c) => {
+        if (!isStudentMatch(c)) return;
+        const cStatus = String(c.status || "").toLowerCase();
+        if (!cStatus.includes("released")) return;
+        const isDuesCleared = c.duesDecision === "cleared" || c.feesCleared === true;
+        if (isDuesCleared) return;
+
+        const alreadyIncluded = approvedList.some((a) =>
+          (c.passId && a.id === c.passId) ||
+          (c.applicationId && a.id === c.applicationId) ||
+          (c.applicationNo && a.applicationNo === c.applicationNo)
+        );
+
+        if (!alreadyIncluded && (Number(c.calculatedFee) > 0 || Number(c.balanceDue) > 0)) {
+          approvedList.push({
+            id: c.passId || c.applicationId || c.id,
+            applicationNo: c.applicationNo || "TR-DUE",
+            calculatedFee: Number(c.balanceDue || c.calculatedFee || 0),
+            academicYear: c.academicYear || "",
+            semester: c.semester || "",
+            billingTerm: c.billingTerm || "annual",
+            routeName: c.routeName || "Transport",
+            stageName: c.stageName || "",
+            isReleasedWithDue: true,
+            status: "Cancelled - Seat Released with Due"
+          });
+        }
+      });
+
+      setApprovedTransportApps(approvedList);
+    };
+
+    const unsubApps = onSnapshot(collection(db, "student_transport_applications"), (snap) => {
+      appsList = [];
+      snap.forEach((d) => {
+        appsList.push({ id: d.id, ...d.data() });
+      });
+      recomputeTransportFees();
+    }, (err) => {
+      console.warn("Transport applications listen error in Fees:", err);
+      setApprovedTransportApps([]);
+    });
+
+    const unsubCancels = onSnapshot(collection(db, "student_transport_cancellations"), (snap) => {
+      cancelsList = [];
+      snap.forEach((d) => {
+        cancelsList.push({ id: d.id, ...d.data() });
+      });
+      recomputeTransportFees();
+    }, (err) => {
+      console.warn("Transport cancellations listen error in Fees:", err);
+    });
+
+    return () => {
+      unsubApps();
+      unsubCancels();
+    };
+  }, [studentData]);
+
   useEffect(() => {
     if (!studentData) return;
     const { programme, department, batch } = studentData;
@@ -428,22 +634,6 @@ export default function Fees() {
         });
 
         const configs = Array.from(configMap.values());
-
-        // Transport fee: match the student's transport stage to a configured stage
-        if (studentStage && transportStages.length) {
-          const stageMatch = transportStages.find(t => String(t.stageNo).trim() === String(studentStage).trim());
-          if (stageMatch && Number(stageMatch.fee)) {
-            configs.push({
-              id: `transport_${stageMatch.id}`,
-              head: "Transport Fee",
-              academicYear: "—",
-              semester: "All",
-              amount: Number(stageMatch.fee),
-              _transport: true
-            });
-          }
-        }
-
         setFeeConfigs(configs);
       } catch (err) { console.error("Error fetching fee configs:", err); }
     };
@@ -517,18 +707,18 @@ export default function Fees() {
     return m ? Number(m[1]) : null;
   };
 
-  const calendarAcademicYear = useMemo(() => {
-    if (!studentData || !semesterConfigs.length) return '';
+  const activeCalendarConfig = useMemo(() => {
+    if (!studentData || !semesterConfigs.length) return null;
     const progKey = formatProgrammeKey(studentData.programme || '');
     const bStart = batchStartOf(studentData.batch || '');
-    if (!progKey || !bStart) return '';
+    if (!progKey || !bStart) return null;
     const mine = semesterConfigs.filter((c) => {
       if (c.programme && formatProgrammeKey(c.programme) !== progKey) return false;
       const batches = Array.isArray(c.batch) ? c.batch : (c.batch ? [c.batch] : []);
       if (!batches.length) return false;
       return batches.some((b) => batchStartOf(b) === bStart);
     });
-    if (!mine.length) return '';
+    if (!mine.length) return null;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const inRange = mine.filter((c) => {
@@ -545,9 +735,79 @@ export default function Fees() {
       if (t > e) return t - e;
       return 0;
     };
-    const pick = (inRange.length ? inRange : [...mine].sort((a, b) => distToRange(a) - distToRange(b)))[0];
-    return String(pick?.academicYear || '').trim();
+    return (inRange.length ? inRange : [...mine].sort((a, b) => distToRange(a) - distToRange(b)))[0] || null;
   }, [studentData, semesterConfigs]);
+
+  const calendarAcademicYear = useMemo(() => {
+    return String(activeCalendarConfig?.academicYear || '').trim();
+  }, [activeCalendarConfig]);
+
+  const activeCalendarSemNumber = useMemo(() => {
+    return activeCalendarConfig?.semesterNumber || '';
+  }, [activeCalendarConfig]);
+
+  const isRealYear = (y) => /^\d{4}-\d{4}$/.test(String(y || '').trim());
+
+  const currentAcademicYear = () => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const start = (now.getMonth() + 1) >= 6 ? y : y - 1; // June–May academic year
+    return `${start}-${start + 1}`;
+  };
+
+  // Target year = batch + Academic Calendar year (date fallback).
+  const targetYear = calendarAcademicYear || currentAcademicYear();
+
+  // Combined fee configurations: standard academic heads + approved transport passes
+  const combinedFeeConfigs = useMemo(() => {
+    const list = feeConfigs.filter((c) => !c._transport);
+
+    if (approvedTransportApps.length > 0) {
+      approvedTransportApps.forEach((app) => {
+        const rawYear = app.academicYear || calendarAcademicYear || targetYear;
+        const normYear = normalizeAcademicYearStr(rawYear) || targetYear;
+
+        // Form rule:
+        // "full academic year" -> academicYear with semester: "All"
+        // "semester" or "monthly term fee" -> that specific semester (e.g. Sem 3)
+        let resolvedSem = "All";
+        if (app.billingTerm === "semester" || app.billingTerm === "monthly") {
+          if (app.semester) {
+            resolvedSem = String(app.semester).trim().startsWith("Sem")
+              ? String(app.semester).trim()
+              : `Sem ${app.semester}`;
+          } else if (activeCalendarSemNumber) {
+            resolvedSem = `Sem ${activeCalendarSemNumber}`;
+          } else {
+            resolvedSem = "Sem 1";
+          }
+        }
+
+        const feeAmount = Number(app.calculatedFee || app.fee || 0);
+        if (feeAmount > 0) {
+          list.push({
+            id: `transport_app_${app.id}`,
+            head: "Transport Fee",
+            academicYear: normYear,
+            semester: resolvedSem,
+            amount: feeAmount,
+            _transport: true,
+            transportAppId: app.id,
+            transportApp: app,
+            routeName: app.routeName,
+            stageName: app.stageName,
+            billingTerm: app.billingTerm,
+            applicationNo: app.applicationNo,
+            isReleasedWithDue: Boolean(app.isReleasedWithDue || app.releaseWithDue || app.duesDecision === "waive"),
+            isExpired: Boolean(app.isPassExpired || app.isExpired || (app.validUntil && new Date(app.validUntil).getTime() < Date.now())),
+            validUntil: app.validUntil || null
+          });
+        }
+      });
+    }
+
+    return list;
+  }, [feeConfigs, approvedTransportApps, calendarAcademicYear, targetYear, activeCalendarSemNumber]);
 
   useEffect(() => {
     if (!toast) return;
@@ -566,37 +826,41 @@ export default function Fees() {
   // first-year-only rule. Shared allocator keeps office & portal consistent.
   // Declared BEFORE the gating memos below (they read this map).
   const paidByConfigId = useMemo(() => computePaidByConfig({
-    configs: feeConfigs,
+    configs: combinedFeeConfigs,
     portalPayments: payments.filter((p) => isSuccessfulPayment(p)),
     appPayments: appPayments.filter((p) => isSuccessfulPayment(p)),
-  }), [feeConfigs, payments, appPayments]);
+  }), [combinedFeeConfigs, payments, appPayments]);
 
-  // --- Single-year gating: show only ONE academic year at a time ---
-  // Case 2: earliest year with dues. Case 1: otherwise the current academic year.
-  const isRealYear = (y) => /^\d{4}-\d{4}$/.test(String(y || '').trim());
-
-  const currentAcademicYear = () => {
-    const now = new Date();
-    const y = now.getFullYear();
-    const start = (now.getMonth() + 1) >= 6 ? y : y - 1; // June–May academic year
-    return `${start}-${start + 1}`;
-  };
-
-  // Target year = batch + Academic Calendar year (date fallback).
-  const targetYear = calendarAcademicYear || currentAcademicYear();
+  // Reactive paid calculation per head/config, honoring portal payments, fee_payments,
+  // and direct transport application payments/clearance.
+  const paidForHead = useCallback((cfg) => {
+    if (!cfg) return 0;
+    let allocated = paidByConfigId.get(cfg.id) || 0;
+    if (cfg._transport && cfg.transportApp) {
+      const app = cfg.transportApp;
+      const appPaid = Number(app.paidAmount || app.amountPaid || 0);
+      if (app.paymentStatus === "Paid" || app.feesCleared === true || app.duesDecision === "cleared") {
+        return Math.max(allocated, Number(cfg.amount) || 0);
+      }
+      if (appPaid > 0) {
+        allocated = Math.max(allocated, appPaid);
+      }
+    }
+    return allocated;
+  }, [paidByConfigId]);
 
   // Visible year rule:
   //  - Previous academic year incomplete → show earliest due year (current stays hidden).
   //  - Previous years clear → show the calendar/target year, paid or not.
   const visibleYear = useMemo(() => {
-    const years = [...new Set(feeConfigs.map((c) => String(c.academicYear || '—')).filter(isRealYear))]
+    const years = [...new Set(combinedFeeConfigs.map((c) => String(c.academicYear || '—')).filter(isRealYear))]
       .sort((a, b) => yearStart(a) - yearStart(b));
     if (!years.length) return '';
     const dueByYear = new Map();
-    feeConfigs.forEach((c) => {
+    combinedFeeConfigs.forEach((c) => {
       const y = String(c.academicYear || '—');
       if (!isRealYear(y)) return;
-      const paid = paidByConfigId.get(c.id) || 0;
+      const paid = paidForHead(c);
       dueByYear.set(y, (dueByYear.get(y) || 0) + Math.max(0, (Number(c.amount) || 0) - paid));
     });
     const dueOf = (y) => dueByYear.get(y) || 0;
@@ -607,16 +871,16 @@ export default function Fees() {
     if (pendingPrev) return pendingPrev;
     if (targetYear && years.includes(targetYear)) return targetYear;
     return years[years.length - 1];
-  }, [feeConfigs, paidByConfigId, targetYear]);
+  }, [combinedFeeConfigs, paidByConfigId, targetYear]);
 
   // Year-agnostic rows (e.g. Transport "—") always stay visible.
   const visibleFeeConfigs = useMemo(() => {
-    if (!visibleYear) return feeConfigs.filter((c) => !isRealYear(c.academicYear));
-    return feeConfigs.filter((c) => {
+    if (!visibleYear) return combinedFeeConfigs.filter((c) => !isRealYear(c.academicYear));
+    return combinedFeeConfigs.filter((c) => {
       const y = String(c.academicYear || '—');
       return y === visibleYear || !isRealYear(y);
     });
-  }, [feeConfigs, visibleYear]);
+  }, [combinedFeeConfigs, visibleYear]);
 
   const groupedFeeConfigs = useMemo(() => {
     const sorted = [...visibleFeeConfigs].sort((a, b) => {
@@ -652,12 +916,18 @@ export default function Fees() {
   }, [visibleFeeConfigs]);
 
   const visiblePaid = useMemo(() => {
-    return visibleFeeConfigs.reduce((s, c) => s + (paidByConfigId.get(c.id) || 0), 0);
-  }, [visibleFeeConfigs, paidByConfigId]);
+    return visibleFeeConfigs.reduce((s, c) => s + Math.min(Number(c.amount) || 0, paidForHead(c)), 0);
+  }, [visibleFeeConfigs, paidForHead]);
 
   const totalPaid = visiblePaid;
 
   const pending = Math.max(0, totalFee - totalPaid);
+
+  const expiredTransportDues = useMemo(() => {
+    return visibleFeeConfigs.filter(
+      (cfg) => cfg._transport && cfg.isExpired && Math.max(0, (Number(cfg.amount) || 0) - paidForHead(cfg)) > 0
+    );
+  }, [visibleFeeConfigs, paidForHead]);
 
   // Determine the FIRST academic year per fee head — application-time payments only reduce that year's head
   const normHead = (s) => {
@@ -672,8 +942,6 @@ export default function Fees() {
     if (str.includes('hostel')) return 'hostel fee';
     return str;
   };
-
-  const paidForHead = (cfg) => paidByConfigId.get(cfg.id) || 0;
 
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(amount);
@@ -787,6 +1055,21 @@ export default function Fees() {
         </div>
       </div>
 
+      {/* Alert banner if an expired transport pass has pending dues */}
+      {expiredTransportDues.length > 0 && (
+        <div className="bg-amber-50/80 border border-amber-200 p-4 rounded-2xl shadow-sm flex items-start gap-3">
+          <AlertCircle className="text-amber-600 mt-0.5 shrink-0" size={20} />
+          <div className="flex-1">
+            <h4 className="text-sm font-black text-amber-900">
+              Outstanding Transport Dues from Expired Pass ({expiredTransportDues.length})
+            </h4>
+            <p className="text-xs font-medium text-amber-800 mt-0.5">
+              Your previous boarding pass validity has expired, but the term fee remains due until paid. You can clear this balance directly from the Fee Structure table below.
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">
           <div className="bg-[#120c7a] px-6 py-3 flex items-center gap-3">
@@ -861,7 +1144,32 @@ export default function Fees() {
                                   setPayModal({ open: true, feeHead: cfg.head || 'Fee', academicYear: cfg.academicYear || '', amount: String(remainingForThisHead), maxAmount: remainingForThisHead });
                                 }
                               }}
-                            >{cfg.head || 'Fee'}</td>
+                            >
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span>{cfg.head || 'Fee'}</span>
+                                {cfg._transport && (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-sky-700 bg-sky-50 px-2 py-0.5 rounded-full border border-sky-200">
+                                    <Bus size={10} />
+                                    {cfg.routeName || 'Transport'}
+                                  </span>
+                                )}
+                                {cfg.isReleasedWithDue && (
+                                  <span className="inline-flex items-center text-[10px] font-black text-amber-800 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+                                    Seat Released • Balance Due
+                                  </span>
+                                )}
+                                {cfg.isExpired && !cfg.isReleasedWithDue && !isFullyPaid && (
+                                  <span className="inline-flex items-center text-[10px] font-black text-rose-700 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-200">
+                                    Pass Expired • Due Pending
+                                  </span>
+                                )}
+                                {cfg.isExpired && isFullyPaid && (
+                                  <span className="inline-flex items-center text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full border border-slate-200">
+                                    Expired Pass (Settled)
+                                  </span>
+                                )}
+                              </div>
+                            </td>
                             <td
                               className={`px-4 py-3 text-right text-sm font-black border border-slate-200 transition-all ${
                                 isFullyPaid

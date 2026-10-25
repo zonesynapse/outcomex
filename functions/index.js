@@ -215,6 +215,34 @@ exports.createPaymentSession = onCall(
       }
     });
 
+    if (!matchingConfigs.length && normReqHead === "transport fee") {
+      const tPromises = [];
+      if (regNo) {
+        tPromises.push(db.collection("student_transport_applications").where("regNo", "==", regNo).get());
+      }
+      if (uid) {
+        tPromises.push(db.collection("student_transport_applications").where("studentUid", "==", uid).get());
+      }
+      const tSnaps = await Promise.all(tPromises);
+      const seenAppIds = new Set();
+      tSnaps.forEach((tSnap) => {
+        tSnap.forEach((doc) => {
+          if (seenAppIds.has(doc.id)) return;
+          seenAppIds.add(doc.id);
+          const tData = doc.data();
+          const amt = Number(tData.calculatedFee || tData.fee || 0);
+          if (amt > 0) {
+            matchingConfigs.push({
+              head: "Transport Fee",
+              academicYear: tData.academicYear || requestedYear || "2026-2027",
+              amount: amt,
+              id: doc.id
+            });
+          }
+        });
+      });
+    }
+
     if (!matchingConfigs.length) {
       throw new HttpsError("invalid-argument", `No fee configuration found for ${feeHead}.`);
     }

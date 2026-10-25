@@ -50,11 +50,11 @@ export default function TransportRoutesStages() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedRoute, setSelectedRoute] = useState<Route | null>(null);
+  const [selectedRoute, setSelectedRoute] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
-  const [formData, setFormData] = useState<Partial<Route>>({});
-  const [editingStageIndex, setEditingStageIndex] = useState<number | null>(null);
-  const [stageFormData, setStageFormData] = useState<Partial<Stage>>({});
+  const [formData, setFormData] = useState({});
+  const [editingStageIndex, setEditingStageIndex] = useState(null);
+  const [stageFormData, setStageFormData] = useState({});
 
   useEffect(() => {
     const routesRef = doc(db, 'transport_config', 'routes');

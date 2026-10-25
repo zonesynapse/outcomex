@@ -154,10 +154,10 @@ export default function AdminRoleConfig() {
     { id: "exam-cell-fee-configuration", label: "Exam Cell — Fee Configuration", path: "/exam-cell/fee-configuration", module: "Exam Cell" },
     { id: "exam-cell-exam-form-setting", label: "Exam Cell — Exam Form Setting", path: "/exam-cell/exam-form-setting", module: "Exam Cell" },
 
-    // Transport Configuration Module
-    { id: "transport-bus-fleet", label: "Transport Config — Bus Fleet", path: "/transport/bus-fleet", module: "Transport Config" },
-    { id: "transport-routes-stages", label: "Transport Config — Routes & Stages Fee", path: "/transport/routes-stages", module: "Transport Config" },
-    { id: "transport-driver-database", label: "Transport Config — Driver Database", path: "/transport/driver-database", module: "Transport Config" }
+    // Transport Module
+    { id: "transport-coordinator", label: "Transport Coordinator Portal", path: "/transport/coordinator", module: "Transport" },
+    { id: "transport-approvals", label: "Transport — Principal & Executive Approvals", path: "/transport/approvals", module: "Transport" },
+    { id: "transport-config", label: "Transport Config", path: "/transport/config", module: "Transport" }
   ];
 
   const groupedPages = useMemo(() => {

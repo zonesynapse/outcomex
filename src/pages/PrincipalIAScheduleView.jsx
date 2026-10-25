@@ -1304,7 +1304,7 @@ export default function PrincipalIAScheduleView({
     const out = [];
     activeLatestScheduleDocs.forEach(sDoc => {
       if (!isValidBatchSemester(sDoc.batch, sDoc.academicYear, sDoc.semester)) return;
-      if (hideApproved && (sDoc.principalApproved === true || sDoc.status === "Approved" || sDoc.status === "Draft")) return;
+      if (sDoc.status === "Draft") return;
       const assignments = sDoc.assignments || {};
       // Find batch-level default timing from any subject in the schedule document that has timing configured
       let docDefaultSTime = "";
@@ -1563,9 +1563,15 @@ export default function PrincipalIAScheduleView({
   }, [rows]);
 
   const filteredRows = useMemo(() => {
-    if (selectedBatchFilter === "ALL") return rows;
     return rows.map(g => {
-      const filteredItems = g.items.filter(i => String(i.batch) === String(selectedBatchFilter));
+      // 1. If hideApproved is true, retain only pending (unapproved) items
+      let filteredItems = hideApproved ? g.items.filter(i => !i.approved) : g.items;
+
+      // 2. Filter by selected batch if not ALL
+      if (selectedBatchFilter !== "ALL") {
+        filteredItems = filteredItems.filter(i => String(i.batch) === String(selectedBatchFilter));
+      }
+
       if (!filteredItems.length) return null;
 
       const batchMap = {};
@@ -1604,7 +1610,7 @@ export default function PrincipalIAScheduleView({
         batchGroups
       };
     }).filter(Boolean);
-  }, [rows, selectedBatchFilter]);
+  }, [rows, selectedBatchFilter, hideApproved]);
 
   const flatScheduledItems = useMemo(() => {
     const items = [];
@@ -1728,7 +1734,18 @@ export default function PrincipalIAScheduleView({
   }
 
   if (hideApproved && allApproved) {
-    return null;
+    if (!showApproveButton) return null;
+    return (
+      <div className="rounded-2xl border border-emerald-200 bg-white p-12 text-center shadow-sm">
+        <div className="w-14 h-14 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto mb-4 border border-emerald-200">
+          <CheckCircle2 size={28} />
+        </div>
+        <h3 className="text-base font-black text-slate-800 mb-1">All IA Schedules Approved</h3>
+        <p className="text-xs text-slate-500 max-w-md mx-auto">
+          There are currently no examination schedules pending Principal approval. All configured exam timetables have been approved and published to faculty.
+        </p>
+      </div>
+    );
   }
 
   const handleApproveDept = async (items) => {

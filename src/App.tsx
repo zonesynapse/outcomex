@@ -128,6 +128,10 @@ import CoeDashboard from "./pages/COE/CoeDashboard";
 import ExternalSetterWorkbench from "./pages/COE/ExternalSetterWorkbench";
 import TransportBusFleet from "./pages/TransportBusFleet";
 import TransportRoutesStages from "./pages/TransportRoutesStages";
+import TransportConfig from "./pages/TransportConfig";
+import TransportCoordinator from "./pages/TransportCoordinator";
+import PrincipalTransportApproval from "./pages/PrincipalTransportApproval";
+import StudentTransport from "./pages/student/Transport";
 
 function RootRedirect() {
   const [role, setRole] = useState(null);
@@ -297,9 +301,17 @@ export default function App() {
         <Route path="/exam-cell/exam-form-setting" element={<ProtectedRoute><ExamFormSettingPage /></ProtectedRoute>} />
 
         {/* Transport Configuration Routes */}
-        <Route path="/transport/bus-fleet" element={<ProtectedRoute><TransportBusFleet /></ProtectedRoute>} />
-        <Route path="/transport/routes-stages" element={<ProtectedRoute><TransportRoutesStages /></ProtectedRoute>} />
-        <Route path="/transport/driver-database" element={<ProtectedRoute><div className="min-h-screen bg-gradient-to-br from-[#f0f0fa] to-[#BBDEFB] p-4 md:p-6"><div className="rounded-3xl bg-gradient-to-br from-blue-800 via-[#120c7a] to-indigo-950 p-8 text-white text-center"><Users size={64} className="mx-auto mb-4" /><h1 className="text-3xl font-black mb-2">Driver Database</h1><p className="text-blue-100">Coming Soon — Driver database configuration will be added here</p></div></div></ProtectedRoute>} />
+        <Route path="/transport/config" element={<ProtectedRoute><TransportConfig /></ProtectedRoute>} />
+        <Route path="/transport-config" element={<ProtectedRoute><TransportConfig /></ProtectedRoute>} />
+        <Route path="/transport/bus-fleet" element={<ProtectedRoute><TransportConfig /></ProtectedRoute>} />
+        <Route path="/transport/routes-stages" element={<ProtectedRoute><TransportConfig /></ProtectedRoute>} />
+        <Route path="/transport/driver-database" element={<ProtectedRoute><TransportConfig /></ProtectedRoute>} />
+        <Route path="/transport/coordinator" element={<ProtectedRoute><TransportCoordinator /></ProtectedRoute>} />
+        <Route path="/transport-coordinator" element={<ProtectedRoute><TransportCoordinator /></ProtectedRoute>} />
+        <Route path="/transport/portal" element={<ProtectedRoute><TransportCoordinator /></ProtectedRoute>} />
+        <Route path="/transport/approvals" element={<ProtectedRoute><PrincipalTransportApproval /></ProtectedRoute>} />
+        <Route path="/transport/principal-approvals" element={<ProtectedRoute><PrincipalTransportApproval /></ProtectedRoute>} />
+        <Route path="/principal/transport" element={<ProtectedRoute><PrincipalTransportApproval /></ProtectedRoute>} />
 
         {/* Resource Hub Routes */}
         <Route path="/resource-hub" element={<ProtectedRoute><ResourceHubDashboard /></ProtectedRoute>} />
@@ -314,6 +326,7 @@ export default function App() {
         <Route path="/student/attendance" element={<ProtectedRoute><StudentLayout title="Attendance"><StudentAttendance /></StudentLayout></ProtectedRoute>} />
         <Route path="/student/marks" element={<ProtectedRoute><StudentLayout title="Marks & Results"><StudentMarks /></StudentLayout></ProtectedRoute>} />
         <Route path="/student/timetable" element={<ProtectedRoute><StudentLayout title="Timetable"><StudentTimetable /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/transport" element={<ProtectedRoute><StudentLayout title="Transport"><StudentTransport /></StudentLayout></ProtectedRoute>} />
         <Route path="/student/fees" element={<ProtectedRoute><StudentLayout title="Fee Details"><StudentFees /></StudentLayout></ProtectedRoute>} />
         <Route path="/student/syllabus" element={<ProtectedRoute><StudentLayout title="Syllabus"><StudentSyllabus /></StudentLayout></ProtectedRoute>} />
         <Route path="/student/question-papers" element={<ProtectedRoute><StudentLayout title="Question Papers"><StudentQuestionPapers /></StudentLayout></ProtectedRoute>} />

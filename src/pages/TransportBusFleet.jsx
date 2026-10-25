@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Building2, 
+  Bus,
   Plus, 
   Trash2, 
   Edit3, 
   CheckCircle2, 
   AlertTriangle, 
   Users, 
-  X,
+  X, 
   RefreshCw,
   Save,
   Search,
@@ -63,9 +64,9 @@ export default function TransportBusFleet() {
   const [saving, setSaving] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [selectedBus, setSelectedBus] = useState<Bus | null>(null);
+  const [selectedBus, setSelectedBus] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
-  const [formData, setFormData] = useState<Partial<Bus>>({});
+  const [formData, setFormData] = useState({});
 
   useEffect(() => {
     const busesRef = doc(db, 'transport_config', 'bus_fleet');

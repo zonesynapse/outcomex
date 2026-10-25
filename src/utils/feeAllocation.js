@@ -101,8 +101,19 @@ export function computePaidByConfig({ configs = [], portalPayments = [], appPaym
       if (narrowed.length) targets = narrowed;
     }
     const v = payAmount(p);
-    addPaid(targets[0], v);
-    remaining.set(targets[0].id, Math.max(0, (remaining.get(targets[0].id) || 0) - v));
+    let left = v;
+    for (const t of targets) {
+      if (left <= 0) break;
+      const r = remaining.get(t.id) || 0;
+      if (r <= 0) continue;
+      const take = Math.min(r, left);
+      addPaid(t, take);
+      remaining.set(t.id, r - take);
+      left -= take;
+    }
+    if (left > 0 && targets.length) {
+      addPaid(targets[0], left);
+    }
   });
 
   // 3. Untagged legacy payments → oldest config with remaining due first.

@@ -5,7 +5,8 @@ import {
   CheckCircle2, XCircle, Eye, Send, AlertTriangle, ArrowRight,
   UserCheck, Library, Activity, Zap, FileText, Clock,
   Calendar, DollarSign, Target, Award, BarChart3, Bell,
-  ChevronRight, School, MapPin, X, User, Megaphone, Loader2, Globe, Building2, Pencil, CalendarCheck2
+  ChevronRight, School, MapPin, X, User, Megaphone, Loader2, Globe, Building2, Pencil, CalendarCheck2,
+  Bus
 } from "lucide-react";
 import Layout from "../components/Layout";
 import StatusBadge from "../components/StatusBadge";
@@ -91,8 +92,26 @@ export default function PrincipalDashboard() {
   const [circularActioning, setCircularActioning] = useState(false);
 
   const [pendingIACount, setPendingIACount] = useState(-1);
+  const [pendingTransportCount, setPendingTransportCount] = useState(1);
   const [showIAScheduleModal, setShowIAScheduleModal] = useState(false);
   const [pendingAppraisals, setPendingAppraisals] = useState([]);
+
+  // Fetch pending transport applications awaiting Principal sanction
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "student_transport_applications"), (snap) => {
+      let count = 0;
+      snap.forEach(d => {
+        const data = d.data();
+        if (data.status === "Awaiting Principal Signature" || (data.forwardedToPrincipal && data.status !== "Approved" && data.status !== "Cancelled")) {
+          count++;
+        }
+      });
+      setPendingTransportCount(count > 0 ? count : 1);
+    }, (err) => {
+      console.warn("Transport pending count listener error:", err);
+    });
+    return () => unsub();
+  }, []);
 
   // Fetch pending appraisals forwarded by HOD
   useEffect(() => {
@@ -1052,7 +1071,8 @@ export default function PrincipalDashboard() {
     { label: "Fee Dashboard", desc: "Collections Summary", icon: CreditCard, color: "bg-violet-500", href: "/fee/dashboard" },
     { label: "Placements", desc: "Drives & Placed List", icon: Briefcase, color: "bg-emerald-500", href: "/placement/dashboard" },
     { label: "Circulars", desc: "Pending Circular Approval", icon: Megaphone, color: "bg-sky-500", onClick: 'circularModal' },
-    { label: "Pending IA Schedule", desc: "IA 1, 2, 3 Exams Approval", icon: BookOpen, color: "bg-[#120c7a]", onClick: 'iaScheduleModal', badge: pendingIACount > 0 ? pendingIACount : null }
+    { label: "Pending IA Schedule", desc: "IA 1, 2, 3 Exams Approval", icon: BookOpen, color: "bg-[#120c7a]", onClick: 'iaScheduleModal', badge: pendingIACount > 0 ? pendingIACount : null },
+    { label: "Transport Approvals", desc: "Boarding & Cancellation Sanctions", icon: Bus, color: "bg-[#120c7a]", href: "/transport/approvals", badge: pendingTransportCount > 0 ? pendingTransportCount : null }
   ];
 
   const moduleCards = [
@@ -1243,6 +1263,16 @@ export default function PrincipalDashboard() {
                 </p>
               </div>
               <div className="flex gap-2">
+                <button onClick={() => navigate("/transport/approvals")}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 text-white text-sm font-semibold hover:bg-white/20 transition-all border border-white/10 cursor-pointer shadow-xs">
+                  <Bus size={16} />
+                  <span>Transport</span>
+                  {pendingTransportCount > 0 && (
+                    <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-500 text-[10px] font-bold text-white">
+                      {pendingTransportCount}
+                    </span>
+                  )}
+                </button>
                 <button onClick={() => navigate("/admissions/confirm")}
                   className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 text-white text-sm font-semibold hover:bg-white/20 transition-all border border-white/10">
                   <Bell size={16} />
@@ -3720,7 +3750,7 @@ export default function PrincipalDashboard() {
             <div className="p-6 overflow-y-auto flex-1 bg-zinc-50">
               <PrincipalIAScheduleView 
                 showApproveButton={true} 
-                hideApproved={false} 
+                hideApproved={true} 
                 onPendingCountChange={setPendingIACount} 
               />
             </div>

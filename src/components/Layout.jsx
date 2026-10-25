@@ -61,7 +61,8 @@ import {
   ScrollText,
   CalendarCheck2,
   PenLine,
-  Route
+  Route,
+  Bus
 } from "lucide-react";
 import { useDepartments } from "../hooks/useDepartments";
 
@@ -179,10 +180,10 @@ const allPossibleItems = [
   { id: "exam-cell-fee-configuration", icon: IndianRupee, label: "Fee Configuration", path: "/exam-cell/fee-configuration" },
   { id: "exam-cell-exam-form-setting", icon: Settings2, label: "Exam Form Setting", path: "/exam-cell/exam-form-setting" },
 
-  // Transport Configuration Module
-  { id: "transport-bus-fleet", icon: Building2, label: "Bus Fleet", path: "/transport/bus-fleet" },
-  { id: "transport-routes-stages", icon: Route, label: "Routes & Stages Fee", path: "/transport/routes-stages" },
-  { id: "transport-driver-database", icon: Users, label: "Driver Database", path: "/transport/driver-database" },
+  // Transport Module
+  { id: "transport-coordinator", icon: UserCheck, label: "Coordinator Portal", path: "/transport/coordinator" },
+  { id: "transport-approvals", icon: ShieldCheck, label: "Principal Approvals", path: "/transport/approvals" },
+  { id: "transport-config", icon: Bus, label: "Transport Config", path: "/transport/config" },
 ];
 
 const modules = [
@@ -300,9 +301,9 @@ const modules = [
   },
   {
     id: "transport",
-    label: "Transport Config",
-    icon: Building2,
-    itemIds: ["transport-bus-fleet", "transport-routes-stages", "transport-driver-database"]
+    label: "Transport",
+    icon: Bus,
+    itemIds: ["transport-coordinator", "transport-approvals", "transport-config"]
   }
 ];
 
@@ -599,7 +600,10 @@ export default function Layout({ children, title }) {
         'exam-cell-hall-reports',
         'exam-cell-live-dashboard',
         'exam-cell-exam-hall-suite',
-        'exam-cell-fee-configuration'
+        'exam-cell-fee-configuration',
+        'transport-coordinator',
+        'transport-approvals',
+        'transport-config'
       ]);
       return Array.from(adminPerms);
     }
