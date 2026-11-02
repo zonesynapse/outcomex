@@ -44,20 +44,20 @@
 
   /* Table styling */
   table {
-    border-color: #e2e8f0 !important;
-    background-color: #ffffff !important;
+    border-color: #e2e8f0;
+    background-color: #ffffff;
   }
   
   th {
-    background-color: #f1f5f9 !important;
-    color: #0f172a !important;
-    border-color: #cbd5e1 !important;
-    font-weight: 700 !important;
+    background-color: #f1f5f9;
+    color: #0f172a;
+    border-color: #cbd5e1;
+    font-weight: 700;
   }
 
   td {
-    border-color: #e2e8f0 !important;
-    color: #1e293b !important;
+    border-color: #e2e8f0;
+    color: #1e293b;
   }
 }
 

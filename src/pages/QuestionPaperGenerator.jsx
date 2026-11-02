@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useLocation } from 'react-router-dom';
 import { CheckCircle2, AlertCircle, Pencil, Trash2, ChevronDown, Plus, XCircle, X, Bookmark, Save } from 'lucide-react';
 import Layout from '../components/Layout';
 import MathTemplateToolbar from '../components/MathTemplateToolbar';
@@ -12,7 +12,7 @@ import { useRegulations } from '../hooks/useRegulations';
 import { useDepartments } from '../hooks/useDepartments';
 import { useBatches } from '../hooks/useBatches';
 import { useSemesterType } from '../hooks/useSemesterType';
-import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay, formatDepartmentDisplay, isSameExamEvent } from '../lib/utils';
+import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay, formatDepartmentDisplay, isSameExamEvent, isDeptMatch } from '../lib/utils';
 import useUnsavedChanges from '../hooks/useUnsavedChanges';
 import { typesetMath } from '../utils/mathJaxUtils';
 
@@ -733,8 +733,9 @@ export default function QuestionPaperGenerator() {
   const { regulations: allRegulations, getRegulationForBatch } = useRegulations();
   const { getActiveBatches } = useBatches(durations);
   const [searchParams] = useSearchParams();
-  const editId = searchParams.get('id');
-  const compositeKey = searchParams.get('compositeKey');
+  const location = useLocation();
+  const editId = searchParams.get('id') || searchParams.get('edit');
+  const compositeKey = searchParams.get('compositeKey') || searchParams.get('docId') || searchParams.get('key');
   const editorRef = useRef(null);
   // Exact storage location of this session's last successful save
   // ({loc: {compositeKey, fieldId|null, isFlat}, ident}) — reused so a later
@@ -1273,7 +1274,16 @@ export default function QuestionPaperGenerator() {
     return m ? `Set ${m[0]}` : 'Set 1';
   });
   const [showFinalPreview, setShowFinalPreview] = useState(false);
-  const [hodComments, setHodComments] = useState('');
+  const [hodComments, setHodComments] = useState(() => searchParams.get('reason') || location?.state?.recorrectReason || '');
+
+  // Keep recorrection reason in sync from URL search params or router location state
+  useEffect(() => {
+    const urlReason = searchParams.get('reason') || location?.state?.recorrectReason;
+    if (urlReason) {
+      setHodComments(urlReason);
+    }
+  }, [searchParams, location?.state]);
+
   const [loadedExamName, setLoadedExamName] = useState(''); // New state to preserve human name
   const [isSavingDraft, setIsSavingDraft] = useState(false);
   const [loadedPaperStatus, setLoadedPaperStatus] = useState('');
@@ -1725,11 +1735,13 @@ export default function QuestionPaperGenerator() {
     const normCode = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
     const codeClean = normCode(subjectCode);
     const batchNorm = normCode(batch);
+    const examCfg = typeof getExamConfig === 'function' ? getExamConfig(exam) : null;
+    const targetExamName = String(customExam || examCfg?.examName || examCfg?.title || exam || '').trim();
 
     let matchedAssignment = null;
+    let fallbackAssignment = null;
 
     Object.values(qpSetterAssignmentsData || {}).forEach(docData => {
-      if (matchedAssignment) return;
       const dBatch = normCode(docData.batch || "");
       const dSem = String(docData.semester || "").trim();
 
@@ -1747,20 +1759,27 @@ export default function QuestionPaperGenerator() {
       if ((dBatch === batchNorm || dBatch.includes(batchNorm) || batchNorm.includes(dBatch) || yearMatches) && dSem === semNum) {
         if (docData.assignments && typeof docData.assignments === "object") {
           const found = Object.entries(docData.assignments).find(([k, v]) => normCode(k) === codeClean || normCode(v?.code || "") === codeClean);
-          if (found && found[1]) {
-            matchedAssignment = found[1];
+          if (found && found[1] && (found[1].examDate || found[1].exam_date)) {
+            const dExamName = docData.examName || docData.examId || docData.id || '';
+            const isExamMatch = targetExamName && dExamName && isSameExamEvent(targetExamName, dExamName);
+            if (isExamMatch) {
+              matchedAssignment = found[1];
+            } else if (!fallbackAssignment) {
+              fallbackAssignment = found[1];
+            }
           }
         }
       }
     });
 
-    if (!matchedAssignment) return { date: "", duration: "180 min", rawDate: "", startTime: "", endTime: "" };
+    const finalAssignment = matchedAssignment || fallbackAssignment;
+    if (!finalAssignment) return { date: "", duration: "180 min", rawDate: "", startTime: "", endTime: "" };
 
-    const rawDate = matchedAssignment.examDate || matchedAssignment.exam_date || matchedAssignment.date || matchedAssignment.assignedDate || "";
+    const rawDate = finalAssignment.examDate || finalAssignment.exam_date || finalAssignment.date || finalAssignment.assignedDate || "";
     const dateDisplay = formatExamDateDisplay(rawDate);
-    const startTime = matchedAssignment.startTime || matchedAssignment.start_time || "";
-    const endTime = matchedAssignment.endTime || matchedAssignment.end_time || "";
-    const timeSlot = matchedAssignment.timeSlot || matchedAssignment.time_slot || "";
+    const startTime = finalAssignment.startTime || finalAssignment.start_time || "";
+    const endTime = finalAssignment.endTime || finalAssignment.end_time || "";
+    const timeSlot = finalAssignment.timeSlot || finalAssignment.time_slot || "";
     const durationDisplay = calculateDuration(startTime, endTime, timeSlot);
 
     return {
@@ -1771,7 +1790,7 @@ export default function QuestionPaperGenerator() {
       endTime,
       timeSlot
     };
-  }, [batch, selectedSemester, subject, qpSetterAssignmentsData, getSubjectCodeFrom]);
+  }, [batch, selectedSemester, subject, qpSetterAssignmentsData, getSubjectCodeFrom, exam, customExam, getExamConfig]);
 
   // Resolve the authoritative per-subject Question Paper Set count from qp_setter_assignments
   // (set in IAScheduleCreation / QPSetterAssignment). This is keyed by the stable subject code,
@@ -3371,7 +3390,7 @@ export default function QuestionPaperGenerator() {
     <td style="padding: 4px;"><strong>Duration</strong></td>
     <td style="padding: 4px;">${qp.duration || scheduledExamInfo.duration || '180 min'}</td>
     <td style="padding: 4px;"><strong>Date</strong></td>
-    <td style="padding: 4px;">${qp.exam_date_display || scheduledExamInfo.date || (qp.exam_date ? formatExamDateDisplay(qp.exam_date) : '')}</td>
+    <td style="padding: 4px;">${scheduledExamInfo.date || qp.exam_date_display || (qp.exam_date ? formatExamDateDisplay(qp.exam_date) : '')}</td>
   </tr>
   <tr>
     <td style="padding: 4px;"><strong>Reg. No.</strong></td>
@@ -4079,6 +4098,10 @@ export default function QuestionPaperGenerator() {
         if (qp && !hasLoadedRef.current) {
           hasLoadedRef.current = true;
           setLoadedPaperStatus(qp.status || (qp.is_draft ? 'draft' : ''));
+          const existingComments = qp.hod_comments || qp.ac_comments || qp.coe_comments || qp.recorrect_comments || qp.comments || qp.rejection_reason || qp.remarks || qp.reason || searchParams.get('reason') || location?.state?.recorrectReason || '';
+          if (existingComments) {
+            setHodComments(existingComments);
+          }
 
           // Resolve kldomain: if saved as name, convert to key; keep line breaks from <p> as <br>
           const resolveConfig = (config) => (config || []).map(q => ({
@@ -4169,7 +4192,17 @@ export default function QuestionPaperGenerator() {
         // Flat docs (1MB-fallback saves, doc id like `...__<setId>`) store the QP
         // payload at the TOP LEVEL, not nested under editId. Fall back to the
         // doc itself so Edit autofetch works for flat-doc papers (e.g. IA 2 sets).
-        const qp = data?.[editId] || (data?._isFlatDoc ? data : null);
+        let qp = data?.[editId] || (data?._isFlatDoc ? data : null);
+        if (!qp && data) {
+          if (data?.[decodeURIComponent(editId)]) {
+            qp = data[decodeURIComponent(editId)];
+          } else if (data.parts || data.assignment_config || data.subject || data.status) {
+            qp = data;
+          } else {
+            const foundVal = Object.values(data).find(v => v && typeof v === 'object' && (v.id === editId || v.qpaper_name === editId || v.status === 'recorrected'));
+            if (foundVal) qp = foundVal;
+          }
+        }
 
         if (qp) {
           setLoadedPaperStatus(qp.status || (qp.is_draft ? 'draft' : ''));
@@ -4181,7 +4214,9 @@ export default function QuestionPaperGenerator() {
           setSelectedSemester(qp.semester ? `${qp.semester}${qp.semester === '1' ? 'st' : qp.semester === '2' ? 'nd' : qp.semester === '3' ? 'rd' : 'th'} Semester` : '');
           setSubject(qp.subject || '');
           setLoadedExamName(qp.exam_name || ''); // Preserve the human name from DB
-          setHodComments(qp.hod_comments || ''); // Load HOD comments
+          const urlReason = searchParams.get('reason') || location?.state?.recorrectReason || '';
+          const comments = qp.hod_comments || qp.ac_comments || qp.coe_comments || qp.recorrect_comments || qp.comments || qp.rejection_reason || qp.remarks || qp.reason || data?.hod_comments || data?.ac_comments || data?.coe_comments || data?.recorrect_comments || data?.comments || data?.reason || urlReason || '';
+          setHodComments(comments);
           setExam(qp.qpaper_name || '');
           // NOTE: qpSet is owned by the editSetTarget forcing effect below
           // (physical IDs → URL → stored qp.qp_set, last resort). Do NOT set it
@@ -6658,21 +6693,7 @@ export default function QuestionPaperGenerator() {
           user => norm(user.role) === 'academic coordinator' && user.isApproved !== false
         );
 
-        const isDeptMatch = (userDept, target) => {
-          const uNorm = norm(userDept);
-          const tNorm = norm(target);
-          if (!uNorm || !tNorm) return false;
-          if (uNorm === tNorm) return true;
-          if (uNorm.includes(tNorm) || tNorm.includes(uNorm)) return true;
-          const uClean = uNorm.replace(/[^a-z0-9]/g, '');
-          const tClean = tNorm.replace(/[^a-z0-9]/g, '');
-          if (uClean === tClean || uClean.includes(tClean) || tClean.includes(uClean)) return true;
-          const getAcronym = (s) => s.split(/\s+/).filter(w => !['and', '&', 'of', 'in', 'the', 'b.e.', 'b.tech', 'm.e.', 'm.tech', 'department'].includes(w)).map(w => w[0]).join('');
-          const uAcro = getAcronym(uNorm);
-          const tAcro = getAcronym(tNorm);
-          if (uAcro && tAcro && (uAcro === tAcro || uAcro === tClean || tAcro === uClean)) return true;
-          return false;
-        };
+        // isDeptMatch is imported dynamically from ../lib/utils (Firestore-backed registry)
 
         const matchedAc = acs.find(u => isDeptMatch(u.department, targetDept)) ||
           (acs.length === 1 ? acs[0] : null);
@@ -7178,19 +7199,46 @@ ${aiIncludeImages ? `6. VISUAL DIAGRAMS REQUIRED: The user has strictly requeste
         </div>
       )}
 
-      {hodComments && (
-        <div className="mb-6 p-4 rounded-xl flex items-center gap-3 font-medium border bg-amber-50 text-amber-700 border-amber-200">
-          <AlertCircle size={20} />
-          <span className="font-bold">HOD Comments:</span>
-          <span>{hodComments}</span>
-        </div>
-      )}
-
       <div className="question-paper-page container mx-auto p-6 max-w-7xl">
+        {(hodComments || loadedPaperStatus === 'recorrected' || searchParams.get('status') === 'recorrected') && (
+          <div className="mb-6 p-5 rounded-2xl border-2 border-amber-300 bg-gradient-to-r from-amber-50 via-orange-50/70 to-amber-50 shadow-sm animate-in fade-in slide-in-from-top-2 duration-300">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-amber-200/80">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-amber-100 border border-amber-300 flex items-center justify-center shrink-0 text-amber-700 shadow-xs">
+                  <AlertCircle size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-amber-950 flex items-center gap-2">
+                    Recorrection Feedback / Reason
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider bg-rose-100 text-rose-700 border border-rose-300">
+                      Action Required
+                    </span>
+                  </h3>
+                  <p className="text-xs text-amber-700">Please review the reviewer's remarks below, make the necessary changes to questions/parts, and re-forward for approval.</p>
+                </div>
+              </div>
+            </div>
+            <div className="mt-3.5 bg-white/95 border border-amber-200/90 rounded-xl p-4 shadow-inner">
+              <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                <span>Feedback Remarks:</span>
+              </div>
+              <p className="text-sm font-medium text-slate-800 whitespace-pre-wrap leading-relaxed">
+                {hodComments || 'This question paper was forwarded back for recorrection. Please review the questions, make the necessary corrections, and re-forward for approval.'}
+              </p>
+            </div>
+          </div>
+        )}
+
         <div className="bg-white rounded-3xl shadow-xl p-8 mb-8 border border-slate-100">
           <div className="flex flex-wrap items-center justify-between gap-4 mb-6 pb-4 border-b border-slate-100">
             <div className="flex items-center gap-3">
               <h2 className="text-lg font-bold text-slate-800">Assessment & Subject Configuration</h2>
+              {loadedPaperStatus === 'recorrected' && (
+                <span className="px-3 py-1 bg-rose-100 text-rose-800 text-xs font-bold rounded-full border border-rose-300 flex items-center gap-1.5 shadow-sm">
+                  <AlertCircle size={13} className="text-rose-600" />
+                  Recorrection Mode
+                </span>
+              )}
               {loadedPaperStatus === 'draft' && (
                 <span className="px-3 py-1 bg-amber-100 text-amber-800 text-xs font-bold rounded-full border border-amber-300 flex items-center gap-1.5 shadow-sm">
                   <Bookmark size={13} className="text-amber-600" />

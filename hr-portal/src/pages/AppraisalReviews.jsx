@@ -1327,7 +1327,8 @@ export default function AppraisalReviews() {
         id: d.id,
         collectionName: "principal_appraisals",
         formType: "principal",
-        facultyName: d.data().principalName || d.data().staffName || d.data().name || "Principal"
+        facultyName: d.data().principalName || d.data().staffName || d.data().name || "Principal",
+        facultyEmail: d.data().userEmail || d.data().facultyEmail || d.data().email || d.data().staffEmail || ""
       }));
       setAppraisals([...facultyList, ...nonTeachingList, ...hodList, ...teacherList, ...principalList]);
       setLoading(false);
@@ -1429,7 +1430,11 @@ export default function AppraisalReviews() {
       return false;
     }
 
-    const statusMatch = statusFilter === "All" || app.status === statusFilter;
+    // For principal appraisals, "Submitted" is the initial pending review status (as Principals do not have a HOD stage).
+    // Allow it to match when viewing HOD_Approved (default pending filter for Principal/HR) or Submitted or All.
+    const statusMatch = statusFilter === "All" || 
+      app.status === statusFilter || 
+      (app.formType === "principal" && app.status === "Submitted" && statusFilter === "HOD_Approved");
 
     return (nameMatch || emailMatch) && instMatch && depMatch && statusMatch;
   });

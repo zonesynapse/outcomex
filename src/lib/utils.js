@@ -58,6 +58,19 @@ export function formatDepartmentDisplay(dept, prog) {
   return str;
 }
 
+/**
+ * Dynamic department registry & matching engine backed by Firestore (department_metadata & programme_departments).
+ * Purely data-driven with ZERO hardcoding.
+ */
+export {
+  isDeptMatch,
+  getDepartmentCode,
+  extractAcronym,
+  normalizeDept,
+  extractDeptFromDocId,
+  resolveCanonicalDeptFromFirestore
+} from "./departmentRegistry";
+
 export function getOrdinal(n) {
   const s = ["th", "st", "nd", "rd"];
   const v = n % 100;
@@ -277,6 +290,17 @@ export function normalizeDateStr(str) {
     return `${m2[3]}-${m2[2].padStart(2, '0')}-${m2[1].padStart(2, '0')}`;
   }
   return s;
+}
+
+export function extractPureDate(key) {
+  if (!key) return '';
+  const str = String(key).trim();
+  const m = str.match(/^(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{4})/);
+  if (m) return normalizeDateStr(m[1]);
+  if (str.includes('_P')) return normalizeDateStr(str.slice(0, str.lastIndexOf('_P')));
+  if (str.includes('_p')) return normalizeDateStr(str.slice(0, str.lastIndexOf('_p')));
+  if (str.includes('_')) return normalizeDateStr(str.split('_')[0]);
+  return normalizeDateStr(str);
 }
 
 export function smartMergeStudentsMap(map1 = {}, map2 = {}) {
@@ -694,16 +718,43 @@ export function getAllCandidateAttendanceDocIds({ programme, department, batch, 
   ]));
 
   const candidateIds = new Set();
-  // Ensure the primary canonical doc IDs (both with section and base without section, space and underscore variants) are evaluated first!
   const canonicalSecSuffix = section ? `_${cleanKey(section)}` : '';
-  candidateIds.add(`${progKey}_${deptClean}_${batchClean}_${ayClean}_${semNum}_${cleanKey(subjectCode)}${canonicalSecSuffix}`);
-  candidateIds.add(`${progKey}_${deptClean}_${batchClean}_${ayClean}_${semNum}_${cleanKey(subjectCode)}`);
-  candidateIds.add(`${progKey}_${deptUnderscore}_${batchClean}_${ayClean}_${semNum}_${cleanKey(subjectCode)}${canonicalSecSuffix}`);
-  candidateIds.add(`${progKey}_${deptUnderscore}_${batchClean}_${ayClean}_${semNum}_${cleanKey(subjectCode)}`);
-  if (deptNoDegree) {
-    candidateIds.add(`${progKey}_${deptNoDegree}_${batchClean}_${ayClean}_${semNum}_${cleanKey(subjectCode)}${canonicalSecSuffix}`);
-    candidateIds.add(`${progKey}_${deptNoDegree}_${batchClean}_${ayClean}_${semNum}_${cleanKey(subjectCode)}`);
-  }
+
+  // Extract all high-probability batch formats (full 4-digit range, 2-digit range, sanitized, raw)
+  const primaryBatches = Array.from(new Set([
+    batchClean,
+    cleanKey(batch).replace(/\s+/g, '_'),
+    yearsMatch ? `${yearsMatch[1]}-${yearsMatch[2].length === 2 ? `20${yearsMatch[2]}` : yearsMatch[2]}` : null,
+    yearsMatch ? `${yearsMatch[1]}-${yearsMatch[2].length === 2 ? yearsMatch[2] : yearsMatch[2].slice(-2)}` : null,
+    yearsMatch ? `${yearsMatch[1]}_${yearsMatch[2].length === 2 ? `20${yearsMatch[2]}` : yearsMatch[2]}` : null,
+    batchClean.replace(/_Batch_\([^)]+\)/i, '_Batch'),
+    batchClean.replace(/_Batch/i, '')
+  ].filter(Boolean)));
+
+  // Extract all high-probability department formats (clean, single underscore, double underscore, no degree, acronym)
+  const primaryDepts = Array.from(new Set([
+    deptClean,
+    deptUnderscoreSingle,
+    deptUnderscore,
+    deptNoDegree,
+    deptNoDegreeUnderscore,
+    deptAcronym
+  ].filter(Boolean)));
+
+  const primarySecs = Array.from(new Set([
+    canonicalSecSuffix,
+    section ? `_${cleanKey(section).replace(/[-_]/g, '')}` : '',
+    ''
+  ]));
+
+  // Prioritize primary combinations at the very front of candidateIds
+  primaryBatches.forEach(b => {
+    primaryDepts.forEach(d => {
+      primarySecs.forEach(sec => {
+        candidateIds.add(`${progKey}_${d}_${b}_${ayClean}_${semNum}_${cleanKey(subjectCode)}${sec}`);
+      });
+    });
+  });
 
   progCandidates.forEach(p => {
     deptCandidates.forEach(d => {
@@ -987,6 +1038,7 @@ export function calculateStudentAttendanceOverview({
   joiningDate = '',
   facultyUidMap = {},
   facultyNames = {},
+  timetableFacultyMap = {},
   subjectNames = {},
   maxPeriodsPerDay = 8
 }) {
@@ -1130,8 +1182,11 @@ export function calculateStudentAttendanceOverview({
         subjectCode: entry.subjectCode,
         totalClasses: 0,
         attended: 0,
-        odCount: 0
+        odCount: 0,
+        markedBy: entry.markedBy || ''
       };
+    } else if (!subjectStats[entry.subjectCode].markedBy && entry.markedBy) {
+      subjectStats[entry.subjectCode].markedBy = entry.markedBy;
     }
     // '-' means student did not take this subject/period -> do NOT increment totalClasses or absent
     if (entry.status !== '-') {
@@ -1148,12 +1203,13 @@ export function calculateStudentAttendanceOverview({
     const effectiveClasses = Math.max(0, s.totalClasses - s.odCount);
     const pct = effectiveClasses > 0 ? (s.attended / effectiveClasses) * 100 : (s.odCount > 0 ? 100 : 0);
     const odPct = s.totalClasses > 0 ? (s.odCount / s.totalClasses) * 100 : 0;
-    const facultyUid = facultyUidMap[s.subjectCode] || '';
+    const facultyUid = facultyUidMap[s.subjectCode] || s.markedBy || '';
+    const resolvedFaculty = timetableFacultyMap[s.subjectCode] || (facultyUid ? (facultyNames[facultyUid] || '') : '');
     subjects.push({
       docId: s.docId,
       subjectCode: s.subjectCode,
       subjectName: subjectNames[s.subjectCode] || '',
-      facultyName: facultyUid ? (facultyNames[facultyUid] || '') : '',
+      facultyName: resolvedFaculty || '—',
       totalClasses: s.totalClasses,
       attended: s.attended,
       odCount: s.odCount,
@@ -1198,6 +1254,14 @@ export function calculateStudentAttendanceOverview({
       }
 
       const isAttended = (chosen.status === 'P');
+      const assignedUid = facultyUidMap[chosen.subjectCode];
+      const resolvedRowFaculty = timetableFacultyMap[chosen.subjectCode] ||
+        ((assignedUid && facultyNames[assignedUid])
+          ? facultyNames[assignedUid]
+          : (chosen.markedBy && facultyNames[chosen.markedBy])
+            ? facultyNames[chosen.markedBy]
+            : (facultyUidMap[chosen.subjectCode] ? facultyNames[facultyUidMap[chosen.subjectCode]] : ''));
+
       if (chosen.isEvent) {
         allRows.push({
           date: dateStr,
@@ -1207,7 +1271,7 @@ export function calculateStudentAttendanceOverview({
           status: chosen.status,
           isEvent: true,
           subjectName: chosen.eventName || '',
-          facultyName: chosen.markedBy ? (facultyNames[chosen.markedBy] || '') : chosen.markedBy
+          facultyName: chosen.markedBy && facultyNames[chosen.markedBy] ? facultyNames[chosen.markedBy] : (chosen.markedBy || '')
         });
       } else {
         allRows.push({
@@ -1219,7 +1283,7 @@ export function calculateStudentAttendanceOverview({
           isEvent: false,
           markedBy: chosen.markedBy,
           subjectName: subjectNames[chosen.subjectCode] || '',
-          facultyName: chosen.markedBy ? (facultyNames[chosen.markedBy] || '') : (facultyUidMap[chosen.subjectCode] ? facultyNames[facultyUidMap[chosen.subjectCode]] : '')
+          facultyName: resolvedRowFaculty || '—'
         });
       }
     });

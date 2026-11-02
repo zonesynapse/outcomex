@@ -86,9 +86,11 @@ export interface AllocatedSeat {
   col: number;
   slotPosition: string;
   student: Student;
-  status: 'Allocated' | 'Reserved' | 'Blocked';
+  status: 'Allocated' | 'Reserved' | 'Blocked' | 'Present' | 'Absent' | 'Malpractice';
   serialNumber?: number;
   hasConflict?: boolean;
+  examDate?: string;
+  session?: 'FN' | 'AN';
 }
 
 export interface SubjectStrength {
@@ -96,6 +98,7 @@ export interface SubjectStrength {
   programme?: string;
   subjectCode: string;
   subjectName: string;
+  subjectTitle?: string;
   semester: number;
   year: number;
   studentCount: number;

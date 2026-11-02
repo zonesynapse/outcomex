@@ -3,6 +3,7 @@ import { Room, Student, AllocatedSeat, DutyAllocation, Faculty, ExamSchedule, De
 import { useDepartments } from '../../../hooks/useDepartments';
 import { collection, onSnapshot, doc } from 'firebase/firestore';
 import { db } from '../../../firebase';
+import { isDeptMatch } from '../../../lib/utils';
 
 interface PrintReportsViewProps {
   rooms: Room[];
@@ -158,20 +159,14 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
 
   const normalizeDeptName = (rawDept?: string): string => {
     if (!rawDept) return '';
-    let s = String(rawDept).trim();
-    s = s.replace(/^Department of\s+/i, '');
-    const lower = s.toLowerCase().replace(/[^a-z0-9]/g, '');
-    if (lower === 'cse' || lower.includes('computerscience')) return 'B.E. Computer Science and Engineering';
-    if (lower === 'it' || lower.includes('informationtechnology')) return 'B.Tech. Information Technology';
-    if (lower === 'aids' || lower.includes('artificialintelligence')) return 'B.Tech. Artificial Intelligence and Data Science';
-    if (lower === 'ece' || lower.includes('electronicsandcommunication')) return 'B.E. Electronics and Communication Engineering';
-    if (lower === 'eee' || lower.includes('electricalandelectronics')) return 'B.E. Electrical and Electronics Engineering';
-    if (lower === 'mech' || lower.includes('mechanicalengineering')) return 'B.E. Mechanical Engineering';
-    if (lower === 'civil' || lower.includes('civilengineering')) return 'B.E. Civil Engineering';
-    if (lower === 'bme' || lower.includes('biomedical')) return 'B.E. Bio Medical Engineering';
-    if (lower === 'robotics' || lower.includes('roboticsandautomation')) return 'B.E. Robotics and Automation';
-    if (lower === 'mba' || lower.includes('businessadministration') || lower === 'administration') return 'PG Master of Business Administration';
-    return s;
+    const trimmed = String(rawDept).trim().replace(/^Department of\s+/i, '');
+    
+    // Look up in real-time Firestore department list dynamically
+    const allKnown: string[] = (Object.values(firestoreDeptMap || {}).flat() as string[]) || [];
+    const matched = allKnown.find((d: string) => isDeptMatch(d, trimmed));
+    if (matched) return String(matched);
+
+    return trimmed;
   };
 
   const getProgrammeForDept = (deptName: string): string => {
@@ -842,6 +837,7 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
                       registerNumber: key,
                       department: (meta.department || selectedDepartment) as Department,
                       programme: selectedProgramme,
+                      section: meta.section || '',
                       subjectCode: '',
                       subjectName: '',
                       semester: semNum,
@@ -1130,7 +1126,7 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
 
       // Find assigned invigilator
       const invigilator = dutyAllocations.find(
-        (d) => d.roomId === room.id && d.examDate === selectedExam.date && d.session === selectedExam.session
+        (d) => d.roomId === room.id && ((d as any).examDate || d.date) === selectedExam.date && d.session === selectedExam.session
       );
 
       // Group seats in this hall by department & subjectCode
@@ -2551,8 +2547,8 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
                   {effectiveRooms.map((room) => {
                     const roomSeats = effectiveAllocatedSeats.filter((s) => {
                       const matchRoom = s.roomId === room.id || String(s.roomNumber || '').trim().toLowerCase() === String(room.roomNumber || '').trim().toLowerCase();
-                      const sDate = s.examDate || s.student?.examDate || '';
-                      const sSess = s.session || s.student?.session || '';
+                      const sDate = (s as any).examDate || s.student?.examDate || '';
+                      const sSess = (s as any).session || s.student?.session || '';
                       const matchDate = !sDate || !selectedExam.date || sDate === selectedExam.date;
                       const matchSess = !sSess || !selectedExam.session || sSess === selectedExam.session;
                       return matchRoom && matchDate && matchSess;
@@ -2560,15 +2556,15 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
                     const seated = roomSeats.length;
 
                     const duty = effectiveDutyAllocations.find((d) => {
-                      const matchRoom = d.roomId === room.id || String(d.roomNumber || d.room || '').trim().toLowerCase() === String(room.roomNumber || '').trim().toLowerCase();
-                      const dDate = d.examDate || d.date || '';
+                      const matchRoom = d.roomId === room.id || String(d.roomNumber || (d as any).room || '').trim().toLowerCase() === String(room.roomNumber || '').trim().toLowerCase();
+                      const dDate = (d as any).examDate || d.date || '';
                       const dSess = d.session || '';
                       const matchDate = !dDate || !selectedExam.date || dDate === selectedExam.date;
                       const matchSess = !dSess || !selectedExam.session || dSess === selectedExam.session;
                       return matchRoom && matchDate && matchSess;
                     });
 
-                    const capacity = room.totalCapacity || room.capacity || 0;
+                    const capacity = room.totalCapacity || (room as any).capacity || 0;
                     const util = capacity > 0 ? Math.round((seated / capacity) * 100) : 0;
 
                     return (
@@ -2577,7 +2573,7 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
                           {room.roomNumber}
                         </td>
                         <td className="py-2 px-3 border-r border-slate-900 text-slate-600">
-                          {room.location || `${room.block || ''}, ${room.floor || ''}`}
+                          {(room as any).location || `${room.block || ''}, ${room.floor || ''}`}
                         </td>
                         <td className="py-2 px-2 border-r border-slate-900 text-center font-mono">
                           {capacity}
@@ -2589,10 +2585,10 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
                           {util}%
                         </td>
                         <td className="py-2 px-3 border-r border-slate-900 font-semibold">
-                          {duty?.facultyName || duty?.invigilatorName || <span className="text-amber-600 font-normal italic">Standby Assignment</span>}
+                          {duty?.facultyName || (duty as any)?.invigilatorName || <span className="text-amber-600 font-normal italic">Standby Assignment</span>}
                         </td>
                         <td className="py-2 px-2 border-r border-slate-900 text-center font-bold">
-                          {duty?.facultyDept || duty?.department || duty?.dept || '-'}
+                          {duty?.facultyDept || (duty as any)?.department || (duty as any)?.dept || '-'}
                         </td>
                         <td className="py-2 px-3">
                           <span className="font-semibold text-emerald-700">Operational</span>
@@ -2605,29 +2601,29 @@ export const PrintReportsView: React.FC<PrintReportsViewProps> = ({
                   <tr className="bg-slate-100 font-bold border-t-2 border-slate-900">
                     <td colSpan={2} className="py-2 px-3 border-r border-slate-900">Total / Summary</td>
                     <td className="py-2 px-2 border-r border-slate-900 text-center font-mono">
-                      {effectiveRooms.reduce((s, r) => s + (r.totalCapacity || r.capacity || 0), 0)}
+                      {effectiveRooms.reduce((s, r) => s + (r.totalCapacity || (r as any).capacity || 0), 0)}
                     </td>
                     <td className="py-2 px-2 border-r border-slate-900 text-center font-mono font-bold text-indigo-950">
                       {effectiveAllocatedSeats.filter((s) => {
-                        const sDate = s.examDate || s.student?.examDate || '';
-                        const sSess = s.session || s.student?.session || '';
+                        const sDate = (s as any).examDate || s.student?.examDate || '';
+                        const sSess = (s as any).session || s.student?.session || '';
                         return (!sDate || !selectedExam.date || sDate === selectedExam.date) && (!sSess || !selectedExam.session || sSess === selectedExam.session);
                       }).length}
                     </td>
                     <td className="py-2 px-2 border-r border-slate-900 text-center font-bold">
                       {Math.round(
                         (effectiveAllocatedSeats.filter((s) => {
-                          const sDate = s.examDate || s.student?.examDate || '';
-                          const sSess = s.session || s.student?.session || '';
+                          const sDate = (s as any).examDate || s.student?.examDate || '';
+                          const sSess = (s as any).session || s.student?.session || '';
                           return (!sDate || !selectedExam.date || sDate === selectedExam.date) && (!sSess || !selectedExam.session || sSess === selectedExam.session);
                         }).length /
-                          Math.max(1, effectiveRooms.reduce((s, r) => s + (r.totalCapacity || r.capacity || 0), 0))) *
+                          Math.max(1, effectiveRooms.reduce((s, r) => s + (r.totalCapacity || (r as any).capacity || 0), 0))) *
                         100
                       )}%
                     </td>
                     <td colSpan={3} className="py-2 px-3 font-semibold text-slate-800">
                       {effectiveDutyAllocations.filter((d) => {
-                        const dDate = d.examDate || d.date || '';
+                        const dDate = (d as any).examDate || d.date || '';
                         const dSess = d.session || '';
                         return (!dDate || !selectedExam.date || dDate === selectedExam.date) && (!dSess || !selectedExam.session || dSess === selectedExam.session);
                       }).length} Faculty Deployed

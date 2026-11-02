@@ -17,3 +17,5 @@ MONTHLY REPORT FOR THE MONTH OF MARCH NEW (1).doc
 # Temporary & Scratch Files
 scratch/
 large_file.txt
+serviceAccountKey.json
+*serviceAccount*.json

@@ -305,6 +305,26 @@ export default function QPSetterAssignment() {
     return filteredExamEvents.find(e => e.id === selectedExamId) || null;
   }, [selectedExamId, filteredExamEvents]);
 
+  // Set count configured per academic year in Curriculum (Exam Version Sets).
+  const configuredNumSets = useMemo(() => {
+    if (!academicYear) return null;
+    let cfg = null;
+    if (selectedExam?.ciaId) {
+      cfg = ciaConfigs.find(c => c.id === selectedExam.ciaId) || null;
+    }
+    if (!cfg && selectedExam?.title) {
+      const titleNorm = normClean(selectedExam.title);
+      cfg = ciaConfigs.find(c => {
+        const nameNorm = normClean(c.examName || c.exam || c.name || c.title || "");
+        return nameNorm && (nameNorm === titleNorm || nameNorm.includes(titleNorm) || titleNorm.includes(nameNorm));
+      }) || null;
+    }
+    const ayKey = sanitizeKey(academicYear);
+    const ayVal = ayKey ? cfg?.numSetsByAy?.[ayKey] : undefined;
+    const parsed = parseInt(ayVal ?? cfg?.numSets ?? "", 10);
+    return (parsed > 0) ? parsed : null;
+  }, [selectedExam, ciaConfigs, academicYear]);
+
   useEffect(() => {
     if (filteredExamEvents.length > 0) {
       const exists = filteredExamEvents.some(e => e.id === selectedExamId);
@@ -743,7 +763,7 @@ export default function QPSetterAssignment() {
           departments: r.departments.map(d => ({ prog: d.prog, progKey: d.progKey, dept: d.dept })),
           setterUid,
           setterName: setterUid ? setterName : "",
-          numSets: parseInt(row.numSets || existingAs.numSets, 10) || 1,
+          numSets: configuredNumSets ? configuredNumSets : (parseInt(row.numSets || existingAs.numSets, 10) || 1),
           fromDate: row.fromDate || existingAs.fromDate || "",
           toDate: row.toDate || existingAs.toDate || ""
         };
@@ -760,6 +780,7 @@ export default function QPSetterAssignment() {
         examId: selectedExam?.id || selectedExamId || "",
         examName: selectedExam?.displayTitle || selectedExam?.title || "",
         ciaId: selectedExam?.ciaId || "",
+        numSets: configuredNumSets || 1,
         updatedBy: coeName || auth.currentUser?.email || "Exam Cell",
         updatedById: currentUid,
         updatedAt: new Date().toISOString(),
@@ -892,9 +913,11 @@ export default function QPSetterAssignment() {
         </td>
         <td className="py-3 px-3">
           <select
-            value={row.numSets || 1}
+            value={configuredNumSets ? String(configuredNumSets) : String(row.numSets || 1)}
             onChange={(e) => updateAssignment(r.code, "numSets", e.target.value)}
-            className="w-full min-w-[70px] px-2 py-2 rounded-lg border border-zinc-200 bg-white text-[11px] font-semibold text-zinc-700 outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 transition-all cursor-pointer">
+            disabled={!!configuredNumSets}
+            title={configuredNumSets ? "Set count locked from Curriculum (Exam Version Sets)" : ""}
+            className="w-full min-w-[70px] px-2 py-2 rounded-lg border border-zinc-200 bg-white text-[11px] font-semibold text-zinc-700 outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 transition-all cursor-pointer disabled:cursor-not-allowed disabled:opacity-60">
             {[1, 2, 3, 4, 5, 6].map(n => <option key={n} value={n}>{n} Set{n > 1 ? "s" : ""}</option>)}
           </select>
         </td>

@@ -6,7 +6,7 @@ import { useDepartments } from "../hooks/useDepartments";
 import DashboardCards from "../components/DashboardCards";
 import EnquiryTable from "../components/EnquiryTable";
 import AddEnquiryModal from "../components/AddEnquiryModal";
-import { addEnquiry, createEmptyEnquiryForm, deleteEnquiry, getEnquiriesPaginated, getEnquiriesCount as getEnquiriesCountService, getEnquiriesStats, updateEnquiry, getEnquiryById, getAllEnquiries } from "../services/enquiryService";
+import { addEnquiry, createEmptyEnquiryForm, deleteEnquiry, getEnquiriesPaginated, getEnquiriesCount as getEnquiriesCountService, getEnquiriesStats, updateEnquiry, getEnquiryById, getAllEnquiries, syncEnquiryToApprovedAdmissions } from "../services/enquiryService";
 import { getSeatConfigurationsRealtime } from "../services/seatService";
 
 const STATUS_FILTERS = ["All", "Enquiry", "Application", "Admission", "Approved"];
@@ -79,6 +79,16 @@ export default function AdmissionEnquiries() {
     getEnquiriesCountService().then((count) => setTotalCount(count)).catch(() => {});
     getEnquiriesStats().then(setStats).catch(() => {});
   }, [refreshTrigger]);
+
+  // Resilient background sync: ensure all admitted students are in approved_admissions
+  useEffect(() => {
+    getAllEnquiries().then((all) => {
+      const admittedList = all.filter((e) => e.status === "Approved" || e.status === "Admitted");
+      admittedList.forEach((adm) => {
+        syncEnquiryToApprovedAdmissions(adm).catch(() => {});
+      });
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     const unsubscribe = getSeatConfigurationsRealtime(
@@ -215,13 +225,20 @@ export default function AdmissionEnquiries() {
     setSaving(true);
     try {
       if (formModal.mode === "edit" && formModal.enquiry?.enquiryId) {
-        await updateEnquiry(formModal.enquiry.enquiryId, {
+        const merged = {
           ...formModal.enquiry,
           ...values
-        });
+        };
+        await updateEnquiry(formModal.enquiry.enquiryId, merged);
+        if (merged.status === "Approved" || merged.status === "Admitted") {
+          await syncEnquiryToApprovedAdmissions(merged).catch(() => {});
+        }
         showToast("Enquiry updated successfully");
       } else {
-        await addEnquiry(values);
+        const newId = await addEnquiry(values);
+        if (values.status === "Approved" || values.status === "Admitted") {
+          await syncEnquiryToApprovedAdmissions({ ...values, enquiryId: newId }).catch(() => {});
+        }
       }
       closeModal();
       refreshPage();

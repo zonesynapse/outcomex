@@ -4,6 +4,10 @@ import { doc, getDoc, getDocs, collection } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { BookOpen, AlertCircle, Loader2, ChevronDown, Layers, X, Target, BookText } from "lucide-react";
 import { formatProgDisplay } from "../../lib/utils";
+import { getCachedStudentProfile, setCachedStudentProfile } from "../../lib/studentSession";
+
+// In-memory course details cache for instant 0ms modal popups
+const COURSE_CACHE = new Map();
 
 // Local sanitizeKey (matches original and CourseReg.jsx without stripping spaces)
 const sanitizeKey = (key) => {
@@ -25,8 +29,8 @@ const getOrdinal = (n) => {
 };
 
 export default function Syllabus() {
-  const [studentData, setStudentData] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [studentData, setStudentData] = useState(() => getCachedStudentProfile());
+  const [loading, setLoading] = useState(!getCachedStudentProfile());
   const [syllabus, setSyllabus] = useState(null);
   const [selectedSem, setSelectedSem] = useState("");
 
@@ -59,6 +63,7 @@ export default function Syllabus() {
             }
           }
           setStudentData(uData);
+          setCachedStudentProfile(user.uid, uData);
         }
       } catch (err) {
         console.error("Error loading student user record:", err);
@@ -124,19 +129,10 @@ export default function Syllabus() {
           deptKeyAlt
         ];
 
-        let foundSyllabus = null;
-        for (const key of candidateKeys) {
-          if (!key) continue;
-          try {
-            const syllSnap = await getDoc(doc(db, "syllabus_data", key));
-            if (syllSnap.exists()) {
-              foundSyllabus = syllSnap.data();
-              break;
-            }
-          } catch (e) {
-            console.debug("Syllabus key attempt skipped:", key, e);
-          }
-        }
+        const snaps = await Promise.all(
+          candidateKeys.filter(Boolean).map(key => getDoc(doc(db, "syllabus_data", key)).catch(() => null))
+        );
+        let foundSyllabus = snaps.find(s => s && s.exists())?.data() || null;
 
         // Fallback: search all docs in syllabus_data
         if (!foundSyllabus) {
@@ -185,73 +181,75 @@ export default function Syllabus() {
 
   const fetchCourseContent = useCallback(async (subject) => {
     if (!subject) return;
+
+    const rawCode = subject.code || subject.subjectCode || subject.courseCode || "";
+    const rawName = subject.name || subject.subjectName || subject.courseName || "";
+    const rawProg = studentData?.programme || syllabus?.programme || "";
+    const rawDept = studentData?.department || syllabus?.department || "";
+    const rawReg = syllabus?.regulation || studentData?.regulation || "2021";
+    const cacheKey = `${sanitizeKey(rawProg)}_${sanitizeKey(rawDept)}_${sanitizeKey(rawReg)}_${sanitizeKey(rawCode)}`;
+
+    // 1. Instant Cache Hit (0ms - zero lag on reopen)
+    if (COURSE_CACHE.has(cacheKey)) {
+      setSelectedCourse({
+        ...subject,
+        courseData: COURSE_CACHE.get(cacheKey)
+      });
+      setCourseLoading(false);
+      return;
+    }
+
+    // 2. Immediate baseline modal render (opens instantly in 0ms)
+    const baselineCourseData = {
+      ...subject,
+      code: rawCode,
+      name: rawName,
+      credits: subject.credits || 0,
+      type: subject.type || "Theory",
+      regulation: rawReg,
+      periods: subject.periods || {
+        l: Number(subject.l ?? subject.lecture ?? 0),
+        t: Number(subject.t ?? subject.tutorial ?? 0),
+        p: Number(subject.p ?? subject.practical ?? 0)
+      },
+      co: subject.co || subject.outcomes || [],
+      units: subject.units || null,
+      description: subject.description || ""
+    };
+
+    setSelectedCourse({
+      ...subject,
+      courseData: baselineCourseData
+    });
     setCourseLoading(true);
-    setSelectedCourse(subject);
 
     try {
-      const rawProg = studentData?.programme || syllabus?.programme || "";
-      const rawDept = studentData?.department || syllabus?.department || "";
-      const rawReg = syllabus?.regulation || studentData?.regulation || "2021";
-      const rawCode = subject.code || subject.subjectCode || subject.courseCode || "";
-      const rawName = subject.name || subject.subjectName || subject.courseName || "";
-
       const progKeyLocal = sanitizeKey(rawProg);
       const progKeyAlt = sanitizeWithUnderscores(rawProg);
       const deptKeyLocal = sanitizeKey(rawDept);
       const deptKeyAlt = sanitizeWithUnderscores(rawDept);
       const regKey = sanitizeKey(rawReg);
       const codeKey = sanitizeKey(rawCode);
-      const normCode = normCodeKey(rawCode);
 
       // Candidate document IDs in courses collection
       const candidateCourseKeys = [
-        `${progKeyLocal}_${deptKeyLocal}_${regKey}_${codeKey}`,
-        `${progKeyAlt}_${deptKeyAlt}_${regKey}_${codeKey}`,
         `${progKeyLocal}_${deptKeyLocal}_${codeKey}`,
         `${progKeyAlt}_${deptKeyAlt}_${codeKey}`,
-        `${progKeyLocal}_Overall_${codeKey}`,
-        `${progKeyAlt}_Overall_${codeKey}`,
-        `${deptKeyLocal}_${regKey}_${codeKey}`,
-        `${deptKeyAlt}_${regKey}_${codeKey}`,
+        `${progKeyLocal}_${deptKeyLocal}_${regKey}_${codeKey}`,
+        `${progKeyAlt}_${deptKeyAlt}_${regKey}_${codeKey}`,
         `${deptKeyLocal}_${codeKey}`,
-        `${deptKeyAlt}_${codeKey}`,
+        `${deptKeyLocal}_${regKey}_${codeKey}`,
+        `${progKeyLocal}_Overall_${codeKey}`,
         codeKey,
         rawCode
-      ];
+      ].filter(Boolean);
 
-      let courseDocData = null;
-      for (const key of candidateCourseKeys) {
-        if (!key) continue;
-        try {
-          const snap = await getDoc(doc(db, "courses", key));
-          if (snap.exists()) {
-            courseDocData = snap.data();
-            courseDocData._id = key;
-            break;
-          }
-        } catch (e) {
-          console.debug("Course key lookup skipped:", key, e);
-        }
-      }
-
-      // Fallback: Scan courses collection if needed
-      if (!courseDocData && normCode) {
-        try {
-          const coursesSnap = await getDocs(collection(db, "courses"));
-          coursesSnap.forEach((d) => {
-            if (courseDocData) return;
-            const dData = d.data();
-            if (dData && typeof dData === "object") {
-              const dCode = normCodeKey(dData.code || dData.subjectCode || dData.courseCode || d.id.split("_").pop());
-              if (dCode === normCode) {
-                courseDocData = { ...dData, _id: d.id };
-              }
-            }
-          });
-        } catch (e) {
-          console.debug("Courses scan fallback skipped:", e);
-        }
-      }
+      // Fast parallel fetch for course document (1 network roundtrip instead of 12)
+      const courseSnaps = await Promise.all(
+        candidateCourseKeys.map(k => getDoc(doc(db, "courses", k)).catch(() => null))
+      );
+      const hitSnap = courseSnaps.find(s => s && s.exists());
+      let courseDocData = hitSnap ? { ...hitSnap.data(), _id: hitSnap.id } : null;
 
       // Course Outcomes (COs) resolution
       let loadedCOs = [];
@@ -265,51 +263,40 @@ export default function Syllabus() {
         }));
       } else {
         const candidateCOKeys = [
+          `${deptKeyLocal}_${codeKey}`,
           `${deptKeyLocal}_${regKey}_${codeKey}`,
-          `${deptKeyAlt}_${regKey}_${codeKey}`,
+          `${progKeyLocal}_${deptKeyLocal}_${codeKey}`,
           `${progKeyLocal}_${deptKeyLocal}_${regKey}_${codeKey}`,
-          `${progKeyAlt}_${deptKeyAlt}_${regKey}_${codeKey}`,
           codeKey,
           rawCode
-        ];
+        ].filter(Boolean);
 
-        for (const coKey of candidateCOKeys) {
-          if (!coKey) continue;
-          try {
-            const coSnap = await getDoc(doc(db, "course_outcomes", coKey));
-            if (coSnap.exists()) {
-              const coData = coSnap.data();
-              if (coData) {
-                if (Array.isArray(coData.co)) {
-                  loadedCOs = coData.co.map((c, i) => ({
-                    id: c.id || c.code || `CO${i + 1}`,
-                    description: c.description || (typeof c === "string" ? c : ""),
-                    domain: c.domain || "",
-                    level: c.level || "",
-                    content: c.content || ""
-                  }));
-                } else {
-                  loadedCOs = Object.entries(coData)
-                    .filter(([k]) => k.toLowerCase().startsWith("co"))
-                    .map(([code, val]) => {
-                      if (typeof val === "object" && val !== null) {
-                        return {
-                          id: code,
-                          description: val.description || "",
-                          domain: val.domain || "",
-                          level: val.level || "",
-                          content: val.content || ""
-                        };
-                      }
-                      return { id: code, description: String(val || ""), domain: "", level: "", content: "" };
-                    })
-                    .sort((a, b) => (parseInt(a.id.replace(/\D/g, "")) || 0) - (parseInt(b.id.replace(/\D/g, "")) || 0));
-                }
-                if (loadedCOs.length > 0) break;
-              }
-            }
-          } catch (e) {
-            console.debug("CO candidate key skipped:", coKey, e);
+        // Fast parallel fetch for course_outcomes
+        const coSnaps = await Promise.all(
+          candidateCOKeys.map(k => getDoc(doc(db, "course_outcomes", k)).catch(() => null))
+        );
+        const hitCo = coSnaps.find(s => s && s.exists());
+        if (hitCo) {
+          const coData = hitCo.data();
+          if (Array.isArray(coData?.co)) {
+            loadedCOs = coData.co.map((c, i) => ({
+              id: c.id || c.code || `CO${i + 1}`,
+              description: c.description || (typeof c === "string" ? c : ""),
+              domain: c.domain || "",
+              level: c.level || "",
+              content: c.content || ""
+            }));
+          } else if (coData) {
+            loadedCOs = Object.entries(coData)
+              .filter(([k]) => k.toLowerCase().startsWith("co"))
+              .map(([code, val]) => ({
+                id: code,
+                description: typeof val === "object" ? (val.description || "") : String(val || ""),
+                domain: typeof val === "object" ? (val.domain || "") : "",
+                level: typeof val === "object" ? (val.level || "") : "",
+                content: typeof val === "object" ? (val.content || "") : ""
+              }))
+              .sort((a, b) => (parseInt(a.id.replace(/\D/g, "")) || 0) - (parseInt(b.id.replace(/\D/g, "")) || 0));
           }
         }
 
@@ -317,21 +304,16 @@ export default function Syllabus() {
         if (loadedCOs.length === 0) {
           try {
             const cbSnap = await getDoc(doc(db, "course_bank", codeKey));
-            if (cbSnap.exists()) {
-              const cbData = cbSnap.data();
-              if (cbData?.co && Array.isArray(cbData.co)) {
-                loadedCOs = cbData.co.map((c, i) => ({
-                  id: c.id || c.code || `CO${i + 1}`,
-                  description: c.description || "",
-                  domain: c.domain || "",
-                  level: c.level || "",
-                  content: c.content || ""
-                }));
-              }
+            if (cbSnap.exists() && Array.isArray(cbSnap.data()?.co)) {
+              loadedCOs = cbSnap.data().co.map((c, i) => ({
+                id: c.id || c.code || `CO${i + 1}`,
+                description: c.description || "",
+                domain: c.domain || "",
+                level: c.level || "",
+                content: c.content || ""
+              }));
             }
-          } catch (e) {
-            console.debug("Course bank lookup skipped:", codeKey, e);
-          }
+          } catch (_) {}
         }
 
         // Check subject.co or subject.outcomes from syllabus_data
@@ -357,18 +339,21 @@ export default function Syllabus() {
       };
 
       const finalCourseData = {
-        ...subject,
+        ...baselineCourseData,
         ...(courseDocData || {}),
         code: rawCode || courseDocData?.code || "",
-        name: rawName || courseDocData?.name || "",
-        credits: subject.credits ?? courseDocData?.credits ?? 0,
+        name: rawName || courseDocData?.name || baselineCourseData.name,
+        credits: subject.credits ?? courseDocData?.credits ?? baselineCourseData.credits,
         type: subject.type || courseDocData?.type || "Theory",
         regulation: courseDocData?.regulation || rawReg || "2021",
         periods,
-        co: loadedCOs,
+        co: loadedCOs.length > 0 ? loadedCOs : baselineCourseData.co,
         units: courseDocData?.units || subject.units || null,
         description: courseDocData?.description || subject.description || ""
       };
+
+      // Store in memory cache for subsequent instant 0ms clicks
+      COURSE_CACHE.set(cacheKey, finalCourseData);
 
       setSelectedCourse({
         ...subject,
@@ -376,15 +361,6 @@ export default function Syllabus() {
       });
     } catch (err) {
       console.error("Error loading course details:", err);
-      setSelectedCourse({
-        ...subject,
-        courseData: {
-          ...subject,
-          periods: subject.periods || { l: subject.l || 0, t: subject.t || 0, p: subject.p || 0 },
-          regulation: syllabus?.regulation || "2021",
-          co: []
-        }
-      });
     } finally {
       setCourseLoading(false);
     }

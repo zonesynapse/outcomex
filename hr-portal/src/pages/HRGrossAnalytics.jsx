@@ -15,7 +15,8 @@ import {
   YAxis,
   Tooltip,
   CartesianGrid,
-  LabelList
+  LabelList,
+  ReferenceLine
 } from "recharts";
 import {
   BarChart3,
@@ -53,9 +54,51 @@ import {
   ArrowUpRight,
   Building2,
   Trash2,
-  Crown
+  Crown,
+  Pencil,
+  Landmark
 } from "lucide-react";
 import { isSameInstitution, normalizeInstitution, getSchoolShortName } from "../utils/appraisalScore";
+
+// Default Baseline Revenue & HR Cost Configuration (per Academic Year)
+export const DEFAULT_REVENUE_CONFIG = {
+  y2025_26: {
+    totalFaculty: 134,
+    totalRevenue: 127524311,
+    annualHrCost: 62287163
+  },
+  y2026_27: {
+    totalFaculty: 147,
+    totalRevenue: 157438900,
+    annualHrCost: 73073231
+  }
+};
+
+export const DEFAULT_INSTITUTION_REVENUE = {
+  ckcet: {
+    y2025_26: { totalFaculty: 134, totalRevenue: 127524311, annualHrCost: 62287163 },
+    y2026_27: { totalFaculty: 147, totalRevenue: 157438900, annualHrCost: 73073231 }
+  },
+  ckspk: {
+    y2025_26: { totalFaculty: 0, totalRevenue: 0, annualHrCost: 0 },
+    y2026_27: { totalFaculty: 0, totalRevenue: 0, annualHrCost: 0 }
+  },
+  ckspe: {
+    y2025_26: { totalFaculty: 0, totalRevenue: 0, annualHrCost: 0 },
+    y2026_27: { totalFaculty: 0, totalRevenue: 0, annualHrCost: 0 }
+  },
+  ckcoe: {
+    y2025_26: { totalFaculty: 0, totalRevenue: 0, annualHrCost: 0 },
+    y2026_27: { totalFaculty: 0, totalRevenue: 0, annualHrCost: 0 }
+  }
+};
+
+export const INSTITUTION_OPTIONS = [
+  { code: "ckcet", name: "CKCET (Engineering)" },
+  { code: "ckspk", name: "CKSPK (Matric)" },
+  { code: "ckspe", name: "CKSPE (CBSE)" },
+  { code: "ckcoe", name: "CKCOE (B.Ed)" }
+];
 
 // Helper to compute clean, dynamic non-overlapping tier boundaries (honoring user-configured min and max scores)
 export const computeDynamicTiers = (rawTiers = []) => {
@@ -160,6 +203,191 @@ export const DEFAULT_INCREMENT_CRITERIA = {
     }
   ],
   promotionPct: 5 // Promotion - 5%
+};
+
+// Helper to parse numeric or range salary string e.g. "95,820", "25,000 - 30,000", "90000-1.2 Lakh"
+export const parseSalaryValue = (val) => {
+  if (val === undefined || val === null || val === "") {
+    return { raw: "-", num: 0 };
+  }
+  const str = String(val).trim();
+  if (!str || str === "-") return { raw: "-", num: 0 };
+
+  const rangeMatch = str.match(/([0-9.,]+(?:\s*(?:Lakh|L))?)\s*[-–—to]+\s*([0-9.,]+(?:\s*(?:Lakh|L))?)/i);
+  if (rangeMatch) {
+    const parsePart = (p) => {
+      let clean = p.replace(/,/g, "").trim().toLowerCase();
+      if (clean.includes("lakh") || clean.endsWith("l")) {
+        const n = parseFloat(clean.replace(/[^0-9.]/g, "")) || 0;
+        return n * 100000;
+      }
+      return parseFloat(clean.replace(/[^0-9.]/g, "")) || 0;
+    };
+    const v1 = parsePart(rangeMatch[1]);
+    const v2 = parsePart(rangeMatch[2]);
+    const avg = Math.round((v1 + v2) / 2);
+    return { raw: str, num: avg, min: Math.min(v1, v2), max: Math.max(v1, v2) };
+  }
+
+  const cleanStr = str.toLowerCase();
+  let numVal = 0;
+  if (cleanStr.includes("lakh") || cleanStr.endsWith("l")) {
+    const n = parseFloat(cleanStr.replace(/[^0-9.]/g, "")) || 0;
+    numVal = n * 100000;
+  } else {
+    const numMatch = str.match(/[0-9]{1,3}(?:,[0-9]{2,3})+|[0-9]+/);
+    if (numMatch) {
+      numVal = parseFloat(numMatch[0].replace(/,/g, "")) || 0;
+    }
+  }
+
+  return { raw: str, num: numVal };
+};
+
+export const formatDiffK = (val) => {
+  if (!val && val !== 0) return "0";
+  const abs = Math.abs(val);
+  if (abs >= 100000) {
+    return (abs / 100000).toFixed(1) + "L";
+  }
+  return (abs / 1000).toFixed(0) + "k";
+};
+
+// Default dynamic salary benchmark data (matching uploaded reference images)
+export const DEFAULT_DYNAMIC_BENCHMARK = {
+  designations: [
+    { id: "assistant_professor", label: "Assistant Professor" },
+    { id: "associate_professor", label: "Associate Professor" },
+    { id: "professor", label: "Professor" }
+  ],
+  schools: [
+    {
+      id: "anna_univ",
+      name: "Anna University",
+      subName: "(19 colleges)",
+      region: "Govt / State Univ",
+      location: "Tamil Nadu",
+      isGovt: true,
+      isOurCollege: false,
+      salaries: {
+        assistant_professor: { raw: "95,820", num: 95820 },
+        associate_professor: { raw: "2,13,740", num: 213740 },
+        professor: { raw: "2,34,220", num: 234220 }
+      }
+    },
+    {
+      id: "st_joseph",
+      name: "St.Joseph",
+      subName: "(chennai)",
+      region: "Chennai Metro",
+      location: "Chennai",
+      isGovt: false,
+      isOurCollege: false,
+      salaries: {
+        assistant_professor: { raw: "35,000 (first year)", num: 35000 },
+        associate_professor: { raw: "85,000", num: 85000 },
+        professor: { raw: "1,40,000", num: 140000 }
+      }
+    },
+    {
+      id: "aiht",
+      name: "AIHT",
+      subName: "(chennai)",
+      region: "Chennai Metro",
+      location: "Chennai",
+      isGovt: false,
+      isOurCollege: false,
+      salaries: {
+        assistant_professor: { raw: "25,000 - 30,000", num: 27500 },
+        associate_professor: { raw: "65,000 - 75,000", num: 70000 },
+        professor: { raw: "1,00,000", num: 100000 }
+      }
+    },
+    {
+      id: "psgitech_sk",
+      name: "PSGiTech / Sri Krishna",
+      subName: "(coimbatore)",
+      region: "Coimbatore Tier-1",
+      location: "Coimbatore",
+      isGovt: false,
+      isOurCollege: false,
+      salaries: {
+        assistant_professor: { raw: "35000-40000", num: 37500 },
+        associate_professor: { raw: "70000-85000", num: 77500 },
+        professor: { raw: "90000-1.2 Lakh", num: 105000 }
+      }
+    },
+    {
+      id: "saranathan",
+      name: "Saranathan",
+      subName: "(trichy)",
+      region: "Central Tamil Nadu",
+      location: "Trichy",
+      isGovt: false,
+      isOurCollege: false,
+      salaries: {
+        assistant_professor: { raw: "28,000", num: 28000 },
+        associate_professor: { raw: "65,000", num: 65000 },
+        professor: { raw: "80,000", num: 80000 }
+      }
+    },
+    {
+      id: "ramco",
+      name: "RAMCO Institute",
+      subName: "(rajapalayam)",
+      region: "South TN Tier-1",
+      location: "Rajapalayam",
+      isGovt: false,
+      isOurCollege: false,
+      salaries: {
+        assistant_professor: { raw: "46,400", num: 46400 },
+        associate_professor: { raw: "66,000", num: 66000 },
+        professor: { raw: "80,000", num: 80000 }
+      }
+    },
+    {
+      id: "syed_ammal",
+      name: "Syed Ammal Engg",
+      subName: "(ramnad)",
+      region: "South Coastal",
+      location: "Ramanathapuram",
+      isGovt: false,
+      isOurCollege: false,
+      salaries: {
+        assistant_professor: { raw: "22,000", num: 22000 },
+        associate_professor: { raw: "50,000", num: 50000 },
+        professor: { raw: "75,000", num: 75000 }
+      }
+    },
+    {
+      id: "manakula",
+      name: "MANAKULA",
+      subName: "(pondy)",
+      region: "Puducherry / Coastal",
+      location: "Puducherry",
+      isGovt: false,
+      isOurCollege: false,
+      salaries: {
+        assistant_professor: { raw: "27,000", num: 27000 },
+        associate_professor: { raw: "60,000", num: 60000 },
+        professor: { raw: "80,000", num: 80000 }
+      }
+    },
+    {
+      id: "ckcet",
+      name: "CKCET (Revised)",
+      subName: "Our College",
+      region: "Cuddalore / Our College",
+      location: "Cuddalore",
+      isGovt: false,
+      isOurCollege: true,
+      salaries: {
+        assistant_professor: { raw: "30,000", num: 30000 },
+        associate_professor: { raw: "65,000", num: 65000 },
+        professor: { raw: "80,000", num: 80000 }
+      }
+    }
+  ]
 };
 
 // Helper to format academic year e.g. "2021-22" -> "2022", "2022-23" -> "2023", "2024-25" -> "2025"
@@ -269,7 +497,7 @@ export default function HRGrossAnalytics() {
         try {
           const localStr = localStorage.getItem(`user_profile_${user.uid}`);
           if (localStr) localProfile = JSON.parse(localStr);
-        } catch (e) {}
+        } catch (e) { }
 
         role = profileData?.role || localProfile?.role || "";
         designation = profileData?.designation || localProfile?.designation || "";
@@ -299,7 +527,7 @@ export default function HRGrossAnalytics() {
   const [selectedDept, setSelectedDept] = useState("All");
   const [selectedType, setSelectedType] = useState("All");
   const [selectedYear, setSelectedYear] = useState("All");
-  const [approvalFilter, setApprovalFilter] = useState("Approved"); // "Approved", "All"
+  const [approvalFilter, setApprovalFilter] = useState("All"); // Always "All"
   const [sortField, setSortField] = useState("grossMark"); // "grossMark", "grossPM", "incrementAmount", "facultyName", "dateOfJoining", "appraisalMark"
   const [sortDirection, setSortDirection] = useState("desc");
 
@@ -315,10 +543,33 @@ export default function HRGrossAnalytics() {
   const [uploadFileName, setUploadFileName] = useState("");
   const [uploadSaving, setUploadSaving] = useState(false);
   const [uploadDetectedYears, setUploadDetectedYears] = useState([]);
+  const [incrementAnalyticsModalOpen, setIncrementAnalyticsModalOpen] = useState(false);
+  const [incrementModalTab, setIncrementModalTab] = useState("tiers");
+  const [incrementModalViewMode, setIncrementModalViewMode] = useState("PA");
+
+  // Institutional Revenue & Budget State (Editable per institution)
+  const [revenueAnalyticsMap, setRevenueAnalyticsMap] = useState({});
+  const [revenueModalOpen, setRevenueModalOpen] = useState(false);
+  const [revenueModalTargetYear, setRevenueModalTargetYear] = useState("all"); // "y2025_26", "y2026_27", or "all"
+  const [revenueTargetInst, setRevenueTargetInst] = useState("ckcet");
+  const [revenueForm, setRevenueForm] = useState({
+    y2025_26: { totalFaculty: 134, totalRevenue: 127524311, annualHrCost: 62287163 },
+    y2026_27: { totalFaculty: 147, totalRevenue: 157438900, annualHrCost: 73073231 }
+  });
+  const [savingRevenue, setSavingRevenue] = useState(false);
 
   // Toast Notification State
   const [toast, setToast] = useState({ show: false, message: "", type: "success" });
   const fileInputRef = useRef(null);
+
+  // Salary Structure Matrix Benchmark State (Dynamic Multi-School & Multi-Designation)
+  const [benchmarkTableOrientation, setBenchmarkTableOrientation] = useState("exactImage"); // "exactImage" or "detailed"
+  const [benchmarkData, setBenchmarkData] = useState(DEFAULT_DYNAMIC_BENCHMARK);
+  const [selectedBenchmarkRole, setSelectedBenchmarkRole] = useState("");
+  const [benchmarkChartType, setBenchmarkChartType] = useState("salary"); // "salary" | "variance"
+  const [benchmarkSort, setBenchmarkSort] = useState("default"); // "default" | "salaryDesc" | "salaryAsc"
+  const [includeGovtScale, setIncludeGovtScale] = useState(false);
+  const benchmarkFileInputRef = useRef(null);
 
   const showToast = (message, type = "success") => {
     setToast({ show: true, message, type });
@@ -430,6 +681,16 @@ export default function HRGrossAnalytics() {
     }, (err) => console.error("Error loading salary adjustments:", err));
     unsubs.push(unsubAdjustments);
 
+    // 5b. Fetch Institution Revenue Analytics (2025-26 & 2026-27 budgets per institution)
+    const unsubRevenueAnalytics = onSnapshot(doc(db, "appraisal_config", "institution_revenue_analytics"), (snap) => {
+      if (snap.exists()) {
+        setRevenueAnalyticsMap(snap.data() || {});
+      } else {
+        setRevenueAnalyticsMap({});
+      }
+    }, (err) => console.error("Error loading institution revenue analytics:", err));
+    unsubs.push(unsubRevenueAnalytics);
+
     // 6. Fetch Faculty Appraisals
     const unsubFaculty = onSnapshot(collection(db, "faculty_appraisals"), (snap) => {
       const list = snap.docs.map((d) => ({
@@ -492,6 +753,470 @@ export default function HRGrossAnalytics() {
 
     return () => unsubs.forEach((u) => u && u());
   }, []);
+
+  // Real-time subscription to salary structure benchmark data from Firestore
+  useEffect(() => {
+    const targetInst = activeInstCode || "ckcet";
+    const unsubBenchmark = onSnapshot(
+      doc(db, "appraisal_config", `salary_structure_benchmark_${targetInst}`),
+      (snap) => {
+        if (snap.exists() && snap.data()?.schools?.length > 0) {
+          setBenchmarkData(snap.data());
+        } else {
+          // Fallback check generic benchmark doc
+          getDoc(doc(db, "appraisal_config", "salary_structure_benchmark"))
+            .then((gSnap) => {
+              if (gSnap.exists() && gSnap.data()?.schools?.length > 0) {
+                setBenchmarkData(gSnap.data());
+              }
+            })
+            .catch(() => {});
+        }
+      },
+      (err) => console.warn("Benchmark data listener warning:", err)
+    );
+    return () => unsubBenchmark();
+  }, [activeInstCode]);
+
+  // Derived our college/school and peer institutions from benchmark data
+  const ourCollege = useMemo(() => {
+    return (
+      benchmarkData.schools.find((s) => s.isOurCollege) ||
+      benchmarkData.schools[benchmarkData.schools.length - 1]
+    );
+  }, [benchmarkData]);
+
+  const peerSchools = useMemo(() => {
+    return benchmarkData.schools.filter((s) => s !== ourCollege);
+  }, [benchmarkData, ourCollege]);
+
+  // Derived active institution short code for difference badges (e.g. CKSPE, CKSPK, CKCOE, CKCET)
+  const ourInstitutionCode = useMemo(() => {
+    if (ourCollege?.name) {
+      const clean = ourCollege.name.replace(/\(.*?\)/g, "").trim().split(/\s+/)[0];
+      if (clean && clean.length <= 10) return clean.toUpperCase();
+    }
+    const shortName = getSchoolShortName(userInstitution);
+    if (shortName) return shortName.toUpperCase();
+    if (activeInstCode && activeInstCode !== "all") return activeInstCode.toUpperCase();
+    return "CKCET";
+  }, [ourCollege, userInstitution, activeInstCode]);
+
+  // Derived institution descriptor label ("Our School" vs "Our College" based on uploaded data and institution login)
+  const instTypeLabel = useMemo(() => {
+    const fullName = ((ourCollege?.fullName || ourCollege?.name || "") + " " + (ourCollege?.subName || "")).toLowerCase();
+    if (fullName.includes("our school") || fullName.includes("school")) {
+      return "Our School";
+    }
+    if (fullName.includes("our college") || fullName.includes("college")) {
+      return "Our College";
+    }
+    if (activeInstCode === "ckspe" || activeInstCode === "ckspk") {
+      return "Our School";
+    }
+    return "Our College";
+  }, [ourCollege, activeInstCode]);
+
+  // Clean display name for our institution without duplicate "(Our School)" or "(Our College)"
+  const cleanOurCollegeName = useMemo(() => {
+    if (!ourCollege?.name) return `${ourInstitutionCode} (Revised)`;
+    return ourCollege.name.replace(/\s*\(our (?:college|school)\)/i, "").trim();
+  }, [ourCollege, ourInstitutionCode]);
+
+  // Check if any school has Govt scale
+  const hasGovtSchool = useMemo(() => {
+    return benchmarkData.schools.some((s) => s.isGovt);
+  }, [benchmarkData.schools]);
+
+  // Active benchmark role (defaults to first designation; strictly NO "all roles" per user requirement)
+  const activeBenchmarkRole = useMemo(() => {
+    if (selectedBenchmarkRole && benchmarkData.designations.some((d) => d.id === selectedBenchmarkRole)) {
+      return selectedBenchmarkRole;
+    }
+    return benchmarkData.designations[0]?.id || "";
+  }, [selectedBenchmarkRole, benchmarkData.designations]);
+
+  // Metrics for active selected role
+  const activeRoleMetrics = useMemo(() => {
+    const roleId = activeBenchmarkRole;
+    const desgObj = benchmarkData.designations.find((d) => d.id === roleId) || benchmarkData.designations[0];
+    const ourSal = ourCollege?.salaries?.[roleId]?.num || 0;
+    const ourRaw = ourCollege?.salaries?.[roleId]?.raw || "-";
+    const peerList = benchmarkData.schools.filter((s) => !s.isOurCollege && (includeGovtScale || !s.isGovt));
+
+    const higherCount = peerList.filter((s) => (s.salaries?.[roleId]?.num || 0) > ourSal).length;
+    const parityCount = peerList.filter((s) => (s.salaries?.[roleId]?.num || 0) === ourSal && ourSal > 0).length;
+    const lowerCount = peerList.filter((s) => (s.salaries?.[roleId]?.num || 0) < ourSal && ourSal > 0).length;
+    const rank = higherCount + 1;
+
+    return {
+      roleId,
+      roleName: desgObj?.label || "Designation",
+      ourSal,
+      ourRaw,
+      rank,
+      totalPeers: peerList.length,
+      higherCount,
+      parityCount,
+      lowerCount
+    };
+  }, [benchmarkData, activeBenchmarkRole, ourCollege, includeGovtScale]);
+
+  // Derived chart data for selected role across institutions
+  const benchmarkChartData = useMemo(() => {
+    if (!benchmarkData?.schools || benchmarkData.schools.length === 0) return [];
+    const roleId = activeBenchmarkRole;
+    if (!roleId) return [];
+
+    const ourSal = ourCollege?.salaries?.[roleId]?.num || 0;
+    const list = benchmarkData.schools.filter((s) => includeGovtScale || !s.isGovt);
+
+    let mapped = list.map((s) => {
+      const salObj = s.salaries?.[roleId];
+      const salary = salObj?.num || 0;
+      const rawText = salObj?.raw || "-";
+      const diffFromOur = salary - ourSal;
+
+      // Extract concise location
+      let loc = "";
+      if (s.isOurCollege) {
+        loc = s.location || "Cuddalore";
+      } else if (s.id === "anna_univ" && s.subName) {
+        loc = s.subName.replace(/[()]/g, "").trim();
+      } else if (s.location) {
+        loc = s.location;
+      } else if (s.subName && !s.subName.toLowerCase().includes("college") && !s.subName.toLowerCase().includes("school")) {
+        loc = s.subName.replace(/[()]/g, "").trim();
+      } else {
+        loc = "Tamil Nadu";
+      }
+
+      // Clean base name if location is already embedded in parentheses or after comma
+      let baseName = s.name;
+      if (loc && loc !== "Tamil Nadu") {
+        const parenRegex = new RegExp(`\\s*\\(${loc.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}\\)`, "i");
+        baseName = baseName.replace(parenRegex, "").trim();
+        const commaRegex = new RegExp(`[,\\s]+${loc.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}$`, "i");
+        baseName = baseName.replace(commaRegex, "").trim();
+      }
+
+      const shortNameWithLocation = loc ? `${baseName} (${loc})` : baseName;
+
+      return {
+        id: s.id,
+        name: s.name,
+        shortNameWithLocation,
+        subName: s.subName,
+        location: loc,
+        region: s.region,
+        isGovt: s.isGovt,
+        isOurCollege: s.isOurCollege,
+        salary,
+        rawText,
+        diffFromOur
+      };
+    });
+
+    if (benchmarkSort === "salaryDesc") {
+      mapped.sort((a, b) => b.salary - a.salary);
+    } else if (benchmarkSort === "salaryAsc") {
+      mapped.sort((a, b) => a.salary - b.salary);
+    }
+
+    return mapped;
+  }, [benchmarkData, activeBenchmarkRole, ourCollege, includeGovtScale, benchmarkSort]);
+
+  // Custom Glassmorphic Tooltip for Benchmark Bar Chart
+  const BenchmarkChartTooltip = ({ active, payload }) => {
+    if (active && payload && payload.length) {
+      const item = payload[0].payload;
+      const diff = item.diffFromOur;
+
+      return (
+        <div className="bg-slate-900/95 text-white backdrop-blur-md rounded-2xl p-3.5 shadow-2xl border border-white/10 text-xs min-w-[230px]">
+          <div className="flex items-center justify-between gap-2 border-b border-white/10 pb-2 mb-2">
+            <div>
+              <div className="font-black text-sm text-white flex items-center gap-1.5">
+                {item.name}
+                {item.isOurCollege && (
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-indigo-500 text-white">
+                    {instTypeLabel.toUpperCase()}
+                  </span>
+                )}
+              </div>
+              <div className="text-[10px] text-slate-400 font-semibold">
+                {item.location ? `(${item.location})` : ""} {item.region ? `• ${item.region}` : ""}
+              </div>
+            </div>
+            <span
+              className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
+                item.isGovt ? "bg-amber-400/20 text-amber-300" : "bg-slate-700 text-slate-300"
+              }`}
+            >
+              {item.isGovt ? "Govt Scale" : "Private"}
+            </span>
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="text-slate-400 font-medium">{activeRoleMetrics.roleName}:</span>
+              <strong className="font-mono text-emerald-400 text-sm">{item.rawText}</strong>
+            </div>
+            {!item.isOurCollege && activeRoleMetrics.ourSal > 0 && item.salary > 0 && (
+              <div className="pt-1.5 border-t border-white/10 flex items-center justify-between text-[10px]">
+                <span className="text-slate-400">vs {cleanOurCollegeName}:</span>
+                {diff > 0 ? (
+                  <span className="font-mono text-emerald-400 font-bold">
+                    Peer pays +₹{diff.toLocaleString("en-IN")} higher
+                  </span>
+                ) : diff === 0 ? (
+                  <span className="font-mono text-sky-400 font-bold">100% Market Parity</span>
+                ) : (
+                  <span className="font-mono text-amber-400 font-bold">
+                    Peer pays -₹{Math.abs(diff).toLocaleString("en-IN")} lower
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+    return null;
+  };
+
+  // Download Excel Template matching Image 3 with Location column (Row 1: school name/designation | location | desg 1 | desg 2... Rows 2..N: school 1 | school 2...)
+  const handleDownloadBenchmarkTemplate = () => {
+    try {
+      const headers = ["school name/designation", "location", ...benchmarkData.designations.map((d) => d.label)];
+      const rows = benchmarkData.schools.map((s) => {
+        let schoolTitle = s.name;
+        if (s.isOurCollege) {
+          const clean = s.name.replace(/\s*\(our (?:college|school)\)/i, "").trim();
+          schoolTitle = `${clean} (${instTypeLabel})`;
+        } else if (s.subName && !s.location) {
+          schoolTitle = `${s.name} ${s.subName}`;
+        }
+
+        let locVal = "";
+        if (s.isOurCollege) {
+          locVal = s.location || "Cuddalore";
+        } else if (s.location) {
+          locVal = s.location;
+        } else if (s.subName && !s.subName.toLowerCase().includes("college") && !s.subName.toLowerCase().includes("school") && !s.subName.toLowerCase().includes("19 colleges")) {
+          locVal = s.subName.replace(/[()]/g, "").trim();
+        }
+
+        const row = [schoolTitle, locVal];
+        benchmarkData.designations.forEach((d) => {
+          row.push(s.salaries[d.id]?.raw || "");
+        });
+        return row;
+      });
+
+      const wsData = [headers, ...rows];
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+      // Auto-fit column widths
+      ws["!cols"] = [
+        { wch: 38 },
+        { wch: 18 },
+        ...benchmarkData.designations.map(() => ({ wch: 22 }))
+      ];
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Salary Benchmark Template");
+      XLSX.writeFile(wb, `${ourInstitutionCode}_Salary_Benchmark_Template.xlsx`);
+      showToast("Template downloaded! You can enter location for each school (defaults to Tamil Nadu if empty).", "success");
+    } catch (err) {
+      console.error("Error downloading template:", err);
+      showToast("Could not generate Excel template.", "error");
+    }
+  };
+
+  // Upload Excel / CSV file to dynamically import any number of schools & designations
+  const handleUploadBenchmarkFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const reader = new FileReader();
+      reader.onload = async (evt) => {
+        try {
+          const data = new Uint8Array(evt.target.result);
+          const workbook = XLSX.read(data, { type: "array" });
+          const firstSheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[firstSheetName];
+          const json = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+
+          if (!json || json.length < 2) {
+            showToast("Excel file must contain a header row and at least one school data row.", "error");
+            return;
+          }
+
+          // Row 0 is header: Column 0 is "school name/designation", followed by optional "location" column and designations
+          const headerRow = json[0] || [];
+          let locationColIndex = -1;
+          const designations = [];
+          for (let c = 1; c < headerRow.length; c++) {
+            const rawLabel = headerRow[c];
+            if (rawLabel !== undefined && rawLabel !== null && String(rawLabel).trim() !== "") {
+              const label = String(rawLabel).trim();
+              if (label.toLowerCase() === "location" || label.toLowerCase().startsWith("location")) {
+                locationColIndex = c;
+              } else {
+                const id = `desg_${c}_` + label.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+                designations.push({ id, label, colIndex: c });
+              }
+            }
+          }
+
+          if (designations.length === 0) {
+            showToast("No designation columns found in the header row.", "error");
+            return;
+          }
+
+          // Rows 1..N are schools
+          const schools = [];
+          for (let r = 1; r < json.length; r++) {
+            const row = json[r];
+            if (!row || row.length === 0) continue;
+            const rawSchoolName = row[0] ? String(row[0]).trim() : "";
+            if (!rawSchoolName) continue;
+
+            const lowerName = rawSchoolName.toLowerCase();
+            const isOurCollege =
+              lowerName.includes("our college") ||
+              lowerName.includes("our school") ||
+              lowerName.includes("ckcet") ||
+              lowerName.includes("ckspe") ||
+              lowerName.includes("ckspk") ||
+              lowerName.includes("ckcoe") ||
+              lowerName.includes(userInstitution?.toLowerCase() || "___") ||
+              lowerName.includes(activeInstCode?.toLowerCase() || "___");
+
+            let rowInstType = "Our College";
+            if (lowerName.includes("our school")) {
+              rowInstType = "Our School";
+            } else if (lowerName.includes("our college")) {
+              rowInstType = "Our College";
+            } else if (activeInstCode === "ckspe" || activeInstCode === "ckspk" || lowerName.includes("school") || lowerName.includes("cbse") || lowerName.includes("matric")) {
+              rowInstType = "Our School";
+            }
+
+            let name = rawSchoolName;
+            let subName = isOurCollege ? rowInstType : "";
+            const parenMatch = rawSchoolName.match(/^(.*?)\s*(\(.*?\))$/);
+            if (parenMatch) {
+              name = parenMatch[1].trim();
+              const insideParen = parenMatch[2].replace(/[()]/g, "").trim();
+              subName = insideParen;
+            }
+
+            // Extract location from location column if present
+            let schoolLocation = "";
+            if (locationColIndex !== -1 && row[locationColIndex] !== undefined && row[locationColIndex] !== null) {
+              schoolLocation = String(row[locationColIndex]).trim();
+            }
+
+            // User requirement:
+            // "adhula podra location than varanum. aedhumae podalana than (Tamil nadu) varanum."
+            if (schoolLocation) {
+              // Location specified explicitly
+              const locPattern = new RegExp(`[,\\s]+${schoolLocation.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}$`, 'i');
+              if (locPattern.test(name)) {
+                name = name.replace(locPattern, '').trim();
+              }
+            } else {
+              // Location not specified -> fallback: if our institution: Cuddalore, else Tamil Nadu
+              if (isOurCollege) {
+                schoolLocation = "Cuddalore";
+              } else if (subName && !subName.toLowerCase().includes("college") && !subName.toLowerCase().includes("school") && !subName.toLowerCase().includes("19 colleges")) {
+                schoolLocation = subName;
+              } else {
+                schoolLocation = "Tamil Nadu";
+              }
+            }
+
+            const isGovt = lowerName.includes("anna univ") || lowerName.includes("govt") || lowerName.includes("university");
+
+            const salaries = {};
+            designations.forEach((d) => {
+              const cellVal = row[d.colIndex];
+              salaries[d.id] = parseSalaryValue(cellVal);
+            });
+
+            schools.push({
+              id: `school_${r}_` + name.toLowerCase().replace(/[^a-z0-9]+/g, "_"),
+              name,
+              subName: subName || (schoolLocation ? `(${schoolLocation.toLowerCase()})` : ""),
+              fullName: rawSchoolName,
+              region: isOurCollege ? `Cuddalore / ${rowInstType}` : isGovt ? "Govt / State Univ" : (rowInstType === "Our School" ? "Private Peer School" : "Private Peer College"),
+              location: schoolLocation,
+              isGovt,
+              isOurCollege,
+              salaries
+            });
+          }
+
+          if (schools.length === 0) {
+            showToast("No valid school data rows found in uploaded file.", "error");
+            return;
+          }
+
+          // Ensure at least one school is marked as our college
+          const hasOurCollege = schools.some((s) => s.isOurCollege);
+          if (!hasOurCollege && schools.length > 0) {
+            schools[schools.length - 1].isOurCollege = true;
+          }
+
+          const newBenchmarkData = {
+            designations: designations.map((d) => ({ id: d.id, label: d.label })),
+            schools,
+            updatedAt: new Date().toISOString()
+          };
+
+          setBenchmarkData(newBenchmarkData);
+
+          // Save to Firestore
+          try {
+            const targetInst = activeInstCode || "ckcet";
+            await setDoc(doc(db, "appraisal_config", `salary_structure_benchmark_${targetInst}`), newBenchmarkData, { merge: true });
+            if (targetInst === "ckcet") {
+              await setDoc(doc(db, "appraisal_config", "salary_structure_benchmark"), newBenchmarkData, { merge: true });
+            }
+          } catch (fireErr) {
+            console.warn("Could not persist benchmark data to Firestore:", fireErr);
+          }
+
+          showToast(`Successfully imported ${schools.length} institutions and ${designations.length} designations!`, "success");
+        } catch (innerErr) {
+          console.error("Inner parse error:", innerErr);
+          showToast("Error parsing Excel content. Please verify column formats.", "error");
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    } catch (err) {
+      console.error("File upload error:", err);
+      showToast("Failed to read file.", "error");
+    } finally {
+      e.target.value = "";
+    }
+  };
+
+  // Reset to default benchmark matrix
+  const handleResetDefaultBenchmark = async () => {
+    if (!window.confirm("Reset salary structure benchmark tables to default reference data?")) return;
+    try {
+      setBenchmarkData(DEFAULT_DYNAMIC_BENCHMARK);
+      const targetInst = activeInstCode || "ckcet";
+      await setDoc(doc(db, "appraisal_config", `salary_structure_benchmark_${targetInst}`), DEFAULT_DYNAMIC_BENCHMARK, { merge: true });
+      showToast("Reset to default benchmark data successfully.", "success");
+    } catch (err) {
+      console.error("Reset error:", err);
+      showToast("Failed to reset benchmark data.", "error");
+    }
+  };
 
   // Default salary years helper (generates past 3 academic years based on active academic year)
   const getDefaultSalaryYears = (activeYear = "2024-2025") => {
@@ -776,10 +1501,10 @@ export default function HRGrossAnalytics() {
       const questionCount = attitudeObj.principalMarks ? Object.keys(attitudeObj.principalMarks).length : (attitudeObj.ratings ? Object.keys(attitudeObj.ratings).length : 0);
       const attitudeMaxScore = Number(rawMax) || (questionCount > 0 ? questionCount * 5 : (app.formType === "hod" ? 90 : (app.formType === "teacher" ? 90 : 80)));
       const attitudePercentage = attitudeMaxScore > 0 ? (attitudeTotalScore / attitudeMaxScore) * 100 : 0;
-      const attitudeMarkNormalized = isAttitudeSubmitted 
+      const attitudeMarkNormalized = isAttitudeSubmitted
         ? (attitudeObj.percentage !== undefined && !isNaN(Number(attitudeObj.percentage)) && Number(attitudeObj.percentage) > 0
-            ? Number(attitudeObj.percentage)
-            : attitudePercentage)
+          ? Number(attitudeObj.percentage)
+          : attitudePercentage)
         : 0;
 
       // 3. Mark Computation: For Principal executive rubric, gross mark is 100% of the evaluated appraisal score.
@@ -818,21 +1543,24 @@ export default function HRGrossAnalytics() {
         ? Number((grossPA + (incrementAmountPA || 0) + (promotionAmount || 0) + (salaryAdjustmentPA || 0)).toFixed(2))
         : null;
 
-      // Col Q: % Increase = Base Increment % + Promotion %
-      const pctIncrease = baseIncrementPct + promotionPct;
+      // Col Q: % Increase = ((revisedGrossPA - grossPA) / grossPA) * 100 (if grossPA exists)
+      const pctIncrease = grossPA && grossPA > 0 && revisedGrossPA
+        ? Number((((revisedGrossPA - grossPA) / grossPA) * 100).toFixed(2))
+        : Number((baseIncrementPct + promotionPct).toFixed(2));
 
       // Col T: Revised Gross (PM) = Revised Gross PA / 12
       const revisedGrossPM = grossPM !== null && revisedGrossPA !== null
         ? Number((revisedGrossPA / 12).toFixed(2))
         : null;
 
-      // Col U: INCREMENT AMOUNT = Revised Gross (PM) - Gross PM
+      // Col U: INCREMENT AMOUNT (PM) = Revised Gross (PM) - Gross PM
       const totalIncrementAmount = grossPM !== null && revisedGrossPM !== null
         ? Number((revisedGrossPM - grossPM).toFixed(2))
         : null;
-      const totalIncrementAmountPA = totalIncrementAmount !== null
-        ? Number((totalIncrementAmount * 12).toFixed(2))
-        : null;
+      // Col U (PA): INCREMENT AMOUNT (PA) = Revised Gross (PA) - Gross PA (reflects base, promo, and salary adjustment)
+      const totalIncrementAmountPA = grossPA !== null && revisedGrossPA !== null
+        ? Number((revisedGrossPA - grossPA).toFixed(2))
+        : (totalIncrementAmount !== null ? Number((totalIncrementAmount * 12).toFixed(2)) : null);
 
       return {
         id: `${app.collectionType || "app"}_${app.id || appIdx}`,
@@ -926,11 +1654,6 @@ export default function HRGrossAnalytics() {
   // Filtered & Sorted Records (Strictly over scopedRecords)
   const filteredRecords = useMemo(() => {
     return scopedRecords.filter((rec) => {
-      // Approval Filter: by default "Approved", showing only Principal approved
-      if (approvalFilter === "Approved" && !rec.isPrincipalApproved) {
-        return false;
-      }
-
       // Department Filter (from dropdown)
       if (selectedDept !== "All" && rec.department !== selectedDept) {
         return false;
@@ -972,7 +1695,7 @@ export default function HRGrossAnalytics() {
         "grossPM", "grossPA", "appraisalMark", "attitudeMarkNormalized", "grossMark",
         "incrementAmountPA", "promotionPct", "promotionAmount", "revisedGrossPA",
         "pctIncrease", "totalIncrementPct", "salaryAdjustmentPM", "salaryAdjustmentPA",
-        "revisedGrossPM", "totalIncrementAmount", "incrementAmount"
+        "revisedGrossPM", "totalIncrementAmount", "totalIncrementAmountPA", "incrementAmount"
       ];
       if (numericFields.includes(sortField)) {
         valA = valA === null || valA === undefined ? -1 : Number(valA);
@@ -1004,6 +1727,8 @@ export default function HRGrossAnalytics() {
     if (filteredRecords.length === 0) {
       return {
         totalEvaluated: 0,
+        nmeFacultyCount: 0,
+        eligibleFacultyCount: 0,
         avgGross: "0.00",
         avgAppraisal: "0.00",
         avgAttitude: "0.00",
@@ -1018,6 +1743,9 @@ export default function HRGrossAnalytics() {
     }
 
     const total = filteredRecords.length;
+    const nmeFacultyCount = filteredRecords.filter((r) => String(r.tierCode || "").toUpperCase() === "NME").length;
+    const eligibleFacultyCount = Math.max(0, total - nmeFacultyCount);
+
     const sumGross = filteredRecords.reduce((acc, r) => acc + r.grossMark, 0);
     const sumAppraisal = filteredRecords.reduce((acc, r) => acc + r.appraisalMark, 0);
     const sumAttitude = filteredRecords.reduce((acc, r) => acc + r.attitudeMarkNormalized, 0);
@@ -1034,6 +1762,8 @@ export default function HRGrossAnalytics() {
 
     return {
       totalEvaluated: total,
+      nmeFacultyCount,
+      eligibleFacultyCount,
       avgGross: (sumGross / total).toFixed(2),
       avgAppraisal: (sumAppraisal / total).toFixed(2),
       avgAttitude: (sumAttitude / total).toFixed(2),
@@ -1046,6 +1776,470 @@ export default function HRGrossAnalytics() {
       totalIncrementPA
     };
   }, [filteredRecords]);
+
+  // Table Footer Totals & Percentage Increase
+  const tableTotals = useMemo(() => {
+    let grossPMTotal = 0;
+    let grossPATotal = 0;
+    let revisedGrossPMTotal = 0;
+    let revisedGrossPATotal = 0;
+    let promotionAmountTotal = 0;
+    let salaryAdjustmentPMTotal = 0;
+    let salaryAdjustmentPATotal = 0;
+    let totalIncrementPMTotal = 0;
+    let totalIncrementPATotal = 0;
+
+    filteredRecords.forEach((r) => {
+      if (r.grossPM !== null && r.grossPM !== undefined) {
+        grossPMTotal += Number(r.grossPM) || 0;
+      }
+      if (r.grossPA !== null && r.grossPA !== undefined) {
+        grossPATotal += Number(r.grossPA) || 0;
+      }
+      if (r.revisedGrossPM !== null && r.revisedGrossPM !== undefined) {
+        revisedGrossPMTotal += Number(r.revisedGrossPM) || 0;
+      }
+      if (r.revisedGrossPA !== null && r.revisedGrossPA !== undefined) {
+        revisedGrossPATotal += Number(r.revisedGrossPA) || 0;
+      }
+      if (r.promotionAmount !== null && r.promotionAmount !== undefined) {
+        promotionAmountTotal += Number(r.promotionAmount) || 0;
+      }
+      salaryAdjustmentPMTotal += Number(r.salaryAdjustmentPM) || 0;
+      salaryAdjustmentPATotal += Number(r.salaryAdjustmentPA) || 0;
+      if (r.totalIncrementAmount !== null && r.totalIncrementAmount !== undefined) {
+        totalIncrementPMTotal += Number(r.totalIncrementAmount) || 0;
+      }
+      if (r.totalIncrementAmountPA !== null && r.totalIncrementAmountPA !== undefined) {
+        totalIncrementPATotal += Number(r.totalIncrementAmountPA) || 0;
+      }
+    });
+
+    // Formula: ((revised pa total - Gross Pa total) / Gross Pa total) * 100
+    const totalPctIncrease = grossPATotal > 0
+      ? (((revisedGrossPATotal - grossPATotal) / grossPATotal) * 100).toFixed(2)
+      : "0.00";
+
+    return {
+      grossPMTotal,
+      grossPATotal,
+      revisedGrossPMTotal,
+      revisedGrossPATotal,
+      promotionAmountTotal,
+      salaryAdjustmentPMTotal,
+      salaryAdjustmentPATotal,
+      totalIncrementPMTotal,
+      totalIncrementPATotal,
+      totalPctIncrease
+    };
+  }, [filteredRecords]);
+
+  // Institutional Revenue Calculation (per Institution)
+  const currentInstRevenue = useMemo(() => {
+    const myCode = normalizeInstitution(userInstitution).toLowerCase() || "";
+    const code = (
+      !isSuperAdmin && myCode
+        ? myCode
+        : (activeInstCode && activeInstCode !== "all" ? activeInstCode : "ckcet")
+    ).toLowerCase();
+
+    const instData = revenueAnalyticsMap[code] || {};
+    const defaultData = DEFAULT_INSTITUTION_REVENUE[code] || DEFAULT_REVENUE_CONFIG;
+    const d25 = defaultData?.y2025_26 || DEFAULT_REVENUE_CONFIG.y2025_26;
+    const d26 = defaultData?.y2026_27 || DEFAULT_REVENUE_CONFIG.y2026_27;
+
+    return {
+      code,
+      y2025_26: {
+        totalFaculty: instData.y2025_26?.totalFaculty !== undefined
+          ? instData.y2025_26.totalFaculty
+          : (d25.totalFaculty || metrics.totalEvaluated || 0),
+        totalRevenue: instData.y2025_26?.totalRevenue !== undefined
+          ? instData.y2025_26.totalRevenue
+          : d25.totalRevenue,
+        annualHrCost: instData.y2025_26?.annualHrCost !== undefined
+          ? instData.y2025_26.annualHrCost
+          : d25.annualHrCost
+      },
+      y2026_27: {
+        totalFaculty: instData.y2026_27?.totalFaculty !== undefined
+          ? instData.y2026_27.totalFaculty
+          : (d26.totalFaculty || metrics.totalEvaluated || 0),
+        totalRevenue: instData.y2026_27?.totalRevenue !== undefined
+          ? instData.y2026_27.totalRevenue
+          : d26.totalRevenue,
+        annualHrCost: instData.y2026_27?.annualHrCost !== undefined
+          ? instData.y2026_27.annualHrCost
+          : d26.annualHrCost
+      }
+    };
+  }, [revenueAnalyticsMap, activeInstCode, userInstitution, isSuperAdmin, metrics.totalEvaluated]);
+
+  const hrCostPct2025_26 = currentInstRevenue.y2025_26.totalRevenue > 0
+    ? ((currentInstRevenue.y2025_26.annualHrCost / currentInstRevenue.y2025_26.totalRevenue) * 100).toFixed(2)
+    : "0.00";
+
+  const hrCostPct2026_27 = currentInstRevenue.y2026_27.totalRevenue > 0
+    ? ((currentInstRevenue.y2026_27.annualHrCost / currentInstRevenue.y2026_27.totalRevenue) * 100).toFixed(2)
+    : "0.00";
+
+  // Modal open / switch / save handlers for Institutional Revenue
+  const handleOpenRevenueModal = (targetYear = "all") => {
+    const myCode = normalizeInstitution(userInstitution).toLowerCase() || "";
+    const code = (
+      !isSuperAdmin && myCode
+        ? myCode
+        : (activeInstCode && activeInstCode !== "all" ? activeInstCode : (revenueTargetInst || "ckcet"))
+    ).toLowerCase();
+
+    setRevenueTargetInst(code);
+    setRevenueModalTargetYear(targetYear);
+    const existing = revenueAnalyticsMap[code] || {};
+    const defaultData = DEFAULT_INSTITUTION_REVENUE[code] || DEFAULT_REVENUE_CONFIG;
+    const d25 = defaultData?.y2025_26 || DEFAULT_REVENUE_CONFIG.y2025_26;
+    const d26 = defaultData?.y2026_27 || DEFAULT_REVENUE_CONFIG.y2026_27;
+
+    setRevenueForm({
+      y2025_26: {
+        totalFaculty: existing.y2025_26?.totalFaculty ?? (d25.totalFaculty || metrics.totalEvaluated || 0),
+        totalRevenue: existing.y2025_26?.totalRevenue ?? d25.totalRevenue,
+        annualHrCost: existing.y2025_26?.annualHrCost ?? d25.annualHrCost
+      },
+      y2026_27: {
+        totalFaculty: existing.y2026_27?.totalFaculty ?? (d26.totalFaculty || metrics.totalEvaluated || 0),
+        totalRevenue: existing.y2026_27?.totalRevenue ?? d26.totalRevenue,
+        annualHrCost: existing.y2026_27?.annualHrCost ?? d26.annualHrCost
+      }
+    });
+    setRevenueModalOpen(true);
+  };
+
+  const handleSwitchRevenueInst = (newCode) => {
+    if (!isSuperAdmin) return; // Non-super admins strictly restricted from switching institutions
+    setRevenueTargetInst(newCode);
+    const existing = revenueAnalyticsMap[newCode] || {};
+    const defaultData = DEFAULT_INSTITUTION_REVENUE[newCode] || DEFAULT_REVENUE_CONFIG;
+    const d25 = defaultData?.y2025_26 || DEFAULT_REVENUE_CONFIG.y2025_26;
+    const d26 = defaultData?.y2026_27 || DEFAULT_REVENUE_CONFIG.y2026_27;
+    setRevenueForm({
+      y2025_26: {
+        totalFaculty: existing.y2025_26?.totalFaculty ?? (d25.totalFaculty || metrics.totalEvaluated || 0),
+        totalRevenue: existing.y2025_26?.totalRevenue ?? d25.totalRevenue,
+        annualHrCost: existing.y2025_26?.annualHrCost ?? d25.annualHrCost
+      },
+      y2026_27: {
+        totalFaculty: existing.y2026_27?.totalFaculty ?? (d26.totalFaculty || metrics.totalEvaluated || 0),
+        totalRevenue: existing.y2026_27?.totalRevenue ?? d26.totalRevenue,
+        annualHrCost: existing.y2026_27?.annualHrCost ?? d26.annualHrCost
+      }
+    });
+  };
+
+  const handleSaveRevenueConfig = async () => {
+    const myCode = normalizeInstitution(userInstitution).toLowerCase() || "";
+    const code = (!isSuperAdmin && myCode ? myCode : (revenueTargetInst || activeInstCode || "ckcet")).toLowerCase();
+    setSavingRevenue(true);
+    try {
+      const updatedMap = {
+        ...revenueAnalyticsMap,
+        [code]: {
+          y2025_26: {
+            totalFaculty: Number(revenueForm.y2025_26.totalFaculty) || 0,
+            totalRevenue: Number(revenueForm.y2025_26.totalRevenue) || 0,
+            annualHrCost: Number(revenueForm.y2025_26.annualHrCost) || 0
+          },
+          y2026_27: {
+            totalFaculty: Number(revenueForm.y2026_27.totalFaculty) || 0,
+            totalRevenue: Number(revenueForm.y2026_27.totalRevenue) || 0,
+            annualHrCost: Number(revenueForm.y2026_27.annualHrCost) || 0
+          }
+        }
+      };
+      await setDoc(doc(db, "appraisal_config", "institution_revenue_analytics"), updatedMap, { merge: true });
+      setRevenueAnalyticsMap(updatedMap);
+      setToast({ show: true, message: `Saved Revenue & HR Cost values for ${code.toUpperCase()}!`, type: "success" });
+      setRevenueModalOpen(false);
+    } catch (err) {
+      console.error("Error saving revenue analytics:", err);
+      setToast({ show: true, message: "Failed to save revenue analytics values.", type: "error" });
+    } finally {
+      setSavingRevenue(false);
+    }
+  };
+
+  // Salary revision (sum of 5000 entries from Salary Adjustment column) and increment calculations for Card 4
+  const salaryRevisionCalculation = useMemo(() => {
+    let count5000 = 0;
+    let sum5000 = 0;
+    let totalAdjPM = 0;
+
+    filteredRecords.forEach((r) => {
+      const adj = Number(r.salaryAdjustmentPM) || 0;
+      totalAdjPM += adj;
+      if (adj === 5000) {
+        count5000 += 1;
+        sum5000 += adj;
+      }
+    });
+
+    // Sum of 5000 adjustments; fallback to total adjustments PM if adjustments exist
+    const salaryRevisionPM = count5000 > 0 ? sum5000 : totalAdjPM;
+    const count = count5000 > 0 ? count5000 : filteredRecords.filter((r) => (Number(r.salaryAdjustmentPM) || 0) > 0).length;
+
+    const totalGrossPM = Number(tableTotals.grossPMTotal) || 0;
+    const totalRevisedPM = Number(tableTotals.revisedGrossPMTotal) || 0;
+    const totalDifferencePM = Math.max(0, Number((totalRevisedPM - totalGrossPM).toFixed(2)));
+
+    // Increment amount (PM) is the portion of total increase attributed to base increment & promotion
+    const incrementAmountPM = Math.max(0, Number((totalDifferencePM - salaryRevisionPM).toFixed(2)));
+
+    const overallPctIncrease = totalGrossPM > 0
+      ? (((totalRevisedPM - totalGrossPM) / totalGrossPM) * 100).toFixed(2)
+      : "0.00";
+    const salaryRevisionPct = totalGrossPM > 0
+      ? ((salaryRevisionPM / totalGrossPM) * 100).toFixed(2)
+      : "0.00";
+    const incrementPct = totalGrossPM > 0
+      ? ((incrementAmountPM / totalGrossPM) * 100).toFixed(2)
+      : "0.00";
+
+    return {
+      count5000,
+      salaryRevisionPM,
+      facultyCount: count,
+      totalGrossPM,
+      totalRevisedPM,
+      totalDifferencePM,
+      incrementAmountPM,
+      overallPctIncrease,
+      salaryRevisionPct,
+      incrementPct
+    };
+  }, [filteredRecords, tableTotals.grossPMTotal, tableTotals.revisedGrossPMTotal]);
+
+  // Comprehensive Institutional Increment Analytics & Visual Graphs dataset
+  const overallIncrementAnalytics = useMemo(() => {
+    // 1. Department Outflow & Increment Dynamics
+    const deptMap = {};
+    filteredRecords.forEach((r) => {
+      const dept = r.department || "General";
+      if (!deptMap[dept]) {
+        deptMap[dept] = {
+          department: dept,
+          headcount: 0,
+          grossPM: 0,
+          grossPA: 0,
+          revisedGrossPM: 0,
+          revisedGrossPA: 0,
+          incrementPM: 0,
+          incrementPA: 0,
+          promotionCount: 0,
+          promotionAmount: 0,
+          salaryAdjustmentPA: 0,
+          salaryAdjustmentPM: 0,
+        };
+      }
+      const d = deptMap[dept];
+      d.headcount += 1;
+      d.grossPM += Number(r.grossPM) || 0;
+      d.grossPA += Number(r.grossPA) || 0;
+      d.revisedGrossPM += Number(r.revisedGrossPM) || 0;
+      d.revisedGrossPA += Number(r.revisedGrossPA) || 0;
+      d.incrementPM += Number(r.totalIncrementAmount) || 0;
+      d.incrementPA += Number(r.totalIncrementAmountPA) || 0;
+      if (r.isPromoted) {
+        d.promotionCount += 1;
+        d.promotionAmount += Number(r.promotionAmount) || 0;
+      }
+      d.salaryAdjustmentPM += Number(r.salaryAdjustmentPM) || 0;
+      d.salaryAdjustmentPA += Number(r.salaryAdjustmentPA) || 0;
+    });
+
+    const formatDeptShortName = (name = "") => {
+      const n = String(name).trim();
+      if (!n) return "Dept";
+      if (/computer science|cse/i.test(n)) return "CSE";
+      if (/information technology|\bit\b/i.test(n)) return "IT";
+      if (/artificial intelligence|ai & ds|aids|data science/i.test(n)) return "AI & DS";
+      if (/electronics and comm|ece/i.test(n)) return "ECE";
+      if (/electrical and electr|eee/i.test(n)) return "EEE";
+      if (/mechanical|mech/i.test(n)) return "Mech";
+      if (/civil/i.test(n)) return "Civil";
+      if (/bio.?medical|bme/i.test(n)) return "BME";
+      if (/robotics/i.test(n)) return "Robotics";
+      if (/business administration|mba/i.test(n)) return "MBA";
+      if (/science and humanities|s&h|humanities/i.test(n)) return "S&H";
+      if (/administration|admin/i.test(n)) return "Admin";
+      if (n.length > 10) return n.slice(0, 9) + "…";
+      return n;
+    };
+
+    const departmentData = Object.values(deptMap).map((d) => {
+      const growthPct = d.grossPA > 0
+        ? Number((((d.revisedGrossPA - d.grossPA) / d.grossPA) * 100).toFixed(2))
+        : 0;
+      return {
+        ...d,
+        shortName: formatDeptShortName(d.department),
+        growthPct,
+        currentPA_Lakhs: Number((d.grossPA / 100000).toFixed(2)),
+        revisedPA_Lakhs: Number((d.revisedGrossPA / 100000).toFixed(2)),
+        incrementPA_Lakhs: Number((d.incrementPA / 100000).toFixed(2)),
+        currentPM_K: Number((d.grossPM / 1000).toFixed(1)),
+        revisedPM_K: Number((d.revisedGrossPM / 1000).toFixed(1)),
+        incrementPM_K: Number((d.incrementPM / 1000).toFixed(1)),
+      };
+    }).sort((a, b) => b.incrementPA - a.incrementPA);
+
+    // 2. Performance Tier Breakdown
+    const tierMap = {};
+    const configuredTiers = criteriaConfig.tiers || [];
+    configuredTiers.forEach((tier) => {
+      tierMap[tier.code] = {
+        tierCode: tier.code,
+        tierLabel: tier.label,
+        incrementPct: tier.incrementPct,
+        minScore: tier.minScore,
+        maxScore: tier.maxScore,
+        headcount: 0,
+        grossPA: 0,
+        grossPM: 0,
+        revisedGrossPA: 0,
+        revisedGrossPM: 0,
+        incrementPA: 0,
+        incrementPM: 0,
+        color: tier.code === "FEE" ? "#10b981" : tier.code === "EE" ? "#3b82f6" : tier.code === "ME" ? "#8b5cf6" : tier.code === "PME" ? "#f59e0b" : "#ef4444"
+      };
+    });
+
+    filteredRecords.forEach((r) => {
+      const code = r.tierCode || "NME";
+      if (!tierMap[code]) {
+        tierMap[code] = {
+          tierCode: code,
+          tierLabel: r.tierLabel || code,
+          incrementPct: r.baseIncrementPct || 0,
+          minScore: 0,
+          maxScore: 100,
+          headcount: 0,
+          grossPA: 0,
+          grossPM: 0,
+          revisedGrossPA: 0,
+          revisedGrossPM: 0,
+          incrementPA: 0,
+          incrementPM: 0,
+          color: "#64748b"
+        };
+      }
+      const t = tierMap[code];
+      t.headcount += 1;
+      t.grossPA += Number(r.grossPA) || 0;
+      t.grossPM += Number(r.grossPM) || 0;
+      t.revisedGrossPA += Number(r.revisedGrossPA) || 0;
+      t.revisedGrossPM += Number(r.revisedGrossPM) || 0;
+      t.incrementPA += Number(r.totalIncrementAmountPA) || 0;
+      t.incrementPM += Number(r.totalIncrementAmount) || 0;
+    });
+
+    const tierData = Object.values(tierMap).map((t) => {
+      const growthPct = t.grossPA > 0
+        ? Number((((t.revisedGrossPA - t.grossPA) / t.grossPA) * 100).toFixed(2))
+        : 0;
+      return {
+        ...t,
+        growthPct,
+        incrementPA_Lakhs: Number((t.incrementPA / 100000).toFixed(2)),
+        incrementPM_K: Number((t.incrementPM / 1000).toFixed(1)),
+      };
+    });
+
+    // 3. Increment Component Outflow (Base Tier Slabs vs Promotion Bump vs Salary Adjustments)
+    let totalBaseIncrementPA = 0;
+    let totalPromotionPA = 0;
+    let totalAdjustmentPA = 0;
+    let promotedCount = 0;
+    let adjustedCount = 0;
+
+    filteredRecords.forEach((r) => {
+      totalBaseIncrementPA += Number(r.incrementAmountPA) || 0;
+      totalPromotionPA += Number(r.promotionAmount) || 0;
+      totalAdjustmentPA += Number(r.salaryAdjustmentPA) || 0;
+      if (r.isPromoted) promotedCount += 1;
+      if (Number(r.salaryAdjustmentPM) > 0 || Number(r.salaryAdjustmentPA) > 0) adjustedCount += 1;
+    });
+
+    const totalOutflowPA = totalBaseIncrementPA + totalPromotionPA + totalAdjustmentPA;
+    const componentData = [
+      {
+        name: "Base Tier Slabs",
+        amountPA: totalBaseIncrementPA,
+        amountPM: Math.round(totalBaseIncrementPA / 12),
+        pctShare: totalOutflowPA > 0 ? Number(((totalBaseIncrementPA / totalOutflowPA) * 100).toFixed(1)) : 0,
+        color: "#3b82f6",
+        count: filteredRecords.length,
+        desc: "Performance matrix slab increments derived from Gross Marks"
+      },
+      {
+        name: "Promotion Bumps",
+        amountPA: totalPromotionPA,
+        amountPM: Math.round(totalPromotionPA / 12),
+        pctShare: totalOutflowPA > 0 ? Number(((totalPromotionPA / totalOutflowPA) * 100).toFixed(1)) : 0,
+        color: "#8b5cf6",
+        count: promotedCount,
+        desc: `Merit promotion recommendations (+${criteriaConfig.promotionPct || 5}% bump)`
+      },
+      {
+        name: "Salary Adjustments",
+        amountPA: totalAdjustmentPA,
+        amountPM: Math.round(totalAdjustmentPA / 12),
+        pctShare: totalOutflowPA > 0 ? Number(((totalAdjustmentPA / totalOutflowPA) * 100).toFixed(1)) : 0,
+        color: "#10b981",
+        count: adjustedCount,
+        desc: "HR / Principal discretionary salary increment adjustments"
+      }
+    ];
+
+    // 4. Growth Rate Brackets
+    const brackets = [
+      { range: "< 4%", min: -Infinity, max: 3.99, count: 0, grossPA: 0, revisedGrossPA: 0, incrementPA: 0, color: "#94a3b8" },
+      { range: "4% - 5.9%", min: 4, max: 5.99, count: 0, grossPA: 0, revisedGrossPA: 0, incrementPA: 0, color: "#60a5fa" },
+      { range: "6% - 7.9%", min: 6, max: 7.99, count: 0, grossPA: 0, revisedGrossPA: 0, incrementPA: 0, color: "#38bdf8" },
+      { range: "8% - 9.9%", min: 8, max: 9.99, count: 0, grossPA: 0, revisedGrossPA: 0, incrementPA: 0, color: "#818cf8" },
+      { range: "10% - 14.9%", min: 10, max: 14.99, count: 0, grossPA: 0, revisedGrossPA: 0, incrementPA: 0, color: "#a855f7" },
+      { range: "≥ 15%", min: 15, max: Infinity, count: 0, grossPA: 0, revisedGrossPA: 0, incrementPA: 0, color: "#10b981" },
+    ];
+
+    filteredRecords.forEach((r) => {
+      const pct = Number(r.pctIncrease) || 0;
+      const b = brackets.find((br) => pct >= br.min && pct <= br.max);
+      if (b) {
+        b.count += 1;
+        b.grossPA += Number(r.grossPA) || 0;
+        b.revisedGrossPA += Number(r.revisedGrossPA) || 0;
+        b.incrementPA += Number(r.totalIncrementAmountPA) || 0;
+      }
+    });
+
+    // 5. Top Incremented Candidates
+    const topIncremented = [...filteredRecords]
+      .filter((r) => (Number(r.totalIncrementAmountPA) || 0) > 0)
+      .sort((a, b) => (Number(b.totalIncrementAmountPA) || 0) - (Number(a.totalIncrementAmountPA) || 0))
+      .slice(0, 6);
+
+    return {
+      departmentData,
+      tierData,
+      componentData,
+      brackets,
+      topIncremented,
+      totalBaseIncrementPA,
+      totalPromotionPA,
+      totalAdjustmentPA,
+      totalOutflowPA,
+      promotedCount,
+      adjustedCount
+    };
+  }, [filteredRecords, criteriaConfig]);
 
   // Dynamic Chart & Progression Analytics for selected candidate in analytics modal
   const selectedCandidateAnalyticsData = useMemo(() => {
@@ -1275,9 +2469,44 @@ export default function HRGrossAnalytics() {
         r.revisedGrossPM !== null ? r.revisedGrossPM : "",
         r.revisedGrossPA !== null ? r.revisedGrossPA : "",
         r.totalIncrementAmount !== null ? r.totalIncrementAmount : "",
-        r.incrementAmountPA !== null ? r.incrementAmountPA : ""
+        r.totalIncrementAmountPA !== null ? r.totalIncrementAmountPA : ""
       ]);
     });
+
+    // Total Summary Row
+    const expGrossPMTotal = targetList.reduce((acc, r) => acc + (Number(r.grossPM) || 0), 0);
+    const expGrossPATotal = targetList.reduce((acc, r) => acc + (Number(r.grossPA) || 0), 0);
+    const expPromoTotal = targetList.reduce((acc, r) => acc + (Number(r.promotionAmount) || 0), 0);
+    const expAdjPMTotal = targetList.reduce((acc, r) => acc + (Number(r.salaryAdjustmentPM) || 0), 0);
+    const expAdjPATotal = targetList.reduce((acc, r) => acc + (Number(r.salaryAdjustmentPA) || 0), 0);
+    const expRevPMTotal = targetList.reduce((acc, r) => acc + (Number(r.revisedGrossPM) || 0), 0);
+    const expRevPATotal = targetList.reduce((acc, r) => acc + (Number(r.revisedGrossPA) || 0), 0);
+    const expIncPMTotal = targetList.reduce((acc, r) => acc + (Number(r.totalIncrementAmount) || 0), 0);
+    const expIncPATotal = targetList.reduce((acc, r) => acc + (Number(r.totalIncrementAmountPA) || 0), 0);
+    const expTotalPct = expGrossPATotal > 0 ? (((expRevPATotal - expGrossPATotal) / expGrossPATotal) * 100).toFixed(2) : "0.00";
+
+    rows.push([
+      "TOTAL",
+      `Total Staff: ${targetList.length}`,
+      "",
+      "",
+      "",
+      expGrossPMTotal,
+      expGrossPATotal,
+      "",
+      "",
+      "",
+      "",
+      "",
+      expPromoTotal,
+      `${expTotalPct}%`,
+      expAdjPMTotal,
+      expAdjPATotal,
+      expRevPMTotal,
+      expRevPATotal,
+      expIncPMTotal,
+      expIncPATotal
+    ]);
 
     const worksheet = XLSX.utils.aoa_to_sheet(rows);
     worksheet["!cols"] = [
@@ -1585,11 +2814,10 @@ export default function HRGrossAnalytics() {
         {/* Floating Toast Notification */}
         {toast.show && (
           <div className="fixed top-6 right-6 z-50 animate-slideIn">
-            <div className={`flex items-center gap-2.5 px-4 py-3 rounded-2xl shadow-xl text-xs font-bold border ${
-              toast.type === "error"
-                ? "bg-rose-50 text-rose-800 border-rose-300"
-                : "bg-emerald-50 text-emerald-900 border-emerald-300"
-            }`}>
+            <div className={`flex items-center gap-2.5 px-4 py-3 rounded-2xl shadow-xl text-xs font-bold border ${toast.type === "error"
+              ? "bg-rose-50 text-rose-800 border-rose-300"
+              : "bg-emerald-50 text-emerald-900 border-emerald-300"
+              }`}>
               {toast.type === "error" ? <AlertCircle size={16} className="text-rose-600" /> : <CheckCircle2 size={16} className="text-emerald-600" />}
               <span>{toast.message}</span>
             </div>
@@ -1634,67 +2862,794 @@ export default function HRGrossAnalytics() {
           </div>
         </div>
 
-        {/* Executive Metric Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* Card 1: Total Approved Staff */}
-          <div className="bg-white border border-zinc-200/80 rounded-2xl p-5 shadow-xs hover:shadow-md transition-shadow">
-            <div className="flex items-center justify-between text-zinc-500 mb-3">
-              <span className="text-xs font-bold uppercase tracking-wider text-zinc-600">Approved Faculty</span>
-              <div className="w-9 h-9 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
-                <Users size={18} />
-              </div>
+        {/* Master Card: Revenue vs. Salary Expenditure – Financial Impact Analysis */}
+        <div className="bg-white border border-zinc-200/90 rounded-3xl p-5 sm:p-6 shadow-sm space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-100 pb-3">
+            <div>
+              <div className="text-[10px] font-black uppercase tracking-wider text-indigo-700">Financial Impact Modeling</div>
+              <h3 className="text-sm sm:text-base font-black text-[#101b38] flex items-center gap-2">
+                <Building2 size={18} className="text-indigo-600" />
+                Revenue Vs. Salary Expenditure – Financial Impact Analysis
+              </h3>
             </div>
-            <div className="text-3xl font-black text-[#101b38]">{metrics.totalEvaluated}</div>
-            <div className="text-[11px] font-medium text-emerald-600 flex items-center gap-1 mt-1">
-              <CheckCircle2 size={12} /> Principal Reviewed & Approved
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="text-[11px] font-bold text-zinc-400 bg-zinc-50 border border-zinc-200/80 px-3 py-1 rounded-full">
+                {getSchoolShortName(userInstitution) || activeInstCode.toUpperCase()} Outflow Overview
+              </div>
             </div>
           </div>
 
-          {/* Card 2: Average Gross Score */}
-          <div className="bg-white border border-zinc-200/80 rounded-2xl p-5 shadow-xs hover:shadow-md transition-shadow">
-            <div className="flex items-center justify-between text-zinc-500 mb-3">
-              <span className="text-xs font-bold uppercase tracking-wider text-zinc-600">Avg. Gross Mark</span>
-              <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
-                <Percent size={18} />
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Card 1: Total Revenue (2025-26) with edit trigger */}
+            <div className="bg-white border border-zinc-200/80 rounded-2xl p-5 shadow-xs hover:shadow-md transition-shadow flex flex-col justify-between group">
+              <div>
+                <div className="flex items-start justify-between text-zinc-500 mb-3">
+                  <div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-zinc-600 block">total revenue (2025-26)</span>
+                    <span className="text-[10px] font-bold text-zinc-500 bg-zinc-100 border border-zinc-200/80 px-2 py-0.5 rounded-md inline-flex items-center gap-1 mt-1">
+                      total faculty : <strong className="text-zinc-800 font-mono">{currentInstRevenue.y2025_26.totalFaculty}</strong>
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenRevenueModal("y2025_26")}
+                      className="w-7 h-7 rounded-lg bg-zinc-50 hover:bg-indigo-50 border border-zinc-200/80 text-zinc-500 hover:text-indigo-600 flex items-center justify-center transition-colors cursor-pointer"
+                      title="Edit 2025-26 Revenue & Budget"
+                    >
+                      <Pencil size={12} />
+                    </button>
+                    <div className="w-9 h-9 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
+                      <IndianRupee size={18} />
+                    </div>
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">total revenue</span>
+                    <span className="text-sm font-black text-slate-700 font-mono">
+                      ₹{Number(currentInstRevenue.y2025_26.totalRevenue).toLocaleString("en-IN")}
+                    </span>
+                  </div>
+                  <div className="flex items-baseline justify-between pt-1 border-t border-zinc-100">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Annual HR cost</span>
+                    </div>
+                    <span className="text-sm font-black text-slate-700 font-mono">
+                      ₹{Number(currentInstRevenue.y2025_26.annualHrCost).toLocaleString("en-IN")}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div className="text-[11px] font-medium text-zinc-500 mt-2.5 pt-2 border-t border-zinc-50 flex items-center justify-between">
+                <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">HR Cost (% of Total Revenue):</span>
+                <strong className="text-sm font-black text-slate-700 font-mono">{hrCostPct2025_26}% </strong>
               </div>
             </div>
-            <div className="text-3xl font-black text-indigo-900">{metrics.avgGross} <span className="text-xs font-bold text-zinc-400">/ 100</span></div>
-            <div className="text-[11px] font-medium text-indigo-600 flex items-center gap-1 mt-1">
-              <TrendingUp size={12} /> Institutional Average Increment: <strong>{metrics.avgIncrementPct}%</strong>
+
+            {/* Card 2: Total Revenue (2026-27) with edit trigger & Eligible Faculty */}
+            <div className="bg-white border border-zinc-200/80 rounded-2xl p-5 shadow-xs hover:shadow-md transition-shadow flex flex-col justify-between group">
+              <div>
+                <div className="flex items-start justify-between text-zinc-500 mb-3">
+                  <div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-zinc-600 block">total revenue (2026-27)</span>
+                    <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                      <span className="text-[10px] font-bold text-zinc-500 bg-zinc-100 border border-zinc-200/80 px-2 py-0.5 rounded-md inline-flex items-center gap-1">
+                        total faculty : <strong className="text-zinc-800 font-mono">{currentInstRevenue.y2026_27.totalFaculty}</strong>
+                      </span>
+                      {/* <span className="text-[10px] font-extrabold text-emerald-800 bg-emerald-50 border border-emerald-300 px-2 py-0.5 rounded-md inline-flex items-center gap-1">
+                        eligible faculty : <strong className="text-emerald-700 font-mono">{metrics.eligibleFacultyCount}</strong>
+                      </span> */}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenRevenueModal("y2026_27")}
+                      className="w-7 h-7 rounded-lg bg-zinc-50 hover:bg-indigo-50 border border-zinc-200/80 text-zinc-500 hover:text-indigo-600 flex items-center justify-center transition-colors cursor-pointer"
+                      title="Edit 2026-27 Revenue & Budget"
+                    >
+                      <Pencil size={12} />
+                    </button>
+                    <div className="w-9 h-9 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+                      <TrendingUp size={18} />
+                    </div>
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">total revenue</span>
+                    <span className="text-sm font-black text-slate-700 font-mono">
+                      ₹{Number(currentInstRevenue.y2026_27.totalRevenue).toLocaleString("en-IN")}
+                    </span>
+                  </div>
+                  <div className="flex items-baseline justify-between pt-1 border-t border-zinc-100">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Annual HR cost</span>
+                    </div>
+                    <span className="text-sm font-black text-slate-700 font-mono">
+                      ₹{Number(currentInstRevenue.y2026_27.annualHrCost).toLocaleString("en-IN")}
+                    </span>
+                  </div>
+                  <div className="flex items-baseline justify-between pt-1 border-t border-zinc-100">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Eligible Faculty</span>
+                    </div>
+                    <span className="text-sm font-black text-emerald-700 font-mono">
+                      {metrics.eligibleFacultyCount}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              <div className="text-[11px] font-medium text-zinc-500 mt-2.5 pt-2 border-t border-zinc-50 flex items-center justify-between">
+                <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">HR Cost (% of Total Revenue):</span>
+                <strong className="text-sm font-black text-slate-700 font-mono">{hrCostPct2026_27}% </strong>
+              </div>
+            </div>
+
+            {/* Card 4: Increment % (Clickable trigger for detailed visual graphs modal) */}
+            <div
+              onClick={() => setIncrementAnalyticsModalOpen(true)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") setIncrementAnalyticsModalOpen(true); }}
+              className="group relative overflow-hidden bg-white border border-zinc-200/80 hover:border-emerald-500 rounded-2xl p-5 shadow-xs hover:shadow-lg transition-all duration-300 cursor-pointer flex flex-col justify-between"
+              title="Click to view full executive visualization graphs"
+            >
+              <div className="absolute top-0 right-0 w-28 h-28 bg-emerald-400/10 rounded-full blur-2xl group-hover:bg-emerald-400/20 transition-all pointer-events-none" />
+
+              <div>
+                <div className="flex items-center justify-between text-zinc-500 mb-3">
+                  <span className="text-xs font-black uppercase tracking-wider text-emerald-800 flex items-center gap-1.5">
+                    <Sparkles size={14} className="text-emerald-600 animate-pulse" />
+                    increment %
+                  </span>
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-100/90 text-emerald-800 group-hover:bg-emerald-600 group-hover:text-white transition-colors">
+                    <span>Visualize</span>
+                    <ArrowUpRight size={12} className="group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
+                  </span>
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="flex items-baseline justify-between">
+                    <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">total gross PM</span>
+                    <span className="text-sm font-black text-slate-700 font-mono">
+                      ₹{Number(salaryRevisionCalculation.totalGrossPM).toLocaleString("en-IN")}
+                    </span>
+                  </div>
+                  <div className="flex items-baseline justify-between pt-1 border-t border-zinc-100">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">total revised PM</span>
+                      <span className="text-[10px] font-extrabold text-emerald-800 bg-emerald-100 px-1.5 py-0.5 rounded border border-emerald-300">
+                        +{salaryRevisionCalculation.overallPctIncrease}%
+                      </span>
+                    </div>
+                    <span className="text-sm font-black text-slate-700 font-mono">
+                      ₹{Number(salaryRevisionCalculation.totalRevisedPM).toLocaleString("en-IN")}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="text-[11px] font-medium text-zinc-500 mt-2.5 pt-2 border-t border-zinc-50 flex items-center justify-between">
+                <span className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider">Difference in %:</span>
+                <strong className="text-sm font-black text-emerald-700 font-mono">
+                  +{salaryRevisionCalculation.overallPctIncrease}% (+₹{Number(salaryRevisionCalculation.totalDifferencePM).toLocaleString("en-IN")} PM)
+                </strong>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Institutional Salary Structure & Market Benchmark Analytics */}
+        <div className="bg-white border border-zinc-200/90 rounded-3xl overflow-hidden shadow-sm space-y-0">
+          {/* Card Master Header */}
+          <div className="px-5 py-4 bg-zinc-50/90 border-b border-zinc-200 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
+                <BarChart3 size={16} />
+              </div>
+              <div>
+                <span className="text-xs font-black text-slate-800 uppercase tracking-wider block">
+                  Institutional Salary Structure &amp; Market Benchmark Analytics
+                </span>
+                <span className="text-[10px] text-zinc-500 font-medium">
+                  Dynamic benchmark across {benchmarkData.schools.length} institutions &amp; {benchmarkData.designations.length} designations • Role-Wise Deep Dive
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Download Template (.xlsx) */}
+              <button
+                type="button"
+                onClick={handleDownloadBenchmarkTemplate}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-zinc-100 border border-zinc-300 text-zinc-700 text-xs font-bold shadow-2xs transition-all cursor-pointer"
+                title="Download Excel template matching the matrix format"
+              >
+                <Download size={13} className="text-indigo-600" />
+                <span>Download Template (.xlsx)</span>
+              </button>
+
+              {/* Upload Benchmark Excel */}
+              <button
+                type="button"
+                onClick={() => benchmarkFileInputRef.current?.click()}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#101b38] hover:bg-[#162752] text-white text-xs font-bold shadow-2xs transition-all cursor-pointer"
+                title="Upload filled Excel file to dynamically populate matrix tables"
+              >
+                <Upload size={13} className="text-emerald-400" />
+                <span>Upload Excel</span>
+              </button>
+              <input
+                ref={benchmarkFileInputRef}
+                type="file"
+                accept=".xlsx, .xls, .csv"
+                onChange={handleUploadBenchmarkFile}
+                className="hidden"
+              />
+
+              {/* Reset Default */}
+              <button
+                type="button"
+                onClick={handleResetDefaultBenchmark}
+                className="w-8 h-8 rounded-xl bg-white hover:bg-zinc-100 border border-zinc-300 text-zinc-500 hover:text-zinc-800 flex items-center justify-center transition-colors cursor-pointer"
+                title="Reset to default benchmark data"
+              >
+                <RotateCcw size={13} />
+              </button>
             </div>
           </div>
 
-          {/* Card 3: Total Gross PM Outlay */}
-          <div className="bg-white border border-zinc-200/80 rounded-2xl p-5 shadow-xs hover:shadow-md transition-shadow">
-            <div className="flex items-center justify-between text-zinc-500 mb-3">
-              <span className="text-xs font-bold uppercase tracking-wider text-zinc-600">Total Gross PM Outlay</span>
-              <div className="w-9 h-9 rounded-xl bg-slate-100 text-slate-700 flex items-center justify-center">
-                <IndianRupee size={18} />
+          {/* Graphical Benchmark Chart Module (Role-Wise Deep Dive - Strictly NO "All Roles") */}
+          <div className="p-4 sm:p-5 bg-slate-50/60 border-b border-zinc-200 space-y-4">
+            {/* Controls Bar: Designation Pills & Chart View Toggles */}
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+              {/* Designation Selector Pills (Each Role Individually - NO "All Roles") */}
+              <div className="flex items-center gap-1.5 overflow-x-auto py-1">
+                <span className="text-[10px] font-black text-zinc-400 uppercase tracking-wider mr-1 shrink-0">
+                  Select Role:
+                </span>
+                {benchmarkData.designations.map((desg) => (
+                  <button
+                    key={desg.id}
+                    type="button"
+                    onClick={() => setSelectedBenchmarkRole(desg.id)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                      activeBenchmarkRole === desg.id
+                        ? "bg-[#101b38] text-white shadow-2xs"
+                        : "bg-white text-zinc-700 border border-zinc-200 hover:bg-zinc-100"
+                    }`}
+                  >
+                    {desg.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Right Chart View Switcher & Options */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* View Mode: Salary vs Variance */}
+                <div className="inline-flex p-0.5 bg-zinc-200/90 rounded-xl text-xs font-bold">
+                  <button
+                    type="button"
+                    onClick={() => setBenchmarkChartType("salary")}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      benchmarkChartType === "salary"
+                        ? "bg-white text-zinc-900 shadow-2xs font-black"
+                        : "text-zinc-600 hover:text-zinc-900"
+                    }`}
+                    title="Ranked Salary Bar Chart"
+                  >
+                    <BarChart3 size={13} className="text-indigo-600" />
+                    <span>Ranked Chart</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBenchmarkChartType("variance")}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      benchmarkChartType === "variance"
+                        ? "bg-white text-zinc-900 shadow-2xs font-black"
+                        : "text-zinc-600 hover:text-zinc-900"
+                    }`}
+                    title="Variance Differential Chart vs Our Institution"
+                  >
+                    <ArrowUpDown size={13} className="text-emerald-600" />
+                    <span>Advantage (±₹)</span>
+                  </button>
+                </div>
+
+                {/* Sort Toggle */}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setBenchmarkSort(
+                      benchmarkSort === "salaryDesc"
+                        ? "salaryAsc"
+                        : benchmarkSort === "salaryAsc"
+                          ? "default"
+                          : "salaryDesc"
+                    )
+                  }
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                    benchmarkSort !== "default"
+                      ? "bg-indigo-50 text-indigo-700 border-indigo-300"
+                      : "bg-white text-zinc-600 border-zinc-200 hover:bg-zinc-100"
+                  }`}
+                  title="Cycle sort: High-to-Low, Low-to-High, Table Order"
+                >
+                  <Sliders size={13} />
+                  <span>
+                    {benchmarkSort === "salaryDesc"
+                      ? "Rank: High → Low"
+                      : benchmarkSort === "salaryAsc"
+                        ? "Rank: Low → High"
+                        : "Sort: Table Order"}
+                  </span>
+                </button>
+
+                {/* Govt Scale Toggle (If Govt institution present) */}
+                {hasGovtSchool && (
+                  <button
+                    type="button"
+                    onClick={() => setIncludeGovtScale(!includeGovtScale)}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                      includeGovtScale
+                        ? "bg-amber-50 text-amber-900 border-amber-300 shadow-2xs"
+                        : "bg-white text-zinc-600 border-zinc-200 hover:bg-zinc-100"
+                    }`}
+                    title="Toggle Govt 7th CPC scale to adjust comparative axis scale"
+                  >
+                    <Landmark size={13} className={includeGovtScale ? "text-amber-600" : "text-zinc-400"} />
+                    <span>{includeGovtScale ? "Govt: Included" : "Govt: Excluded"}</span>
+                  </button>
+                )}
               </div>
             </div>
-            <div className="text-2xl font-black text-slate-900 font-mono">
-              ₹{Number(metrics.totalGrossPM).toLocaleString("en-IN")}
+
+            {/* Chart Header Title & Badges */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2 border-t border-zinc-200/80">
+              <div>
+                <h4 className="text-xs sm:text-sm font-black text-slate-800 flex items-center gap-1.5">
+                  {benchmarkChartType === "salary" ? (
+                    <>
+                      <BarChart3 size={15} className="text-indigo-600" />
+                      {activeRoleMetrics.roleName} – Institutional Salary Structure (Per Month)
+                    </>
+                  ) : (
+                    <>
+                      <ArrowUpDown size={15} className="text-emerald-600" />
+                      Salary Variance: Peers vs {ourInstitutionCode} Base (₹ Per Month) – {activeRoleMetrics.roleName}
+                    </>
+                  )}
+                </h4>
+                <p className="text-[11px] text-zinc-500 font-medium mt-0.5">
+                  {benchmarkChartType === "salary" ? (
+                    <>
+                      Our {instTypeLabel}: <strong>{cleanOurCollegeName}</strong> ({activeRoleMetrics.ourRaw} PM) • Peer Rank{" "}
+                      <span className="font-bold text-indigo-700">#{activeRoleMetrics.rank}</span> of{" "}
+                      {activeRoleMetrics.totalPeers} Peers
+                    </>
+                  ) : (
+                    <>
+                      Green bars (increase ↑): Institutions paying <strong>higher than {ourInstitutionCode}</strong> • Orange bars (decrease ↓): Institutions paying <strong>lower than {ourInstitutionCode}</strong>
+                    </>
+                  )}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                {benchmarkChartType === "salary" ? (
+                  <>
+                    <span className="inline-flex items-center gap-1 text-[10px] font-black text-indigo-950 bg-indigo-100 border border-indigo-300 px-2.5 py-1 rounded-md shadow-2xs">
+                      <Crown size={11} className="text-amber-500 fill-amber-400" />
+                      {cleanOurCollegeName} ({instTypeLabel})
+                    </span>
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-600 bg-white border border-slate-200 px-2 py-0.5 rounded-md">
+                      <span className="w-2 h-2 rounded-full bg-slate-500 inline-block" />
+                      {instTypeLabel === "Our School" ? "Peer Schools" : "Peer Colleges"}
+                    </span>
+                    {includeGovtScale && hasGovtSchool && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
+                        <span className="w-2 h-2 rounded-full bg-amber-500 inline-block" />
+                        Govt / 7th CPC
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded-md">
+                      +₹ : Peer Pays Higher (Green Bar ↑)
+                    </span>
+                    <span className="text-[10px] font-bold text-amber-800 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-md">
+                      -₹ : Peer Pays Lower (Orange Bar ↓)
+                    </span>
+                  </>
+                )}
+              </div>
             </div>
-            <div className="text-[11px] font-medium text-zinc-500 mt-1">
-              Uploaded for {metrics.salariesUploadedCount} of {metrics.totalEvaluated} staff
+
+            {/* Chart SVG Rendering Canvas */}
+            <div className="w-full h-80 sm:h-96 min-w-0 min-h-[320px]">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={280}>
+                {benchmarkChartType === "salary" ? (
+                  <BarChart data={benchmarkChartData} margin={{ top: 30, right: 20, left: 10, bottom: 65 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                    <XAxis
+                      dataKey="shortNameWithLocation"
+                      interval={0}
+                      angle={-22}
+                      textAnchor="end"
+                      tick={{ fontSize: 10.5, fontWeight: 700, fill: "#334155" }}
+                      height={65}
+                      dy={6}
+                    />
+                    <YAxis
+                      tickFormatter={(v) => `₹${v >= 100000 ? (v / 100000).toFixed(1) + "L" : (v / 1000).toFixed(0) + "k"}`}
+                      tick={{ fontSize: 10, fill: "#64748b" }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <Tooltip content={<BenchmarkChartTooltip />} />
+                    {activeRoleMetrics.ourSal > 0 && (
+                      <ReferenceLine
+                        y={activeRoleMetrics.ourSal}
+                        stroke="#4338ca"
+                        strokeDasharray="4 4"
+                        strokeWidth={2}
+                        label={{
+                          value: `★ ${ourInstitutionCode} Baseline: ₹${activeRoleMetrics.ourRaw}`,
+                          fill: "#312e81",
+                          fontSize: 10,
+                          position: "insideTopRight",
+                          fontWeight: "bold"
+                        }}
+                      />
+                    )}
+                    <Bar dataKey="salary" radius={[8, 8, 0, 0]}>
+                      {benchmarkChartData.map((entry) => (
+                        <Cell
+                          key={`cell-${entry.id}`}
+                          fill={
+                            entry.isOurCollege
+                              ? "#4338ca"
+                              : entry.isGovt
+                                ? "#f59e0b"
+                                : entry.salary < activeRoleMetrics.ourSal
+                                  ? "#0d9488"
+                                  : entry.salary === activeRoleMetrics.ourSal
+                                    ? "#0284c7"
+                                    : "#64748b"
+                          }
+                          stroke={entry.isOurCollege ? "#fbbf24" : "none"}
+                          strokeWidth={entry.isOurCollege ? 2.5 : 0}
+                        />
+                      ))}
+                      <LabelList
+                        dataKey="salary"
+                        position="top"
+                        formatter={(val) =>
+                          val > 0
+                            ? `₹${val >= 100000 ? (val / 100000).toFixed(1) + "L" : (val / 1000).toFixed(0) + "k"}`
+                            : "-"
+                        }
+                        style={{ fontSize: 10, fontWeight: 800, fill: "#1e293b" }}
+                      />
+                    </Bar>
+                  </BarChart>
+                ) : (
+                  <BarChart data={benchmarkChartData} margin={{ top: 25, right: 20, left: 10, bottom: 65 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                    <XAxis
+                      dataKey="shortNameWithLocation"
+                      interval={0}
+                      angle={-22}
+                      textAnchor="end"
+                      tick={{ fontSize: 10.5, fontWeight: 700, fill: "#334155" }}
+                      height={70}
+                      dy={10}
+                      axisLine={{ stroke: "#94a3b8", strokeWidth: 1.2 }}
+                      tickLine={{ stroke: "#cbd5e1" }}
+                    />
+                    <YAxis
+                      domain={[
+                        (dataMin) => Math.min(Math.floor((dataMin - 5000) / 2000) * 2000, -14000),
+                        (dataMax) => Math.max(Math.ceil((dataMax + 4000) / 2000) * 2000, 22000)
+                      ]}
+                      tickFormatter={(v) => `${v > 0 ? "+" : ""}₹${(v / 1000).toFixed(0)}k`}
+                      tick={{ fontSize: 10, fill: "#64748b" }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <Tooltip content={<BenchmarkChartTooltip />} />
+                    <ReferenceLine y={0} stroke="#334155" strokeWidth={1.5} />
+                    <Bar dataKey="diffFromOur" radius={[6, 6, 0, 0]}>
+                      {benchmarkChartData.map((entry) => (
+                        <Cell
+                          key={`var-${entry.id}`}
+                          fill={
+                            entry.isOurCollege
+                              ? "#4338ca"
+                              : entry.diffFromOur > 0
+                                ? "#10b981"
+                                : entry.diffFromOur === 0
+                                  ? "#0284c7"
+                                  : "#f59e0b"
+                          }
+                          stroke={entry.isOurCollege ? "#fbbf24" : "none"}
+                          strokeWidth={entry.isOurCollege ? 2 : 0}
+                        />
+                      ))}
+                      <LabelList
+                        dataKey="diffFromOur"
+                        position="top"
+                        formatter={(val) =>
+                          val === 0
+                            ? `★ ${ourInstitutionCode}`
+                            : `${val > 0 ? "+" : "-"}₹${
+                                Math.abs(val) >= 100000
+                                  ? (Math.abs(val) / 100000).toFixed(1) + "L"
+                                  : (Math.abs(val) / 1000).toFixed(0) + "k"
+                              }`
+                        }
+                        style={{ fontSize: 10, fontWeight: 800, fill: "#1e293b" }}
+                      />
+                    </Bar>
+                  </BarChart>
+                )}
+              </ResponsiveContainer>
             </div>
           </div>
 
-          {/* Card 4: Projected Monthly Increment Outlay */}
-          <div className="bg-white border border-zinc-200/80 rounded-2xl p-5 shadow-xs hover:shadow-md transition-shadow">
-            <div className="flex items-center justify-between text-zinc-500 mb-3">
-              <span className="text-xs font-bold uppercase tracking-wider text-zinc-600">Monthly Increment Outlay</span>
-              <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                <BadgePercent size={18} />
-              </div>
+          {/* Matrix Tables Subheader Bar & Orientation Switcher */}
+          <div className="px-5 py-3 bg-zinc-100/80 border-b border-zinc-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <FileSpreadsheet size={14} className="text-indigo-600" />
+              <span className="text-xs font-black text-slate-800 uppercase tracking-wider">
+                Salary Structure Matrix Verification Table
+              </span>
             </div>
-            <div className="text-2xl font-black text-emerald-950 font-mono">
-              +₹{Number(metrics.totalIncrementPM).toLocaleString("en-IN")} <span className="text-xs text-zinc-400 font-sans font-bold">PM</span>
-            </div>
-            <div className="text-[11px] font-bold text-emerald-700 mt-1">
-              Annual: +₹{Number(metrics.totalIncrementPM * 12).toLocaleString("en-IN")} / yr
+
+            {/* View Switcher Tabs */}
+            <div className="inline-flex p-0.5 bg-zinc-200/90 rounded-xl text-[10px] font-bold">
+              <button
+                type="button"
+                onClick={() => setBenchmarkTableOrientation("exactImage")}
+                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                  benchmarkTableOrientation === "exactImage"
+                    ? "bg-white text-zinc-900 shadow-2xs font-black"
+                    : "text-zinc-600 hover:text-zinc-900"
+                }`}
+              >
+                Exact Image Layout ({benchmarkData.schools.length + 1} Cols)
+              </button>
+              <button
+                type="button"
+                onClick={() => setBenchmarkTableOrientation("detailed")}
+                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                  benchmarkTableOrientation === "detailed"
+                    ? "bg-white text-zinc-900 shadow-2xs font-black"
+                    : "text-zinc-600 hover:text-zinc-900"
+                }`}
+              >
+                Institutional Roster View
+              </button>
             </div>
           </div>
+
+          {/* Exact Image Table Orientation (Designations as Rows, Colleges as Columns) */}
+          {benchmarkTableOrientation === "exactImage" ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-zinc-100/90 text-zinc-700 font-black uppercase tracking-wider text-[10px] border-b border-zinc-200">
+                    <th
+                      className="py-3 px-3.5 border-r border-zinc-200 sticky left-0 z-10 min-w-[160px] font-black uppercase text-slate-800"
+                      style={{ backgroundColor: "#f4f4f5", color: "#0f172a" }}
+                    >
+                      SALARY STRUCTURE
+                    </th>
+                    {peerSchools.map((school) => {
+                      const displaySub = school.location
+                        ? `(${school.location.toLowerCase()})`
+                        : school.subName
+                        ? school.subName.startsWith("(") ? school.subName : `(${school.subName.toLowerCase()})`
+                        : "";
+                      return (
+                        <th key={school.id} className="py-3 px-3 border-r border-zinc-200 text-center min-w-[125px]">
+                          {school.name}
+                          {displaySub && (
+                            <span className="block text-[9px] font-medium text-zinc-500 lowercase">
+                              {displaySub}
+                            </span>
+                          )}
+                        </th>
+                      );
+                    })}
+                    <th
+                      className="py-3 px-4 text-center min-w-[140px] bg-[#1e1b4b] text-white font-black border-l-2 border-indigo-400"
+                      style={{ backgroundColor: "#1e1b4b", color: "#ffffff" }}
+                    >
+                      <span className="flex items-center justify-center gap-1 font-black text-white" style={{ color: "#ffffff" }}>
+                        <Crown size={13} className="text-amber-400 shrink-0 fill-amber-400" />
+                        {cleanOurCollegeName}
+                      </span>
+                      <span className="block text-[9px] font-bold uppercase tracking-wider text-indigo-200" style={{ color: "#c7d2fe" }}>
+                        {instTypeLabel}
+                      </span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-200 font-mono">
+                  {benchmarkData.designations.map((desg) => {
+                    const ourSalary = ourCollege?.salaries?.[desg.id]?.num || 0;
+                    const ourRaw = ourCollege?.salaries?.[desg.id]?.raw || "-";
+
+                    return (
+                      <tr key={desg.id} className="hover:bg-zinc-50/80 transition-colors">
+                        <td
+                          className="py-3.5 px-3.5 font-bold font-sans text-slate-900 border-r border-zinc-200 sticky left-0 z-10"
+                          style={{ backgroundColor: "#ffffff", color: "#0f172a" }}
+                        >
+                          {desg.label}
+                        </td>
+                        {peerSchools.map((school) => {
+                          const peerSalaryObj = school.salaries?.[desg.id];
+                          const peerRaw = peerSalaryObj?.raw || "-";
+                          const peerNum = peerSalaryObj?.num || 0;
+                          const diff = ourSalary - peerNum;
+
+                          return (
+                            <td key={school.id} className="py-3.5 px-3 text-center border-r border-zinc-100 text-slate-800">
+                              <div className="font-bold text-slate-900">{peerRaw}</div>
+                              {ourSalary > 0 && peerNum > 0 && (
+                                <div className="mt-0.5">
+                                  {diff > 0 ? (
+                                    <span className="block text-[9px] font-sans text-emerald-700 font-bold">
+                                      {ourInstitutionCode} +₹{formatDiffK(diff)}
+                                    </span>
+                                  ) : diff === 0 ? (
+                                    <span className="block text-[9px] font-sans text-blue-700 font-bold">
+                                      100% Parity
+                                    </span>
+                                  ) : (
+                                    <span className="block text-[9px] font-sans text-amber-700 font-bold">
+                                      +₹{formatDiffK(Math.abs(diff))}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                          );
+                        })}
+                        <td
+                          className="py-3.5 px-4 text-center font-black text-indigo-950 text-sm border-l-2 border-indigo-400"
+                          style={{ backgroundColor: "#eef2ff", color: "#1e1b4b" }}
+                        >
+                          {ourRaw}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            /* Institutional Roster View (Colleges as Rows, Designations as Columns) */
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="bg-zinc-100/90 text-zinc-600 font-bold uppercase tracking-wider text-[10px] border-b border-zinc-200">
+                    <th className="py-3 px-3.5 border-r border-zinc-200 min-w-[200px]">Institution &amp; Region</th>
+                    {benchmarkData.designations.map((desg) => (
+                      <th key={desg.id} className="py-3 px-3.5 border-r border-zinc-200 text-right min-w-[130px]">
+                        {desg.label}
+                      </th>
+                    ))}
+                    <th className="py-3 px-3.5 text-center min-w-[160px]">Benchmark Standing</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100">
+                  {/* Peer Schools */}
+                  {peerSchools.map((col) => {
+                    return (
+                      <tr key={col.id} className="hover:bg-zinc-50/80 text-zinc-700 transition-colors">
+                        <td className="py-3 px-3.5 border-r border-zinc-100">
+                          <div className="font-black text-slate-900">
+                            {col.name} {col.subName}
+                          </div>
+                          <div className="text-[10px] text-zinc-400 font-medium">
+                            {col.region || (instTypeLabel === "Our School" ? "Peer School" : "Peer Institution")} • {col.location || "Tamil Nadu"}
+                          </div>
+                        </td>
+                        {benchmarkData.designations.map((desg) => {
+                          const peerObj = col.salaries?.[desg.id];
+                          const peerRaw = peerObj?.raw || "-";
+                          const peerNum = peerObj?.num || 0;
+                          const ourSalary = ourCollege?.salaries?.[desg.id]?.num || 0;
+                          const diff = peerNum - ourSalary;
+
+                          return (
+                            <td key={desg.id} className="py-3 px-3.5 border-r border-zinc-100 text-right font-mono">
+                              <span className="text-slate-800">{peerRaw}</span>
+                              {ourSalary > 0 && peerNum > 0 && (
+                                <div className="text-[10px] font-semibold mt-0.5">
+                                  {diff > 0 ? (
+                                    <span className="text-amber-700 font-mono">
+                                      +₹{diff.toLocaleString("en-IN")}
+                                    </span>
+                                  ) : diff === 0 ? (
+                                    <span className="text-blue-700 font-bold">100% Parity</span>
+                                  ) : (
+                                    <span className="text-emerald-700 font-mono">
+                                      {ourInstitutionCode} +₹{Math.abs(diff).toLocaleString("en-IN")}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                          );
+                        })}
+                        <td className="py-3 px-3.5 text-center">
+                          {col.isGovt ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
+                              Govt 7th CPC Benchmark
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                              {col.region?.toLowerCase().includes("school") || instTypeLabel === "Our School" ? "Private Peer School" : "Private Peer College"}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+
+                  {/* Our College/School Row at Bottom */}
+                  {ourCollege && (
+                    <tr
+                      className="bg-indigo-50/90 font-bold border-y-2 border-indigo-400"
+                      style={{ backgroundColor: "#eef2ff" }}
+                    >
+                      <td className="py-3 px-3.5 border-r border-zinc-100">
+                        <div className="flex items-center gap-2">
+                          <Crown size={14} className="text-amber-500 shrink-0 fill-amber-400" />
+                          <div>
+                            <div className="font-black text-indigo-950 text-sm" style={{ color: "#1e1b4b" }}>
+                              {cleanOurCollegeName}
+                              <span className="ml-1.5 text-xs font-bold text-indigo-700 font-sans">
+                                ({instTypeLabel})
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-zinc-500 font-medium">
+                              {ourCollege.region?.replace(/our (?:college|school)/i, instTypeLabel) || `Cuddalore / ${instTypeLabel}`} • {ourCollege.location || "Cuddalore"}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                      {benchmarkData.designations.map((desg) => {
+                        const ourRaw = ourCollege.salaries?.[desg.id]?.raw || "-";
+                        return (
+                          <td
+                            key={desg.id}
+                            className="py-3 px-3.5 border-r border-zinc-100 text-right font-mono text-indigo-900 font-black text-sm"
+                            style={{ color: "#1e1b4b" }}
+                          >
+                            {ourRaw}
+                          </td>
+                        );
+                      })}
+                      <td className="py-3 px-3.5 text-center">
+                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-black bg-indigo-600 text-white shadow-2xs">
+                          <Star size={10} className="fill-amber-300 text-amber-300" />
+                          Current Institutional Standard
+                        </span>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         {/* Institutional Increment Criteria & Slab Reference Card (From User Spreadsheet) */}
@@ -1771,29 +3726,6 @@ export default function HRGrossAnalytics() {
 
             {/* Quick Actions: Download Template & Upload CSV */}
             <div className="flex items-center gap-3 flex-wrap">
-              {/* Approval Filter Switch */}
-              <div className="flex items-center bg-zinc-100 p-1 rounded-xl text-xs font-bold">
-                <button
-                  onClick={() => setApprovalFilter("Approved")}
-                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                    approvalFilter === "Approved"
-                      ? "bg-white text-[#101b38] shadow-xs"
-                      : "text-zinc-500 hover:text-zinc-800"
-                  }`}
-                >
-                  Approved by Principal
-                </button>
-                <button
-                  onClick={() => setApprovalFilter("All")}
-                  className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                    approvalFilter === "All"
-                      ? "bg-white text-[#101b38] shadow-xs"
-                      : "text-zinc-500 hover:text-zinc-800"
-                  }`}
-                >
-                  All Appraisals
-                </button>
-              </div>
 
               {/* 1. Download Template Button */}
               <button
@@ -1941,7 +3873,7 @@ export default function HRGrossAnalytics() {
         {/* Main Gross Analytics & Increment Table */}
         <div className="bg-white border border-zinc-200 rounded-3xl overflow-hidden shadow-sm">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[2200px] border-collapse text-left text-xs">
+            <table className="w-full min-w-[2300px] border-collapse text-left text-xs">
               <thead>
                 <tr className="bg-zinc-50/90 border-b border-zinc-200 text-zinc-600 font-bold uppercase tracking-wider text-[10px]">
                   {/* 1. ID */}
@@ -1996,7 +3928,19 @@ export default function HRGrossAnalytics() {
                     </div>
                   </th>
 
-                  {/* 6. Appraisal Review Form Mark (60%) */}
+                  {/* 6. Gross PA (Annual Baseline Salary) */}
+                  <th
+                    onClick={() => handleSort("grossPA")}
+                    className="p-3.5 cursor-pointer hover:bg-emerald-100/70 transition-colors text-center bg-emerald-50/60 border-r border-emerald-200/70"
+                    title="Current Baseline Gross Per Annum (PA = Gross PM × 12)"
+                  >
+                    <div className="flex items-center justify-center gap-1 text-emerald-950 font-black">
+                      <IndianRupee size={12} className="text-emerald-700" />
+                      Gross PA <ArrowUpDown size={11} />
+                    </div>
+                  </th>
+
+                  {/* 7. Appraisal Review Form Mark (60%) */}
                   <th
                     onClick={() => handleSort("appraisalMark")}
                     className="p-3.5 cursor-pointer hover:bg-blue-100/50 transition-colors text-center bg-blue-50/40"
@@ -2007,7 +3951,7 @@ export default function HRGrossAnalytics() {
                     </div>
                   </th>
 
-                  {/* 7. Attitude Form Mark (40%) */}
+                  {/* 8. Attitude Form Mark (40%) */}
                   <th
                     onClick={() => handleSort("attitudeMarkNormalized")}
                     className="p-3.5 cursor-pointer hover:bg-emerald-100/50 transition-colors text-center bg-emerald-50/40"
@@ -2018,7 +3962,7 @@ export default function HRGrossAnalytics() {
                     </div>
                   </th>
 
-                  {/* 8. Gross Mark (100) */}
+                  {/* 9. Gross Mark (100) */}
                   <th
                     onClick={() => handleSort("grossMark")}
                     className="p-3.5 cursor-pointer hover:bg-amber-100/50 transition-colors text-center bg-amber-50/30"
@@ -2029,7 +3973,7 @@ export default function HRGrossAnalytics() {
                     </div>
                   </th>
 
-                  {/* 9. Performance Criteria & Increment % */}
+                  {/* 10. Performance Criteria & Increment % */}
                   <th
                     onClick={() => handleSort("baseIncrementPct")}
                     className="p-3.5 cursor-pointer hover:bg-indigo-100/50 transition-colors text-center bg-indigo-50/30 border-r border-zinc-200"
@@ -2040,7 +3984,7 @@ export default function HRGrossAnalytics() {
                     </div>
                   </th>
 
-                  {/* 10. Promotion % */}
+                  {/* 11. Promotion % */}
                   <th
                     onClick={() => handleSort("promotionPct")}
                     className="p-3.5 cursor-pointer hover:bg-zinc-100 transition-colors text-center"
@@ -2051,7 +3995,7 @@ export default function HRGrossAnalytics() {
                     </div>
                   </th>
 
-                  {/* 11. Promotion Amount */}
+                  {/* 12. Promotion Amount */}
                   <th
                     onClick={() => handleSort("promotionAmount")}
                     className="p-3.5 cursor-pointer hover:bg-zinc-100 transition-colors text-center"
@@ -2062,18 +4006,18 @@ export default function HRGrossAnalytics() {
                     </div>
                   </th>
 
-                  {/* 12. % Increase */}
+                  {/* 13. % Increase */}
                   <th
                     onClick={() => handleSort("pctIncrease")}
                     className="p-3.5 cursor-pointer hover:bg-zinc-100 transition-colors text-center"
-                    title="Total % Increase = Tier Increment % + Promotion %"
+                    title="Total % Increase = ((Revised Gross PA - Gross PA) / Gross PA) × 100"
                   >
                     <div className="flex items-center justify-center gap-1">
                       % Increase <ArrowUpDown size={11} />
                     </div>
                   </th>
 
-                  {/* 13. Salary Adjustment (PM) */}
+                  {/* 14. Salary Adjustment (PM) */}
                   <th
                     onClick={() => handleSort("salaryAdjustmentPM")}
                     className="p-3.5 cursor-pointer hover:bg-zinc-100 transition-colors text-center"
@@ -2084,7 +4028,7 @@ export default function HRGrossAnalytics() {
                     </div>
                   </th>
 
-                  {/* 14. Salary Adjustment (PA) */}
+                  {/* 15. Salary Adjustment (PA) */}
                   <th
                     onClick={() => handleSort("salaryAdjustmentPA")}
                     className="p-3.5 cursor-pointer hover:bg-zinc-100 transition-colors text-center"
@@ -2095,7 +4039,7 @@ export default function HRGrossAnalytics() {
                     </div>
                   </th>
 
-                  {/* 15. Revised Gross (PM) */}
+                  {/* 16. Revised Gross (PM) */}
                   <th
                     onClick={() => handleSort("revisedGrossPM")}
                     className="p-3.5 cursor-pointer hover:bg-zinc-100 transition-colors text-center"
@@ -2106,7 +4050,7 @@ export default function HRGrossAnalytics() {
                     </div>
                   </th>
 
-                  {/* 16. Revised Gross (PA) - Right of Revised Gross (PM) */}
+                  {/* 17. Revised Gross (PA) */}
                   <th
                     onClick={() => handleSort("revisedGrossPA")}
                     className="p-3.5 cursor-pointer hover:bg-zinc-100 transition-colors text-center"
@@ -2117,7 +4061,7 @@ export default function HRGrossAnalytics() {
                     </div>
                   </th>
 
-                  {/* 17. Increment Amount (PM) */}
+                  {/* 18. Increment Amount (PM) */}
                   <th
                     onClick={() => handleSort("totalIncrementAmount")}
                     className="p-3.5 cursor-pointer hover:bg-zinc-100 transition-colors text-center"
@@ -2128,25 +4072,25 @@ export default function HRGrossAnalytics() {
                     </div>
                   </th>
 
-                  {/* 18. Increment Amount (PA) - Right of Increment Amount (PM) */}
+                  {/* 19. Increment Amount (PA) */}
                   <th
-                    onClick={() => handleSort("incrementAmountPA")}
+                    onClick={() => handleSort("totalIncrementAmountPA")}
                     className="p-3.5 cursor-pointer hover:bg-zinc-100 transition-colors text-center"
-                    title="Annual Increment Amount = Gross PA × Tier Increment %"
+                    title="Total Annual Increment = Revised Gross (PA) - Gross PA"
                   >
                     <div className="flex items-center justify-center gap-1">
                       Increment Amount (PA) <ArrowUpDown size={11} />
                     </div>
                   </th>
 
-                  {/* 19. Action */}
-                  <th className="p-3.5 text-center">Action</th>
+                  {/* 20. Action */}
+                  <th className="p-3.5 text-center whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
                 {loading ? (
                   <tr>
-                    <td colSpan={19} className="p-12 text-center text-zinc-400 font-semibold">
+                    <td colSpan={20} className="p-12 text-center text-zinc-400 font-semibold">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin" />
                         <span>Loading Gross Analytics Records...</span>
@@ -2155,7 +4099,7 @@ export default function HRGrossAnalytics() {
                   </tr>
                 ) : filteredRecords.length === 0 ? (
                   <tr>
-                    <td colSpan={19} className="p-12 text-center text-zinc-400 font-medium">
+                    <td colSpan={20} className="p-12 text-center text-zinc-400 font-medium">
                       <div className="max-w-md mx-auto space-y-2">
                         <div className="w-12 h-12 rounded-2xl bg-zinc-100 text-zinc-400 flex items-center justify-center mx-auto">
                           <Filter size={20} />
@@ -2194,10 +4138,10 @@ export default function HRGrossAnalytics() {
                           ) : rec.collectionType === "teacher"
                             ? "School Teacher"
                             : rec.collectionType === "faculty"
-                            ? "Teaching Faculty"
-                            : rec.collectionType === "hod"
-                            ? "HOD"
-                            : "Non-Teaching Staff"}
+                              ? "Teaching Faculty"
+                              : rec.collectionType === "hod"
+                                ? "HOD"
+                                : "Non-Teaching Staff"}
                         </div>
                       </td>
 
@@ -2238,6 +4182,17 @@ export default function HRGrossAnalytics() {
                               </span>
                             )}
                           </div>
+                        ) : (
+                          <span className="text-zinc-300 font-bold text-xs italic">-</span>
+                        )}
+                      </td>
+
+                      {/* 6. Gross PA (Annual Baseline Salary = Gross PM × 12) */}
+                      <td className="p-3.5 text-center border-r border-zinc-200 whitespace-nowrap">
+                        {rec.grossPA !== null && rec.grossPA !== undefined ? (
+                          <span className="font-mono font-bold text-slate-800 text-xs whitespace-nowrap inline-block">
+                            ₹{Number(rec.grossPA).toLocaleString("en-IN")}
+                          </span>
                         ) : (
                           <span className="text-zinc-300 font-bold text-xs italic">-</span>
                         )}
@@ -2302,21 +4257,19 @@ export default function HRGrossAnalytics() {
                       {/* 10. Promotion % */}
                       <td className="p-3.5 text-center">
                         <div className="inline-flex flex-col items-center gap-1">
-                          <span className={`text-[10px] font-black px-2 py-0.5 rounded-md border ${
-                            rec.promotionPct > 0
-                              ? "bg-purple-100 text-purple-900 border-purple-300"
-                              : "bg-zinc-100 text-zinc-500 border-zinc-200"
-                          }`}>
+                          <span className={`text-[10px] font-black px-2 py-0.5 rounded-md border ${rec.promotionPct > 0
+                            ? "bg-purple-100 text-purple-900 border-purple-300"
+                            : "bg-zinc-100 text-zinc-500 border-zinc-200"
+                            }`}>
                             {rec.promotionPct}%
                           </span>
                           <button
                             type="button"
                             onClick={() => handleTogglePromotion(rec.facultyId)}
-                            className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full transition-all cursor-pointer ${
-                              rec.isPromoted
-                                ? "bg-purple-600 text-white shadow-2xs hover:bg-purple-700"
-                                : "bg-white border border-zinc-300 text-zinc-600 hover:bg-purple-50 hover:text-purple-700"
-                            }`}
+                            className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full transition-all cursor-pointer ${rec.isPromoted
+                              ? "bg-purple-600 text-white shadow-2xs hover:bg-purple-700"
+                              : "bg-white border border-zinc-300 text-zinc-600 hover:bg-purple-50 hover:text-purple-700"
+                              }`}
                             title="Toggle candidate promotion recommendation"
                           >
                             {rec.isPromoted ? "Active" : "+ Promo"}
@@ -2402,18 +4355,18 @@ export default function HRGrossAnalytics() {
                         )}
                       </td>
 
-                      {/* 18. Increment Amount (PA) - Right of Increment Amount (PM) */}
+                      {/* 19. Increment Amount (PA) - Right of Increment Amount (PM) */}
                       <td className="p-3.5 text-center whitespace-nowrap">
-                        {rec.incrementAmountPA !== null ? (
+                        {rec.totalIncrementAmountPA !== null ? (
                           <span className="font-mono font-bold text-slate-800 text-xs whitespace-nowrap inline-block">
-                            ₹{Number(rec.incrementAmountPA).toLocaleString("en-IN")}
+                            +₹{Number(rec.totalIncrementAmountPA).toLocaleString("en-IN")}
                           </span>
                         ) : (
                           <span className="text-zinc-300 font-bold text-xs">-</span>
                         )}
                       </td>
 
-                      {/* 19. Action Buttons: Analytics + Breakdown */}
+                      {/* 20. Action Buttons: Analytics + Breakdown */}
                       <td className="p-3.5 text-center">
                         <div className="flex items-center justify-center gap-1.5 whitespace-nowrap">
                           <button
@@ -2440,6 +4393,89 @@ export default function HRGrossAnalytics() {
                   ))
                 )}
               </tbody>
+              <tfoot className="bg-slate-100/95 border-t-2 border-slate-300 text-xs font-black text-slate-900 sticky bottom-0 z-10 shadow-md">
+                <tr className="divide-x divide-zinc-200">
+                  {/* 1-4. Summary Header */}
+                  <td colSpan={4} className="p-3.5 text-left bg-slate-200/90 font-black text-slate-900">
+                    <div className="flex items-center gap-2">
+                      <Calculator size={15} className="text-indigo-700" />
+                      <span>Total / Summary ({filteredRecords.length} Staff)</span>
+                    </div>
+                  </td>
+
+                  {/* 5. Gross PM Total */}
+                  <td className="p-3.5 text-center whitespace-nowrap bg-emerald-100/70 font-mono font-black text-emerald-950">
+                    ₹{Number(tableTotals.grossPMTotal).toLocaleString("en-IN")}
+                  </td>
+
+                  {/* 6. Gross PA Total (Gross PM × 12) */}
+                  <td className="p-3.5 text-center whitespace-nowrap bg-emerald-100/70 border-r border-emerald-200/70 font-mono font-black text-emerald-950">
+                    ₹{Number(tableTotals.grossPATotal).toLocaleString("en-IN")}
+                  </td>
+
+                  {/* 7. Appraisal (60%) */}
+                  <td className="p-3.5 text-center text-zinc-400 font-bold bg-blue-50/20">—</td>
+
+                  {/* 8. Attitude (40%) */}
+                  <td className="p-3.5 text-center text-zinc-400 font-bold bg-emerald-50/20">—</td>
+
+                  {/* 9. Gross Mark (100) */}
+                  <td className="p-3.5 text-center text-zinc-400 font-bold bg-amber-50/20">—</td>
+
+                  {/* 10. Criteria Slab */}
+                  <td className="p-3.5 text-center text-zinc-400 font-bold bg-indigo-50/20 border-r border-zinc-200">—</td>
+
+                  {/* 11. Promotion % */}
+                  <td className="p-3.5 text-center text-zinc-400 font-bold">—</td>
+
+                  {/* 12. Promotion Amount Total */}
+                  <td className="p-3.5 text-center whitespace-nowrap font-mono font-black text-purple-900 bg-purple-50/60">
+                    {tableTotals.promotionAmountTotal > 0
+                      ? `₹${Number(tableTotals.promotionAmountTotal).toLocaleString("en-IN")}`
+                      : "₹0"}
+                  </td>
+
+                  {/* 13. % Increase Total = ((Revised PA Total - Gross PA Total) / Gross PA Total) * 100 */}
+                  <td className="p-3.5 text-center whitespace-nowrap bg-indigo-50/60">
+                    <span className="inline-block px-2.5 py-1 rounded-full text-xs font-black bg-indigo-600 text-white shadow-2xs">
+                      {tableTotals.totalPctIncrease}%
+                    </span>
+                  </td>
+
+                  {/* 14. Salary Adjustment (PM) Total */}
+                  <td className="p-3.5 text-center whitespace-nowrap font-mono font-black text-amber-950 bg-amber-50/60">
+                    ₹{Number(tableTotals.salaryAdjustmentPMTotal).toLocaleString("en-IN")}
+                  </td>
+
+                  {/* 15. Salary Adjustment (PA) Total */}
+                  <td className="p-3.5 text-center whitespace-nowrap font-mono font-black text-amber-950 bg-amber-50/60">
+                    ₹{Number(tableTotals.salaryAdjustmentPATotal).toLocaleString("en-IN")}
+                  </td>
+
+                  {/* 16. Revised Gross (PM) Total */}
+                  <td className="p-3.5 text-center whitespace-nowrap font-mono font-black text-emerald-950 bg-emerald-100/90">
+                    ₹{Number(tableTotals.revisedGrossPMTotal).toLocaleString("en-IN")}
+                  </td>
+
+                  {/* 17. Revised Gross (PA) Total */}
+                  <td className="p-3.5 text-center whitespace-nowrap font-mono font-black text-slate-900 bg-emerald-100/90">
+                    ₹{Number(tableTotals.revisedGrossPATotal).toLocaleString("en-IN")}
+                  </td>
+
+                  {/* 18. Increment Amount (PM) Total */}
+                  <td className="p-3.5 text-center whitespace-nowrap font-mono font-black text-emerald-900 bg-emerald-200/80">
+                    +₹{Number(tableTotals.totalIncrementPMTotal).toLocaleString("en-IN")}
+                  </td>
+
+                  {/* 19. Increment Amount (PA) Total */}
+                  <td className="p-3.5 text-center whitespace-nowrap font-mono font-black text-slate-900 bg-emerald-200/80">
+                    +₹{Number(tableTotals.totalIncrementPATotal).toLocaleString("en-IN")}
+                  </td>
+
+                  {/* 20. Action */}
+                  <td className="p-3.5 text-center text-zinc-400 font-bold">—</td>
+                </tr>
+              </tfoot>
             </table>
           </div>
         </div>
@@ -2974,11 +5010,10 @@ export default function HRGrossAnalytics() {
                     <button
                       type="button"
                       onClick={() => handleTogglePromotion(selectedCandidate.facultyId)}
-                      className={`text-xs font-bold px-3 py-1 rounded-xl transition-all cursor-pointer ${
-                        selectedCandidate.isPromoted
-                          ? "bg-purple-600 text-white shadow-xs"
-                          : "bg-white border border-purple-300 text-purple-700 hover:bg-purple-50"
-                      }`}
+                      className={`text-xs font-bold px-3 py-1 rounded-xl transition-all cursor-pointer ${selectedCandidate.isPromoted
+                        ? "bg-purple-600 text-white shadow-xs"
+                        : "bg-white border border-purple-300 text-purple-700 hover:bg-purple-50"
+                        }`}
                     >
                       {selectedCandidate.isPromoted
                         ? `Promotion Active (+${selectedCandidate.promotionBonusPct || criteriaConfig.promotionPct || 5}%)`
@@ -3183,21 +5218,19 @@ export default function HRGrossAnalytics() {
                   <div className="flex items-center bg-white/10 p-1 rounded-xl border border-white/15">
                     <button
                       onClick={() => setAnalyticsSalaryViewMode("PM")}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                        analyticsSalaryViewMode === "PM"
-                          ? "bg-white text-slate-900 shadow-sm"
-                          : "text-zinc-200 hover:text-white"
-                      }`}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${analyticsSalaryViewMode === "PM"
+                        ? "bg-white text-slate-900 shadow-sm"
+                        : "text-zinc-200 hover:text-white"
+                        }`}
                     >
                       Monthly (PM)
                     </button>
                     <button
                       onClick={() => setAnalyticsSalaryViewMode("PA")}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                        analyticsSalaryViewMode === "PA"
-                          ? "bg-white text-slate-900 shadow-sm"
-                          : "text-zinc-200 hover:text-white"
-                      }`}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${analyticsSalaryViewMode === "PA"
+                        ? "bg-white text-slate-900 shadow-sm"
+                        : "text-zinc-200 hover:text-white"
+                        }`}
                     >
                       Annual (PA)
                     </button>
@@ -3491,8 +5524,8 @@ export default function HRGrossAnalytics() {
                                         entry.isBase
                                           ? "#e2e8f0"
                                           : index === selectedCandidateAnalyticsData.chartData.length - 1
-                                          ? "url(#hrPortalIncrementBarGradActive)"
-                                          : "url(#hrPortalIncrementBarGrad)"
+                                            ? "url(#hrPortalIncrementBarGradActive)"
+                                            : "url(#hrPortalIncrementBarGrad)"
                                       }
                                     />
                                   ))}
@@ -3514,11 +5547,10 @@ export default function HRGrossAnalytics() {
                         {selectedCandidateAnalyticsData.chartData.map((item, idx) => (
                           <div
                             key={item.rawYear || item.year}
-                            className={`p-3.5 rounded-2xl border transition-all ${
-                              idx === selectedCandidateAnalyticsData.chartData.length - 1
-                                ? "bg-emerald-50/50 border-emerald-200"
-                                : "bg-zinc-50/70 border-zinc-200/80"
-                            }`}
+                            className={`p-3.5 rounded-2xl border transition-all ${idx === selectedCandidateAnalyticsData.chartData.length - 1
+                              ? "bg-emerald-50/50 border-emerald-200"
+                              : "bg-zinc-50/70 border-zinc-200/80"
+                              }`}
                           >
                             <div className="flex items-center justify-between text-zinc-500 text-[10px] font-bold uppercase tracking-wider mb-1">
                               <span>{item.year}</span>
@@ -3582,6 +5614,774 @@ export default function HRGrossAnalytics() {
                 </button>
               </div>
 
+            </div>
+          </div>
+        )}
+
+        {/* =========================================================================
+            EXECUTIVE INCREMENT & GROSS SALARY VISUALIZATION MODAL (LIGHT MODE)
+            Opened by clicking "Increment %" card (Pleasant, Executive, High-Contrast)
+           ========================================================================= */}
+        {incrementAnalyticsModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-3 sm:p-5 overflow-y-auto animate-fadeIn">
+            <div className="bg-white border border-zinc-200/90 rounded-3xl shadow-2xl max-w-7xl xl:max-w-[1420px] w-full max-h-[94vh] flex flex-col text-slate-800 overflow-hidden my-auto">
+
+              {/* Modal Header */}
+              <div className="bg-gradient-to-r from-slate-50 via-indigo-50/40 to-emerald-50/30 p-5 sm:p-6 border-b border-zinc-200 flex items-center justify-between gap-4 flex-wrap shrink-0">
+                <div className="space-y-1">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-emerald-50 border border-emerald-300 text-emerald-800 text-[10px] font-black uppercase tracking-wider">
+                    <Sparkles size={12} className="text-emerald-600 animate-pulse" />
+                    Institutional Performance & Outflow Intelligence
+                  </div>
+                  <h2 className="text-xl sm:text-2xl font-black text-[#101b38] tracking-tight flex items-center gap-2">
+                    Executive Increment & Outflow Visualizer
+                  </h2>
+                  <p className="text-xs text-zinc-500">
+                    Consolidated visual modeling across <strong className="text-slate-800">{filteredRecords.length} staff</strong> • Academic Year: <strong className="text-emerald-700 font-bold">{selectedYear !== "All" ? selectedYear : "All Years"}</strong>
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2.5">
+                  {/* View Mode Toggle: PA vs PM */}
+                  <div className="flex items-center bg-zinc-100 border border-zinc-200 p-1 rounded-xl">
+                    <button
+                      type="button"
+                      onClick={() => setIncrementModalViewMode("PA")}
+                      className={`px-3.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${incrementModalViewMode === "PA"
+                        ? "bg-white text-emerald-800 font-black shadow-xs border border-zinc-200/80"
+                        : "text-zinc-500 hover:text-zinc-800"
+                        }`}
+                    >
+                      Annual (PA)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIncrementModalViewMode("PM")}
+                      className={`px-3.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${incrementModalViewMode === "PM"
+                        ? "bg-white text-emerald-800 font-black shadow-xs border border-zinc-200/80"
+                        : "text-zinc-500 hover:text-zinc-800"
+                        }`}
+                    >
+                      Monthly (PM)
+                    </button>
+                  </div>
+
+                  {/* Close Button */}
+                  <button
+                    type="button"
+                    onClick={() => setIncrementAnalyticsModalOpen(false)}
+                    className="w-9 h-9 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-600 hover:text-zinc-900 flex items-center justify-center transition-colors cursor-pointer border border-zinc-200"
+                    title="Close Visualizer"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Modal Body */}
+              <div className="p-5 sm:p-6 overflow-y-auto space-y-6 text-xs text-slate-700">
+
+                {/* Top 4 Quick KPI Summary Cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {/* KPI 1: Current Outflow */}
+                  <div className="bg-slate-50/80 border border-slate-200 rounded-2xl p-4.5 flex flex-col justify-between shadow-xs">
+                    <div>
+                      <div className="flex items-center justify-between text-slate-500 mb-2">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600">Current Gross Outflow</span>
+                        <span className="text-[10px] font-black text-slate-700 bg-slate-200/90 px-2 py-0.5 rounded-md font-mono">
+                          {incrementModalViewMode}
+                        </span>
+                      </div>
+                      <div className="text-xl sm:text-2xl xl:text-[25px] font-black text-slate-900 font-mono tracking-tight truncate" title={`₹${Number(incrementModalViewMode === "PA" ? tableTotals.grossPATotal : tableTotals.grossPMTotal).toLocaleString("en-IN")}`}>
+                        ₹{Number(incrementModalViewMode === "PA" ? tableTotals.grossPATotal : tableTotals.grossPMTotal).toLocaleString("en-IN")}
+                      </div>
+                    </div>
+                    <div className="text-[11px] text-slate-500 mt-2 font-medium">
+                      Baseline institutional expenditure
+                    </div>
+                  </div>
+
+                  {/* KPI 2: Revised Outflow */}
+                  <div className="bg-indigo-50/60 border border-indigo-200 rounded-2xl p-4.5 flex flex-col justify-between shadow-xs">
+                    <div>
+                      <div className="flex items-center justify-between text-indigo-700 mb-2">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-700">Revised Gross Outflow</span>
+                        <span className="text-[10px] font-black text-indigo-800 bg-indigo-100 px-2 py-0.5 rounded-md font-mono">
+                          {incrementModalViewMode}
+                        </span>
+                      </div>
+                      <div className="text-xl sm:text-2xl xl:text-[25px] font-black text-indigo-950 font-mono tracking-tight truncate" title={`₹${Number(incrementModalViewMode === "PA" ? tableTotals.revisedGrossPATotal : tableTotals.revisedGrossPMTotal).toLocaleString("en-IN")}`}>
+                        ₹{Number(incrementModalViewMode === "PA" ? tableTotals.revisedGrossPATotal : tableTotals.revisedGrossPMTotal).toLocaleString("en-IN")}
+                      </div>
+                    </div>
+                    <div className="text-[11px] text-indigo-600/90 mt-2 font-medium">
+                      Projected budget after all increments
+                    </div>
+                  </div>
+
+                  {/* KPI 3: Net Increment Addition */}
+                  <div className="bg-emerald-50/60 border border-emerald-200 rounded-2xl p-4.5 flex flex-col justify-between shadow-xs">
+                    <div>
+                      <div className="flex items-center justify-between text-emerald-800 mb-2">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">Net Increment Outlay</span>
+                        <span className="text-[10px] font-black text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-md font-mono">
+                          {incrementModalViewMode}
+                        </span>
+                      </div>
+                      <div className="text-xl sm:text-2xl xl:text-[25px] font-black text-emerald-950 font-mono tracking-tight truncate" title={`+₹${Number(incrementModalViewMode === "PA" ? tableTotals.totalIncrementPATotal : tableTotals.totalIncrementPMTotal).toLocaleString("en-IN")}`}>
+                        +₹{Number(incrementModalViewMode === "PA" ? tableTotals.totalIncrementPATotal : tableTotals.totalIncrementPMTotal).toLocaleString("en-IN")}
+                      </div>
+                    </div>
+                    <div className="text-[11px] text-emerald-700 mt-2 font-medium">
+                      Capital dedicated to staff enhancement
+                    </div>
+                  </div>
+
+                  {/* KPI 4: Institutional Increment % */}
+                  <div className="bg-gradient-to-br from-emerald-50 via-teal-50 to-white border-2 border-emerald-400 rounded-2xl p-4.5 flex flex-col justify-between shadow-xs">
+                    <div>
+                      <div className="flex items-center justify-between text-emerald-800 mb-2">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-emerald-800 flex items-center gap-1">
+                          <Sparkles size={11} className="text-emerald-600" /> Overall Increment %
+                        </span>
+                        <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-md uppercase">
+                          Overall
+                        </span>
+                      </div>
+                      <div className="text-2xl sm:text-3xl xl:text-4xl font-black text-emerald-950 font-mono tracking-tight">
+                        +{tableTotals.totalPctIncrease}%
+                      </div>
+                    </div>
+                    <div className="text-[10px] font-mono text-emerald-800 mt-2 font-semibold">
+                      Formula: ((Revised - Gross) / Gross) × 100
+                    </div>
+                  </div>
+                </div>
+
+                {/* Tab Navigation */}
+                <div className="flex items-center gap-2 border-b border-zinc-200 pb-2 overflow-x-auto">
+                  <button
+                    type="button"
+                    onClick={() => setIncrementModalTab("tiers")}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${incrementModalTab === "tiers"
+                      ? "bg-[#101b38] text-white shadow-xs"
+                      : "bg-zinc-100 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200"
+                      }`}
+                  >
+                    <Award size={13} /> Performance Slabs
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIncrementModalTab("composition")}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${incrementModalTab === "composition"
+                      ? "bg-[#101b38] text-white shadow-xs"
+                      : "bg-zinc-100 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200"
+                      }`}
+                  >
+                    <Layers size={13} /> Outlay Composition
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIncrementModalTab("brackets")}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${incrementModalTab === "brackets"
+                      ? "bg-[#101b38] text-white shadow-xs"
+                      : "bg-zinc-100 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200"
+                      }`}
+                  >
+                    <BarChart3 size={13} /> Growth Distribution
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIncrementModalTab("top")}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${incrementModalTab === "top"
+                      ? "bg-[#101b38] text-white shadow-xs"
+                      : "bg-zinc-100 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200"
+                      }`}
+                  >
+                    <Crown size={13} /> Top Impact & Insights
+                  </button>
+                </div>
+
+                {/* TAB 1: Performance Slabs */}
+                {incrementModalTab === "tiers" && (
+                  <div className="space-y-5 animate-fadeIn">
+                    <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+                      {overallIncrementAnalytics.tierData.map((tier) => (
+                        <div
+                          key={tier.tierCode}
+                          className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-col justify-between shadow-xs hover:border-slate-300 transition-colors"
+                        >
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <span
+                                className="px-2 py-0.5 rounded-md font-mono text-xs font-black"
+                                style={{ backgroundColor: `${tier.color}15`, color: tier.color }}
+                              >
+                                {tier.tierCode}
+                              </span>
+                              <span className="text-[11px] font-mono font-bold text-slate-600">
+                                {tier.incrementPct}% Slab
+                              </span>
+                            </div>
+                            <div className="font-black text-slate-900 text-xs line-clamp-1">{tier.tierLabel}</div>
+                            <div className="text-[10px] text-zinc-500 mt-0.5">
+                              Min Score: {tier.minScore}%
+                            </div>
+                          </div>
+
+                          <div className="mt-3 pt-2.5 border-t border-slate-100 space-y-1">
+                            <div className="flex items-baseline justify-between">
+                              <span className="text-[10px] text-zinc-500">Staff Count:</span>
+                              <span className="font-mono font-black text-slate-900 text-sm">{tier.headcount}</span>
+                            </div>
+                            <div className="flex items-baseline justify-between">
+                              <span className="text-[10px] text-zinc-500">Total Increment:</span>
+                              <span className="font-mono font-bold text-emerald-700 text-xs">
+                                +₹{Number(incrementModalViewMode === "PA" ? tier.incrementPA : tier.incrementPM).toLocaleString("en-IN")}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="bg-slate-50/70 border border-slate-200 rounded-3xl p-5 shadow-xs">
+                      <h4 className="text-sm font-black text-slate-900 mb-2 flex items-center gap-2">
+                        <Award size={16} className="text-amber-600" />
+                        Increment Fund Allocation by Performance Slab ({incrementModalViewMode})
+                      </h4>
+                      <p className="text-[11px] text-zinc-500 mb-4">
+                        Visual distribution of increment expenditure allocated according to institutional appraisal slabs
+                      </p>
+                      <div className="h-64 w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={overallIncrementAnalytics.tierData} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                            <XAxis dataKey="tierCode" stroke="#475569" fontSize={11} fontWeight={600} tickLine={false} />
+                            <YAxis
+                              stroke="#475569"
+                              fontSize={10}
+                              tickFormatter={(val) => `${val}${incrementModalViewMode === "PA" ? "L" : "k"}`}
+                            />
+                            <Tooltip
+                              contentStyle={{
+                                backgroundColor: "#ffffff",
+                                borderColor: "#cbd5e1",
+                                borderRadius: "1rem",
+                                color: "#0f172a",
+                                fontSize: "11px",
+                                boxShadow: "0 10px 15px -3px rgb(0 0 0 / 0.1)"
+                              }}
+                              formatter={(val, name, item) => [
+                                `+₹${Number(incrementModalViewMode === "PA" ? item.payload.incrementPA : item.payload.incrementPM).toLocaleString("en-IN")} (${item.payload.headcount} staff)`,
+                                "Increment Outlay"
+                              ]}
+                            />
+                            <Bar
+                              dataKey={incrementModalViewMode === "PA" ? "incrementPA_Lakhs" : "incrementPM_K"}
+                              name="Increment Outlay"
+                              radius={[8, 8, 0, 0]}
+                            >
+                              {overallIncrementAnalytics.tierData.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={entry.color} />
+                              ))}
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 3: Outlay Composition Pillars */}
+                {incrementModalTab === "composition" && (
+                  <div className="space-y-5 animate-fadeIn">
+                    <div className="bg-slate-50/70 border border-slate-200 rounded-3xl p-5 shadow-xs">
+                      <h4 className="text-sm font-black text-slate-900 mb-1">
+                        Increment Outlay Composition (3 Core Pillars)
+                      </h4>
+                      <p className="text-[11px] text-zinc-500 mb-4">
+                        Breakdown of overall budget increase across base score slabs, merit promotion recommendations, and special salary adjustments
+                      </p>
+
+                      {/* Stacked Proportional Progress Bar */}
+                      <div className="w-full h-5 rounded-full overflow-hidden flex bg-slate-200 border border-slate-300/80 mb-5">
+                        {overallIncrementAnalytics.componentData.map((comp) => (
+                          <div
+                            key={comp.name}
+                            style={{ width: `${comp.pctShare}%`, backgroundColor: comp.color }}
+                            className="h-full transition-all duration-500 hover:opacity-90 relative group"
+                            title={`${comp.name}: ${comp.pctShare}%`}
+                          />
+                        ))}
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {overallIncrementAnalytics.componentData.map((comp) => (
+                          <div
+                            key={comp.name}
+                            className="bg-white border border-slate-200 rounded-2xl p-4.5 flex flex-col justify-between shadow-xs"
+                          >
+                            <div>
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="flex items-center gap-2 font-black text-slate-900 text-xs">
+                                  <span className="w-3 h-3 rounded-md" style={{ backgroundColor: comp.color }} />
+                                  {comp.name}
+                                </span>
+                                <span className="font-mono font-black text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+                                  {comp.pctShare}%
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-zinc-500 leading-relaxed">{comp.desc}</p>
+                            </div>
+
+                            <div className="mt-4 pt-3 border-t border-slate-100 space-y-1">
+                              <div className="flex items-baseline justify-between">
+                                <span className="text-[10px] text-zinc-500">Total Outlay:</span>
+                                <span className="font-mono font-black text-emerald-700 text-sm">
+                                  +₹{Number(incrementModalViewMode === "PA" ? comp.amountPA : comp.amountPM).toLocaleString("en-IN")}
+                                </span>
+                              </div>
+                              <div className="flex items-baseline justify-between">
+                                <span className="text-[10px] text-zinc-500">Recipients:</span>
+                                <span className="font-mono font-bold text-slate-700 text-xs">
+                                  {comp.count} staff
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 4: Growth Rate Distribution */}
+                {incrementModalTab === "brackets" && (
+                  <div className="space-y-5 animate-fadeIn">
+                    <div className="bg-slate-50/70 border border-slate-200 rounded-3xl p-5 shadow-xs">
+                      <h4 className="text-sm font-black text-slate-900 mb-1 flex items-center gap-2">
+                        <BarChart3 size={16} className="text-blue-600" />
+                        Faculty Distribution across Growth Brackets (% Increase)
+                      </h4>
+                      <p className="text-[11px] text-zinc-500 mb-4">
+                        Histogram of staff counts grouped by their final salary increase percentage bracket
+                      </p>
+                      <div className="h-64 w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={overallIncrementAnalytics.brackets} margin={{ top: 10, right: 20, left: 0, bottom: 10 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                            <XAxis dataKey="range" stroke="#475569" fontSize={11} fontWeight={600} tickLine={false} />
+                            <YAxis stroke="#475569" fontSize={10} allowDecimals={false} />
+                            <Tooltip
+                              contentStyle={{
+                                backgroundColor: "#ffffff",
+                                borderColor: "#cbd5e1",
+                                borderRadius: "1rem",
+                                color: "#0f172a",
+                                fontSize: "11px",
+                                boxShadow: "0 10px 15px -3px rgb(0 0 0 / 0.1)"
+                              }}
+                              formatter={(val, name, item) => [
+                                `${val} staff (+₹${Number(incrementModalViewMode === "PA" ? item.payload.incrementPA : item.payload.incrementPA / 12).toLocaleString("en-IN")})`,
+                                "Faculty Count"
+                              ]}
+                            />
+                            <Bar dataKey="count" name="Staff Count" radius={[8, 8, 0, 0]}>
+                              {overallIncrementAnalytics.brackets.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={entry.color} />
+                              ))}
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+                      {overallIncrementAnalytics.brackets.map((b) => (
+                        <div key={b.range} className="bg-white border border-slate-200 rounded-2xl p-3 text-center shadow-xs">
+                          <span className="font-mono text-xs font-black block" style={{ color: b.color }}>
+                            {b.range}
+                          </span>
+                          <span className="text-xl font-black text-slate-900 font-mono mt-1 block">
+                            {b.count}
+                          </span>
+                          <span className="text-[10px] text-zinc-500 block mt-0.5">Faculty</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* TAB 5: Top Impact & Insights */}
+                {incrementModalTab === "top" && (
+                  <div className="space-y-5 animate-fadeIn">
+                    <div className="bg-slate-50/70 border border-slate-200 rounded-3xl p-5 shadow-xs">
+                      <h4 className="text-sm font-black text-slate-900 mb-3 flex items-center gap-2">
+                        <Crown size={16} className="text-amber-500" />
+                        Top Increment Recipients (Highest Annual Capital Additions)
+                      </h4>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {overallIncrementAnalytics.topIncremented.map((cand, idx) => (
+                          <div
+                            key={cand.facultyId}
+                            className="bg-white border border-slate-200 hover:border-slate-300 rounded-2xl p-4 flex flex-col justify-between shadow-xs transition-colors"
+                          >
+                            <div>
+                              <div className="flex items-center justify-between mb-1.5">
+                                <span className="w-6 h-6 rounded-full bg-amber-100 text-amber-800 font-mono font-black text-xs flex items-center justify-center">
+                                  #{idx + 1}
+                                </span>
+                                <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase ${cand.tierBadgeColor}`}>
+                                  {cand.tierCode}
+                                </span>
+                              </div>
+                              <h5 className="font-black text-slate-900 text-xs">{cand.facultyName}</h5>
+                              <p className="text-[10px] text-zinc-500 mt-0.5">
+                                {cand.designation} • <strong className="text-slate-700">{cand.department}</strong>
+                              </p>
+                            </div>
+
+                            <div className="mt-3 pt-2.5 border-t border-slate-100 space-y-1">
+                              <div className="flex items-baseline justify-between">
+                                <span className="text-[10px] text-zinc-500">Annual Increment:</span>
+                                <span className="font-mono font-black text-emerald-700 text-xs">
+                                  +₹{Number(cand.totalIncrementAmountPA).toLocaleString("en-IN")}
+                                </span>
+                              </div>
+                              <div className="flex items-baseline justify-between">
+                                <span className="text-[10px] text-zinc-500">% Increase:</span>
+                                <span className="font-mono font-bold text-indigo-900 text-xs">
+                                  +{cand.pctIncrease}%
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Executive Insights Callout */}
+                    <div className="bg-gradient-to-r from-indigo-50/80 via-slate-50 to-emerald-50/80 border border-indigo-200 rounded-3xl p-5 shadow-xs">
+                      <h4 className="text-sm font-black text-indigo-950 mb-2 flex items-center gap-2">
+                        <Sparkles size={16} className="text-indigo-600" />
+                        Executive Summary & Key Takeaways
+                      </h4>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs mt-3">
+                        <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
+                          <span className="text-[10px] font-bold text-zinc-500 uppercase">Average Annual Gain per Staff</span>
+                          <p className="text-lg font-black text-slate-900 font-mono mt-1">
+                            +₹{Math.round(tableTotals.totalIncrementPATotal / (metrics.totalEvaluated || 1)).toLocaleString("en-IN")}
+                          </p>
+                          <span className="text-[10px] text-emerald-700 font-semibold">per faculty member</span>
+                        </div>
+                        <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
+                          <span className="text-[10px] font-bold text-zinc-500 uppercase">Merit Promotions Sanctioned</span>
+                          <p className="text-lg font-black text-purple-900 font-mono mt-1">
+                            {overallIncrementAnalytics.promotedCount} Faculty
+                          </p>
+                          <span className="text-[10px] text-purple-700 font-semibold">+{criteriaConfig.promotionPct || 5}% bump applied</span>
+                        </div>
+                        <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs">
+                          <span className="text-[10px] font-bold text-zinc-500 uppercase">Special Adjustments Granted</span>
+                          <p className="text-lg font-black text-emerald-900 font-mono mt-1">
+                            {overallIncrementAnalytics.adjustedCount} Staff
+                          </p>
+                          <span className="text-[10px] text-zinc-500">discretionary compensation bumps</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+              </div>
+
+              {/* Modal Footer */}
+              <div className="bg-slate-50 border-t border-slate-200 px-6 py-4 flex items-center justify-between flex-wrap gap-3 shrink-0">
+                <div className="text-[11px] font-mono text-slate-600 flex items-center gap-2">
+                  <span className="text-emerald-700 font-bold">Calculation Formula:</span>
+                  <span>((Revised PA Total - Gross PA Total) / Gross PA Total) × 100 = <strong className="text-slate-900">+{tableTotals.totalPctIncrease}%</strong></span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIncrementAnalyticsModalOpen(false)}
+                  className="px-5 py-2.5 rounded-xl bg-[#101b38] hover:bg-[#162752] text-white text-xs font-bold transition-all cursor-pointer shadow-xs"
+                >
+                  Close Visualizer
+                </button>
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {/* Modal: Edit Institutional Revenue & HR Cost */}
+        {revenueModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+            <div className="bg-white rounded-3xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
+              {/* Modal Header */}
+              <div className="bg-[#101b38] text-white p-5 flex items-center justify-between border-b border-white/10 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-white/10 flex items-center justify-center text-amber-300">
+                    <Building2 size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black tracking-tight">Institutional Revenue &amp; HR Budget</h3>
+                    <p className="text-xs text-slate-300 font-medium">Configure Revenue, HR Cost, &amp; Faculty counts per Institution</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRevenueModalOpen(false)}
+                  className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center transition-colors cursor-pointer"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div className="p-6 overflow-y-auto space-y-5 text-xs">
+                {/* Institution Selector / Locked Institution Banner */}
+                {isSuperAdmin ? (
+                  <div>
+                    <label className="block text-[11px] font-black uppercase tracking-wider text-slate-500 mb-2">
+                      Select Target Institution
+                    </label>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {INSTITUTION_OPTIONS.map((inst) => {
+                        const isSelected = revenueTargetInst === inst.code;
+                        return (
+                          <button
+                            key={inst.code}
+                            type="button"
+                            onClick={() => handleSwitchRevenueInst(inst.code)}
+                            className={`px-3 py-2.5 rounded-xl font-bold text-xs transition-all border cursor-pointer text-left flex flex-col justify-between ${isSelected
+                              ? "bg-indigo-600 text-white border-indigo-600 shadow-sm"
+                              : "bg-slate-50 hover:bg-slate-100 text-slate-700 border-slate-200"
+                              }`}
+                          >
+                            <span className="font-black text-sm uppercase">{inst.code}</span>
+                            <span className={`text-[10px] truncate ${isSelected ? "text-indigo-100" : "text-slate-500"}`}>
+                              {inst.name.replace(/^CK[A-Z]+\s*\(/, "").replace(/\)$/, "")}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between p-3.5 bg-indigo-50/80 border border-indigo-200/80 rounded-2xl">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-black text-xs uppercase shadow-xs">
+                        {revenueTargetInst || "INST"}
+                      </div>
+                      <div>
+                        <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider block">Assigned Institution</span>
+                        <p className="text-xs font-black text-indigo-950">
+                          {INSTITUTION_OPTIONS.find((i) => i.code === revenueTargetInst)?.name || getSchoolShortName(userInstitution) || revenueTargetInst.toUpperCase()}
+                        </p>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-extrabold text-indigo-700 bg-white px-2.5 py-1 rounded-lg border border-indigo-200 shadow-2xs">
+                      Institution Access Only
+                    </span>
+                  </div>
+                )}
+
+                {/* Academic Year 2025-26 Form Card */}
+                <div className={`p-4 rounded-2xl border transition-all ${revenueModalTargetYear === "y2025_26" || revenueModalTargetYear === "all"
+                  ? "bg-white border-indigo-200 shadow-xs"
+                  : "bg-slate-50/70 border-slate-200 opacity-80"
+                  }`}>
+                  <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-100">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-indigo-600" />
+                      <h4 className="text-xs font-black uppercase tracking-wider text-slate-800">
+                        Academic Year 2025-26
+                      </h4>
+                    </div>
+                    {Number(revenueForm.y2025_26?.totalRevenue) > 0 && (
+                      <span className="text-[10px] font-extrabold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-md">
+                        HR Cost Share: {((Number(revenueForm.y2025_26.annualHrCost || 0) / Number(revenueForm.y2025_26.totalRevenue || 1)) * 100).toFixed(2)}%
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                        Total Faculty
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={revenueForm.y2025_26?.totalFaculty ?? ""}
+                        onChange={(e) => setRevenueForm((prev) => ({
+                          ...prev,
+                          y2025_26: { ...prev.y2025_26, totalFaculty: e.target.value }
+                        }))}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 font-mono text-xs font-bold text-slate-800 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 bg-white"
+                        placeholder="e.g. 134"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                        Total Revenue (₹)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={revenueForm.y2025_26?.totalRevenue ?? ""}
+                        onChange={(e) => setRevenueForm((prev) => ({
+                          ...prev,
+                          y2025_26: { ...prev.y2025_26, totalRevenue: e.target.value }
+                        }))}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 font-mono text-xs font-bold text-slate-800 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 bg-white"
+                        placeholder="e.g. 127524311"
+                      />
+                      <div className="text-[10px] font-mono text-slate-500 mt-1 truncate">
+                        Preview: ₹{Number(revenueForm.y2025_26?.totalRevenue || 0).toLocaleString("en-IN")}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                        Annual HR Cost (₹)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={revenueForm.y2025_26?.annualHrCost ?? ""}
+                        onChange={(e) => setRevenueForm((prev) => ({
+                          ...prev,
+                          y2025_26: { ...prev.y2025_26, annualHrCost: e.target.value }
+                        }))}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 font-mono text-xs font-bold text-slate-800 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 bg-white"
+                        placeholder="e.g. 62287163"
+                      />
+                      <div className="text-[10px] font-mono text-slate-500 mt-1 truncate">
+                        Preview: ₹{Number(revenueForm.y2025_26?.annualHrCost || 0).toLocaleString("en-IN")}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Academic Year 2026-27 Form Card */}
+                <div className={`p-4 rounded-2xl border transition-all ${revenueModalTargetYear === "y2026_27" || revenueModalTargetYear === "all"
+                  ? "bg-white border-emerald-200 shadow-xs"
+                  : "bg-slate-50/70 border-slate-200 opacity-80"
+                  }`}>
+                  <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-100">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-600" />
+                      <h4 className="text-xs font-black uppercase tracking-wider text-slate-800">
+                        Academic Year 2026-27
+                      </h4>
+                    </div>
+                    {Number(revenueForm.y2026_27?.totalRevenue) > 0 && (
+                      <span className="text-[10px] font-extrabold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                        HR Cost Share: {((Number(revenueForm.y2026_27.annualHrCost || 0) / Number(revenueForm.y2026_27.totalRevenue || 1)) * 100).toFixed(2)}%
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                        Total Faculty
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={revenueForm.y2026_27?.totalFaculty ?? ""}
+                        onChange={(e) => setRevenueForm((prev) => ({
+                          ...prev,
+                          y2026_27: { ...prev.y2026_27, totalFaculty: e.target.value }
+                        }))}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 font-mono text-xs font-bold text-slate-800 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 bg-white"
+                        placeholder="e.g. 147"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                        Total Revenue (₹)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={revenueForm.y2026_27?.totalRevenue ?? ""}
+                        onChange={(e) => setRevenueForm((prev) => ({
+                          ...prev,
+                          y2026_27: { ...prev.y2026_27, totalRevenue: e.target.value }
+                        }))}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 font-mono text-xs font-bold text-slate-800 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 bg-white"
+                        placeholder="e.g. 157438900"
+                      />
+                      <div className="text-[10px] font-mono text-slate-500 mt-1 truncate">
+                        Preview: ₹{Number(revenueForm.y2026_27?.totalRevenue || 0).toLocaleString("en-IN")}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                        Annual HR Cost (₹)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={revenueForm.y2026_27?.annualHrCost ?? ""}
+                        onChange={(e) => setRevenueForm((prev) => ({
+                          ...prev,
+                          y2026_27: { ...prev.y2026_27, annualHrCost: e.target.value }
+                        }))}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 font-mono text-xs font-bold text-slate-800 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 bg-white"
+                        placeholder="e.g. 73073231"
+                      />
+                      <div className="text-[10px] font-mono text-slate-500 mt-1 truncate">
+                        Preview: ₹{Number(revenueForm.y2026_27?.annualHrCost || 0).toLocaleString("en-IN")}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-[11px] flex items-center gap-2">
+                  <AlertCircle size={15} className="text-amber-600 shrink-0" />
+                  <span>
+                    Values are saved under <strong className="font-mono">appraisal_config/institution_revenue_analytics</strong> for institution <strong className="uppercase font-bold">{revenueTargetInst}</strong> and dynamically update across all dashboards.
+                  </span>
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="bg-slate-50 border-t border-slate-200 px-6 py-4 flex items-center justify-between gap-3 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setRevenueModalOpen(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-100 font-bold text-xs transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={savingRevenue}
+                  onClick={handleSaveRevenueConfig}
+                  className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shadow-md transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {savingRevenue ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" />
+                      <span>Saving Values...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Check size={14} />
+                      <span>Save for {revenueTargetInst.toUpperCase()}</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         )}

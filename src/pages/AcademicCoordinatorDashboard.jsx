@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState, useCallback, Fragment } from "react";
+import { useEffect, useMemo, useState, useCallback, Fragment, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, collection, getDoc, getDocs, addDoc, onSnapshot, setDoc, query, where } from "firebase/firestore";
+import { doc, collection, getDoc, getDocs, addDoc, updateDoc, onSnapshot, setDoc, deleteField, query, where } from "firebase/firestore";
 import { serverTimestamp } from "firebase/firestore";
 import {
   Eye, Loader2, ClipboardList, User, X, FileText, CheckCircle2, Edit2,
@@ -14,16 +14,38 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
 import Layout from "../components/Layout";
+import DepartmentFeeDueModal from "../components/DepartmentFeeDueModal";
 import { auth, db } from "../firebase";
 import { fetchAllCourseNamesMap, getCourseName } from "../utils/courseUtils";
 import { getQuestionPaperHTML } from '../utils/questionPaperUtils';
 import { useRegulations } from "../hooks/useRegulations";
-import { sanitizeKey, formatProgrammeKey, formatDepartmentDisplay, formatBatchDisplay, getAttendanceRecords, parseSubjectField, formatQPSetDisplay } from "../lib/utils";
+import { sanitizeKey, formatProgrammeKey, formatDepartmentDisplay, formatBatchDisplay, getAttendanceRecords, parseSubjectField, formatQPSetDisplay, getAllCandidateAttendanceDocIds, parseStudentAttendanceVal, extractPureDate, isDeptMatch } from "../lib/utils";
 import { typesetMath } from "../utils/mathJaxUtils";
 
 function bsKey(key) {
   if (!key) return "";
   return String(key).replace(/[.#$[\]/]/g, '_');
+}
+
+// Module-level attendance document cache for sub-second dashboard rendering
+const dashboardAttDocCache = new Map(); // docId -> { exists: boolean, records: object, ts: number }
+
+async function getCachedAttendanceDoc(dbInstance, docId) {
+  if (!docId) return { exists: false, records: {}, ts: Date.now() };
+  const cached = dashboardAttDocCache.get(docId);
+  if (cached && (Date.now() - cached.ts < 60000)) {
+    return cached;
+  }
+  try {
+    const snap = await getDoc(doc(dbInstance, "attendance", docId));
+    const exists = snap.exists();
+    const records = exists ? (getAttendanceRecords(snap.data()) || {}) : {};
+    const entry = { exists, records, ts: Date.now() };
+    dashboardAttDocCache.set(docId, entry);
+    return entry;
+  } catch {
+    return { exists: false, records: {}, ts: Date.now() };
+  }
 }
 
 const formatDateKey = (date) => {
@@ -64,25 +86,7 @@ const createdAtMillis = (val) => {
   return Number.isNaN(t) ? 0 : t;
 };
 
-const isDeptMatch = (docDept, targetDept) => {
-  if (!targetDept) return true;
-  if (!docDept) return true;
-  const norm1 = String(docDept).toLowerCase().replace(/^(department of\s+|dept of\s+|be\s+|btech\s+|me\s+|mtech\s+|ug\s+|pg\s+)/gi, '').replace(/[^a-z0-9]/g, '');
-  const norm2 = String(targetDept).toLowerCase().replace(/^(department of\s+|dept of\s+|be\s+|btech\s+|me\s+|mtech\s+|ug\s+|pg\s+)/gi, '').replace(/[^a-z0-9]/g, '');
-  if (norm1 === norm2) return true;
-  if (norm1.includes(norm2) || norm2.includes(norm1)) return true;
-  if ((norm1 === 'cse' || norm1.includes('computerscience')) && (norm2 === 'cse' || norm2.includes('computerscience'))) return true;
-  if ((norm1 === 'it' || norm1.includes('informationtechnology')) && (norm2 === 'it' || norm2.includes('informationtechnology'))) return true;
-  if ((norm1 === 'aids' || norm1.includes('artificialintelligence')) && (norm2 === 'aids' || norm2.includes('artificialintelligence'))) return true;
-  if ((norm1 === 'ece' || norm1.includes('electronicsandcommunication')) && (norm2 === 'ece' || norm2.includes('electronicsandcommunication'))) return true;
-  if ((norm1 === 'eee' || norm1.includes('electricalandelectronics')) && (norm2 === 'eee' || norm2.includes('electricalandelectronics'))) return true;
-  if ((norm1 === 'mech' || norm1.includes('mechanicalengineering')) && (norm2 === 'mech' || norm2.includes('mechanicalengineering'))) return true;
-  if ((norm1 === 'civil' || norm1.includes('civilengineering')) && (norm2 === 'civil' || norm2.includes('civilengineering'))) return true;
-  if ((norm1 === 'bme' || norm1.includes('biomedical')) && (norm2 === 'bme' || norm2.includes('biomedical'))) return true;
-  if ((norm1 === 'robotics' || norm1.includes('roboticsandautomation')) && (norm2 === 'robotics' || norm2.includes('roboticsandautomation'))) return true;
-  if ((norm1 === 'mba' || norm1.includes('businessadministration')) && (norm2 === 'mba' || norm2.includes('businessadministration'))) return true;
-  return false;
-};
+// isDeptMatch is imported dynamically from ../lib/utils (Firestore-backed registry)
 
 const subjectStatPct = (st) => {
   const t = st?.total || 0;
@@ -163,7 +167,7 @@ const extractIAReportStudentTotal = (s) => {
     return { total: isNaN(num) ? 0 : num, absent: false, hasRecord: true };
   }
   const isAbsent = Boolean(s.absent === true || s.absent === 'true' || s.isAbsent === true || s.status === 'absent' || String(s.total || '').toUpperCase() === 'A' || String(s.mark || '').toUpperCase() === 'A' || String(s.score || '').toUpperCase() === 'A');
-  
+
   let total = 0;
   let hasExplicitValue = false;
 
@@ -323,7 +327,7 @@ const resolveExamMaxMark = (ciaConfigs, targetExamName, targetAY, docMeta, cours
     if (!docVal || typeof docVal !== 'object') return null;
     for (const [ctKey, ctVal] of Object.entries(docVal)) {
       if (!ctVal || typeof ctVal !== 'object' || ctKey.startsWith('_')) continue;
-      
+
       const catConfig = ctVal._category_config;
       if (catConfig && typeof catConfig === 'object') {
         for (const catVal of Object.values(catConfig)) {
@@ -449,6 +453,7 @@ export default function AcademicCoordinatorDashboard() {
   const [showRecorrectModal, setShowRecorrectModal] = useState(false);
   const [recorrectComments, setRecorrectComments] = useState('');
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
+  const [feeDueModalOpen, setFeeDueModalOpen] = useState(false);
 
   const [hodDepartment, setHodDepartment] = useState("");
   const [hodProgramme, setHodProgramme] = useState("");
@@ -458,6 +463,7 @@ export default function AcademicCoordinatorDashboard() {
   const [academicEvents, setAcademicEvents] = useState({});
   const [attendanceOverview, setAttendanceOverview] = useState({});
   const [attendanceOverviewLoading, setAttendanceOverviewLoading] = useState(false);
+  const [reloadAttendanceTrigger, setReloadAttendanceTrigger] = useState(0);
   const [subjectNamesMap, setSubjectNamesMap] = useState({});
   const [timetableAllocation, setTimetableAllocation] = useState({});
   const [semesterConfigs, setSemesterConfigs] = useState([]);
@@ -468,6 +474,11 @@ export default function AcademicCoordinatorDashboard() {
   const [sectionAssignments, setSectionAssignments] = useState({});
   const [savingSection, setSavingSection] = useState(false);
   const [deptMetadataLoaded, setDeptMetadataLoaded] = useState(false);
+  const [rawApprovedCandidates, setRawApprovedCandidates] = useState([]);
+  const rawApprovedSnapDataRef = useRef([]);
+  const rawEnquiriesSnapDataRef = useRef([]);
+  const rawUnassignedStudentsSnapDataRef = useRef([]);
+  const assignedStudentsMapRef = useRef({});
 
   const [searchQuery, setSearchQuery] = useState("");
   const [filterBatch, setFilterBatch] = useState("");
@@ -509,6 +520,7 @@ export default function AcademicCoordinatorDashboard() {
   const [reportSemester, setReportSemester] = useState("");
   const [selectedReportSubjects, setSelectedReportSubjects] = useState([]);
   const [pendingAttendanceModal, setPendingAttendanceModal] = useState({ open: false, items: [] });
+  const [exportingPendingPdf, setExportingPendingPdf] = useState(false);
 
   // IA Consolidation Report state
   const [iaReportLoading, setIaReportLoading] = useState(false);
@@ -531,8 +543,8 @@ export default function AcademicCoordinatorDashboard() {
     if (!generatedReport) return [];
     if (!reportSearchQuery.trim()) return generatedReport.students;
     const q = reportSearchQuery.toLowerCase();
-    return generatedReport.students.filter(s => 
-      s.name.toLowerCase().includes(q) || 
+    return generatedReport.students.filter(s =>
+      s.name.toLowerCase().includes(q) ||
       s.reg.toLowerCase().includes(q)
     );
   }, [generatedReport, reportSearchQuery]);
@@ -542,10 +554,30 @@ export default function AcademicCoordinatorDashboard() {
       alert("Please select a batch.");
       return;
     }
-    if (reportDateRange.min && reportDateRange.max && (reportFromDate < reportDateRange.min || reportToDate > reportDateRange.max)) {
-      alert(`Please select dates between ${reportDateRange.min} and ${reportDateRange.max} (as per the configured academic semester).`);
-      return;
+
+    let effectiveFrom = reportFromDate;
+    let effectiveTo = reportToDate;
+
+    // Inverted dates protection: automatically swap if fromDate > toDate
+    if (effectiveFrom && effectiveTo && effectiveFrom > effectiveTo) {
+      const temp = effectiveFrom;
+      effectiveFrom = effectiveTo;
+      effectiveTo = temp;
+      setReportFromDate(effectiveFrom);
+      setReportToDate(effectiveTo);
     }
+
+    if (reportDateRange.min && reportDateRange.max) {
+      if (effectiveFrom < reportDateRange.min) {
+        effectiveFrom = reportDateRange.min;
+        setReportFromDate(effectiveFrom);
+      }
+      if (effectiveTo > reportDateRange.max) {
+        effectiveTo = reportDateRange.max;
+        setReportToDate(effectiveTo);
+      }
+    }
+
     setGeneratingReport(true);
     try {
       // Find students in batch/section
@@ -567,26 +599,150 @@ export default function AcademicCoordinatorDashboard() {
       }
 
       // Collect attendance records from already-loaded resolvedAttendanceOverview
-      // (same data source the Attendance Status section uses — avoids dept-matching issues)
       const batchItems = (resolvedAttendanceOverview[reportBatch] || []).filter(item => {
-        if (reportAcademicYear && item.ay !== reportAcademicYear) return false;
-        if (reportSemester && item.sem !== reportSemester) return false;
-        if (reportSection && item.section !== reportSection) return false;
-        if (selectedReportSubjects.length > 0 && !selectedReportSubjects.includes(item.subjectCode)) return false;
+        if (reportAcademicYear && item.ay && item.ay.replace(/_/g, '-') !== reportAcademicYear.replace(/_/g, '-')) return false;
+        const itemSem = String(item.sem || '').match(/\d+/)?.[0] || String(item.sem || '');
+        const repSem = String(reportSemester || '').match(/\d+/)?.[0] || String(reportSemester || '');
+        if (repSem && itemSem && itemSem !== repSem) return false;
+        if (reportSection && item.section && item.section !== reportSection && item.section !== '') return false;
+        if (selectedReportSubjects.length > 0 && !selectedReportSubjects.map(s => s.toLowerCase()).includes(item.subjectCode?.toLowerCase())) return false;
         return true;
       });
 
-      // ─── CHECK PENDING ATTENDANCE IN DATE RANGE ───
-      const pendingList = [];
+      // ─── Direct Firestore Attendance Candidate Probing for Target Batch & Subjects ───
       const isSubjectSpecific = selectedReportSubjects.length > 0;
-      const dayScheduleMap = timetableAllocation[reportBatch] || {};
+      const allBatchCodes = [...new Set([
+        ...(availableReportSubjects || []).map(s => s.code),
+        ...batchItems.map(i => i.subjectCode)
+      ])].filter(Boolean);
+      const targetCodes = isSubjectSpecific
+        ? selectedReportSubjects
+        : (allBatchCodes.length > 0 ? allBatchCodes : [...new Set(batchItems.map(i => i.subjectCode).filter(Boolean))]);
 
-      // Loop through all dates in the requested range [reportFromDate -> reportToDate]
-      const curDate = new Date(reportFromDate + 'T00:00:00');
-      const endDateObj = new Date(reportToDate + 'T00:00:00');
+      const probeResults = await Promise.all(
+        targetCodes.map(async (code) => {
+          const candidateIds = getAllCandidateAttendanceDocIds({
+            programme: hodProgramme || 'UG',
+            department: hodDepartment || '',
+            batch: reportBatch,
+            academicYear: reportAcademicYear,
+            semester: reportSemester,
+            subjectCode: code,
+            section: reportSection || ''
+          });
+
+          const probeIds = candidateIds.slice(0, 25);
+          let foundRecs = {};
+          try {
+            const snaps = await Promise.allSettled(probeIds.map(id => getDoc(doc(db, "attendance", id))));
+            for (const res of snaps) {
+              if (res.status === 'fulfilled' && res.value && res.value.exists()) {
+                const rec = getAttendanceRecords(res.value.data());
+                if (rec && Object.keys(rec).length > 0) {
+                  foundRecs = { ...foundRecs, ...rec };
+                }
+              }
+            }
+          } catch { /* skip */ }
+          return { subjectCode: code, records: foundRecs };
+        })
+      );
+
+      const probedRecordsBySubject = {};
+      probeResults.forEach(r => {
+        probedRecordsBySubject[r.subjectCode.toLowerCase()] = r.records;
+      });
+
+      const recordsMap = {};
+      const periodInfoMap = {};
+      const matchedPeriodsSet = new Set();
+
+      const addRecordToMap = (rk, recordVal, subCode) => {
+        if (!rk || !recordVal) return;
+        const datePart = extractPureDate(rk);
+        if (datePart >= effectiveFrom && datePart <= effectiveTo) {
+          matchedPeriodsSet.add(rk);
+          if (!recordsMap[rk]) recordsMap[rk] = [];
+          recordsMap[rk].push({
+            ...recordVal,
+            subjectCode: subCode
+          });
+          if (!periodInfoMap[rk]) periodInfoMap[rk] = { subjectCodes: new Set(), eventNames: new Set() };
+          if (recordVal?.isEvent) {
+            periodInfoMap[rk].eventNames.add(recordVal.eventName || 'Event');
+          } else {
+            periodInfoMap[rk].subjectCodes.add(subCode);
+          }
+        }
+      };
+
+      // 1. Merge probed direct Firestore records
+      Object.entries(probedRecordsBySubject).forEach(([codeLower, recs]) => {
+        const matchedItem = availableReportSubjects.find(s => s.code.toLowerCase() === codeLower) ||
+          batchItems.find(i => i.subjectCode?.toLowerCase() === codeLower);
+        const actualCode = matchedItem?.code || matchedItem?.subjectCode || codeLower.toUpperCase();
+        Object.entries(recs || {}).forEach(([rk, recordVal]) => {
+          addRecordToMap(rk, recordVal, actualCode);
+        });
+      });
+
+      // 2. Merge preloaded batchItems records
+      batchItems.forEach(item => {
+        Object.entries(item.attRecords || {}).forEach(([rk, recordVal]) => {
+          addRecordToMap(rk, recordVal, item.subjectCode);
+        });
+      });
+
+      // 3. Fallback: If zero periods found so far, perform a comprehensive scan on attendance collection
+      if (matchedPeriodsSet.size === 0) {
+        try {
+          const allAttSnap = await getDocs(collection(db, "attendance"));
+          const batchNorm = reportBatch.replace(/[^a-z0-9]/gi, '').toLowerCase();
+          const semNorm = String(reportSemester || '').match(/\d+/)?.[0] || '';
+          const secClean = reportSection ? sanitizeKey(reportSection).toLowerCase() : '';
+
+          allAttSnap.docs.forEach(docSnap => {
+            const dId = docSnap.id;
+            const dIdNorm = dId.replace(/[^a-z0-9]/gi, '').toLowerCase();
+            if (!dIdNorm.includes(batchNorm)) return;
+            if (semNorm && !dIdNorm.includes(semNorm)) return;
+            if (secClean && !dIdNorm.includes(secClean) && !dIdNorm.includes('sec')) return;
+
+            const dData = docSnap.data();
+            const recs = getAttendanceRecords(dData);
+            const subCodeMatch = dId.match(/(WL\w+|\b[A-Z]{2,4}\d{3,5}[A-Z]?\b)/i);
+            const fallbackCode = subCodeMatch ? subCodeMatch[1].toUpperCase() : "GENERAL";
+
+            if (isSubjectSpecific && !selectedReportSubjects.map(s => s.toLowerCase()).includes(fallbackCode.toLowerCase())) {
+              return;
+            }
+
+            Object.entries(recs || {}).forEach(([rk, recordVal]) => {
+              addRecordToMap(rk, recordVal, fallbackCode);
+            });
+          });
+        } catch (e) {
+          console.warn('[handleGenerateBatchReport] fallback attendance scan error:', e);
+        }
+      }
+
+      // ─── CHECK PENDING / UNMARKED ATTENDANCE IN DATE RANGE (Only for past and today's dates) ───
+      const pendingList = [];
+      const dayScheduleMap = timetableAllocation[reportBatch] || {};
+      const curDate = new Date(effectiveFrom + 'T00:00:00');
+      const endDateObj = new Date(effectiveTo + 'T00:00:00');
+      const todayStr = formatDateKey(new Date());
+
+      const normSubCode = (s) => String(s || '').trim().replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
 
       while (curDate <= endDateObj) {
         const dStr = formatDateKey(curDate);
+        // Future dates have not occurred yet, they can never be pending!
+        if (dStr > todayStr) {
+          curDate.setDate(curDate.getDate() + 1);
+          continue;
+        }
+
         const dayName = curDate.toLocaleDateString('en-US', { weekday: 'long' });
         const isSunday = curDate.getDay() === 0;
         const isHoliday = academicEvents[dStr]?.some(e => e.type === 'Holiday');
@@ -594,7 +750,6 @@ export default function AcademicCoordinatorDashboard() {
         if (!isSunday && !isHoliday) {
           const rawDaySchedule = dayScheduleMap[dayName];
           if (rawDaySchedule) {
-            // Expand continuous period spans (e.g. "P1: EE3403|2") into individual periods
             const expandedDaySchedule = {};
             Object.entries(rawDaySchedule).forEach(([pStart, rawEntries]) => {
               const entries = Array.isArray(rawEntries) ? rawEntries : [rawEntries];
@@ -611,34 +766,73 @@ export default function AcademicCoordinatorDashboard() {
               });
             });
 
-            // Check each scheduled period for this day
             Object.entries(expandedDaySchedule).forEach(([periodNum, codes]) => {
               codes.forEach(code => {
-                // If specific subjects are selected, only check for those subjects
-                if (isSubjectSpecific && !selectedReportSubjects.map(s => s.toLowerCase()).includes(code.toLowerCase())) {
-                  return;
+                const normC = normSubCode(code);
+                if (isSubjectSpecific) {
+                  const isMatch = selectedReportSubjects.some(s => {
+                    const normS = normSubCode(s);
+                    return normS === normC || normC.includes(normS) || normS.includes(normC);
+                  });
+                  if (!isMatch) return;
                 }
 
-                // Find matching subject assignment item
-                const targetItem = batchItems.find(i => i.subjectCode.toLowerCase() === code.toLowerCase());
                 const recordKey = `${dStr}_P${periodNum}`;
+                const hasEvent = recordsMap[recordKey]?.some(r => r.isEvent);
+                const hasSubjectRecord =
+                  recordsMap[recordKey]?.some(r => {
+                    const rCode = normSubCode(r.subjectCode);
+                    return rCode === normC || rCode.includes(normC) || normC.includes(rCode);
+                  }) ||
+                  batchItems.some(i => {
+                    const bCode = normSubCode(i.subjectCode);
+                    return (bCode === normC || bCode.includes(normC) || normC.includes(bCode)) && i.attRecords?.[recordKey];
+                  }) ||
+                  !!probedRecordsBySubject[code.toLowerCase()]?.[recordKey] ||
+                  !!probedRecordsBySubject[normC]?.[recordKey];
 
-                let hasRecord = false;
-
-                if (targetItem && targetItem.attRecords?.[recordKey]) {
-                  hasRecord = true;
-                } else {
-                  // Check if substitute / alternate subject marked attendance for this period
-                  const substituteRecord = batchItems.some(i => i.attRecords?.[recordKey]);
-                  if (substituteRecord) {
-                    hasRecord = true;
-                  }
-                }
+                const hasRecord = hasEvent || hasSubjectRecord;
 
                 if (!hasRecord) {
-                  const subjObj = targetItem || batchItems.find(i => i.subjectCode.toLowerCase() === code.toLowerCase());
-                  const subjectName = subjObj?.subjectName || subjectNamesMap[code] || code;
-                  const facultyName = subjObj?.facultyName || "Not Assigned";
+                  // Resilient faculty and subject name resolution
+                  const subjObj = batchItems.find(i => {
+                    const bCode = normSubCode(i.subjectCode);
+                    return bCode === normC || bCode.includes(normC) || normC.includes(bCode);
+                  });
+                  const anyBatchSubj = !subjObj
+                    ? Object.values(resolvedAttendanceOverview || {}).flat().find(i => {
+                      const bCode = normSubCode(i.subjectCode);
+                      return bCode === normC || bCode.includes(normC) || normC.includes(bCode);
+                    })
+                    : null;
+                  const targetSubj = subjObj || anyBatchSubj;
+                  const facultyUid = targetSubj?.facultyUid || targetSubj?.uid;
+
+                  let facultyName = "";
+                  if (facultyUid && usersMap[facultyUid]) {
+                    const u = usersMap[facultyUid];
+                    facultyName = u.facultyName || u.displayName || u.name || u.email || "";
+                  }
+                  if (!facultyName && targetSubj?.facultyName && targetSubj.facultyName !== facultyUid) {
+                    facultyName = targetSubj.facultyName;
+                  }
+                  if (!facultyName) {
+                    const matchedUser = Object.values(usersMap || {}).find(u => {
+                      return (u.assignedCourses || u.courses || []).some(c => {
+                        const cCode = normSubCode(c.code || c);
+                        return cCode === normC || cCode.includes(normC) || normC.includes(cCode);
+                      });
+                    });
+                    if (matchedUser) {
+                      facultyName = matchedUser.facultyName || matchedUser.displayName || matchedUser.name || "";
+                    }
+                  }
+                  if (!facultyName) {
+                    facultyName = "Faculty Not Assigned";
+                  }
+
+                  const subjectName = targetSubj?.subjectName || getCourseName(subjectNamesMap, code, hodDepartment, hodProgramme) || subjectNamesMap[code] || code;
+
                   pendingList.push({
                     date: dStr,
                     day: dayName,
@@ -657,36 +851,12 @@ export default function AcademicCoordinatorDashboard() {
 
       if (pendingList.length > 0) {
         setGeneratingReport(false);
+        setGeneratedReport(null);
         setPendingAttendanceModal({ open: true, items: pendingList });
         return;
       }
 
-      const recordsMap = {};
-      const periodInfoMap = {};
-      const matchedPeriodsSet = new Set();
-
-      batchItems.forEach(item => {
-        Object.entries(item.attRecords || {}).forEach(([rk, recordVal]) => {
-          const datePart = rk.includes('_P') ? rk.slice(0, rk.lastIndexOf('_P')) : rk;
-          if (datePart >= reportFromDate && datePart <= reportToDate) {
-            matchedPeriodsSet.add(rk);
-            if (!recordsMap[rk]) recordsMap[rk] = [];
-            recordsMap[rk].push({
-              ...recordVal,
-              subjectCode: item.subjectCode
-            });
-            if (!periodInfoMap[rk]) periodInfoMap[rk] = { subjectCodes: new Set(), eventNames: new Set() };
-            if (recordVal?.isEvent) {
-              periodInfoMap[rk].eventNames.add(recordVal.eventName || 'Event');
-            } else {
-              periodInfoMap[rk].subjectCodes.add(item.subjectCode);
-            }
-          }
-        });
-      });
-
-      // Label each period with the subject code of whoever marked attendance,
-      // or the event name when the record is an event period.
+      // Label each period with subject code or event name
       const periodInfo = {};
       Object.entries(periodInfoMap).forEach(([rk, info]) => {
         const label = info.eventNames.size > 0
@@ -696,8 +866,10 @@ export default function AcademicCoordinatorDashboard() {
       });
 
       const sortedPeriods = [...matchedPeriodsSet].sort((a, b) => {
-        const [dateA, periodA] = a.split('_P');
-        const [dateB, periodB] = b.split('_P');
+        const dateA = extractPureDate(a);
+        const dateB = extractPureDate(b);
+        const periodA = a.match(/_P(\d+)/i)?.[1] || '0';
+        const periodB = b.match(/_P(\d+)/i)?.[1] || '0';
         if (dateA !== dateB) return dateA.localeCompare(dateB);
         return (parseInt(periodA) || 0) - (parseInt(periodB) || 0);
       });
@@ -705,7 +877,7 @@ export default function AcademicCoordinatorDashboard() {
       // Group period keys by date for the date-wise map
       const groupedPeriods = [];
       sortedPeriods.forEach(rk => {
-        const [date] = rk.split('_P');
+        const date = extractPureDate(rk);
         const last = groupedPeriods[groupedPeriods.length - 1];
         if (last && last.date === date) {
           last.periods.push(rk);
@@ -713,6 +885,8 @@ export default function AcademicCoordinatorDashboard() {
           groupedPeriods.push({ date, periods: [rk] });
         }
       });
+
+      const normClean = str => String(str || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
 
       const studentStats = targetStudents.map(student => {
         let attended = 0;
@@ -722,25 +896,182 @@ export default function AcademicCoordinatorDashboard() {
         const dailyRecords = {};
         const subjectStats = {};
 
-        sortedPeriods.forEach(rk => {
-          const matchedRecords = recordsMap[rk] || [];
-          let foundStatus = undefined;
-          let recordSubject = "";
-          for (const rec of matchedRecords) {
-            const stuVal = rec?.students?.[student.reg];
-            if (stuVal !== undefined) {
-              const rawH = stuVal;
-              foundStatus = typeof rawH === 'object' && rawH !== null 
-                ? (rawH.status || (rawH.hours > 0 ? 'P' : 'A')) 
-                : (rawH === 'OD' || rawH === -1 ? 'OD' : (rawH > 0 ? 'P' : 'A'));
-              recordSubject = rec.subjectCode || "";
-              break;
+        const aliasList = [
+          student.reg,
+          student.name,
+          student.raw?.admissionNo,
+          student.raw?.admNo,
+          student.raw?.admission_no,
+          student.raw?.rollNo,
+          student.raw?.roll_no,
+          student.raw?.regNo,
+          student.raw?.registerNo,
+          student.raw?.reg_no,
+          student.raw?.studentId,
+          student.raw?.student_id,
+          student.raw?.id
+        ].filter(Boolean);
+
+        const aliasSet = new Set(aliasList.map(a => String(a).trim().toLowerCase()));
+        const aliasCleanList = aliasList.map(a => normClean(a)).filter(c => c && c.length >= 3);
+        const aliasCleanSet = new Set(aliasCleanList);
+        const idTargets = aliasCleanList.filter(t => t.length >= 6);
+        const endsWithIdMatch = (candidate) => {
+          const c = normClean(candidate);
+          if (!c || c.length < 6) return false;
+          return idTargets.some(t => {
+            if (c === t) return true;
+            if (Math.abs(c.length - t.length) > 4) return false;
+            return c.endsWith(t) || t.endsWith(c);
+          });
+        };
+
+        const resolveStudentVal = (studentsMap) => {
+          if (!studentsMap) return undefined;
+          let mapObj = studentsMap;
+          if (typeof mapObj === 'string') {
+            try { mapObj = JSON.parse(mapObj); } catch { return undefined; }
+          }
+          if (!mapObj || typeof mapObj !== 'object') return undefined;
+          if (mapObj.students && typeof mapObj.students === 'object') {
+            mapObj = mapObj.students;
+          }
+
+          if (Array.isArray(mapObj)) {
+            return mapObj.find(item => {
+              if (!item) return false;
+              const itemReg = String(
+                item.reg || item.regNo || item.registerNo || item.register_number ||
+                item.reg_no || item.admNo || item.admissionNo || item.adm_no ||
+                item.admission_no || item.studentId || item.student_id ||
+                item.rollNo || item.roll_no || item.id || ''
+              ).trim().toLowerCase();
+              const itemClean = normClean(itemReg);
+              const itemName = String(item.name || item.studentName || '').trim().toLowerCase();
+              return aliasSet.has(itemReg) || aliasCleanSet.has(itemClean) || endsWithIdMatch(itemReg) || (itemName && aliasSet.has(itemName));
+            });
+          }
+
+          for (const a of aliasList) {
+            if (mapObj[a] !== undefined && mapObj[a] !== null) return mapObj[a];
+          }
+          for (const a of aliasSet) {
+            if (mapObj[a] !== undefined && mapObj[a] !== null) return mapObj[a];
+          }
+
+          const keys = Object.keys(mapObj);
+          for (const k of keys) {
+            if (k.startsWith('_')) continue;
+            const kLower = String(k).trim().toLowerCase();
+            const kClean = normClean(k);
+            if (aliasSet.has(kLower) || aliasCleanSet.has(kClean) || endsWithIdMatch(k)) {
+              if (mapObj[k] !== undefined && mapObj[k] !== null) return mapObj[k];
             }
           }
 
-          if (foundStatus !== undefined) {
-            dailyRecords[rk] = foundStatus;
+          if (student.name) {
+            const sNameNorm = String(student.name).trim().toLowerCase();
+            for (const [k, v] of Object.entries(mapObj)) {
+              if (k.startsWith('_')) continue;
+              if (typeof v === 'object' && v !== null) {
+                const vName = String(v.name || v.studentName || '').trim().toLowerCase();
+                if (vName && vName === sNameNorm) return v;
+              }
+            }
+          }
+          return undefined;
+        };
 
+        const jd = student.raw?.joiningDate || student.raw?._joiningDate || '';
+
+        sortedPeriods.forEach(rk => {
+          const matchedRecords = recordsMap[rk] || [];
+          if (matchedRecords.length === 0) {
+            dailyRecords[rk] = '—';
+            return;
+          }
+
+          const rkDate = extractPureDate(rk);
+          if (jd && rkDate && rkDate < jd) {
+            dailyRecords[rk] = '—';
+            return;
+          }
+
+          // Event period handling (aligned with Attendance.jsx)
+          const isEvent = matchedRecords.some(r => r.isEvent);
+          if (isEvent) {
+            let eventParsed = null;
+            for (const rec of matchedRecords) {
+              const rawH = resolveStudentVal(rec.students);
+              if (rawH !== undefined) {
+                const p = parseStudentAttendanceVal(rawH);
+                if (p) { eventParsed = p; break; }
+              }
+            }
+            const isPresent = eventParsed ? (eventParsed.status === 'P' || eventParsed.hours > 0) : true;
+            dailyRecords[rk] = eventParsed ? (eventParsed.isNA ? '—' : eventParsed.status) : (isPresent ? 'P' : '—');
+            return;
+          }
+
+          // Regular academic period
+          let conductedRecord = null;
+          let foundStatus = undefined;
+          let recordSubject = "";
+
+          for (const rec of matchedRecords) {
+            const allEntries = rec.students && typeof rec.students === 'object'
+              ? Object.entries(rec.students).filter(([k]) => !k.startsWith('_'))
+              : [];
+            if (allEntries.length === 0) continue;
+
+            if (!conductedRecord) conductedRecord = rec;
+
+            const isCorruptedAllHyphen = allEntries.every(([, v]) => {
+              const p = parseStudentAttendanceVal(v);
+              return p?.status === '-' || p?.isNA;
+            });
+
+            const rawH = resolveStudentVal(rec.students);
+            if (rawH !== undefined) {
+              const parsed = parseStudentAttendanceVal(rawH);
+              if (parsed) {
+                if (isCorruptedAllHyphen) {
+                  foundStatus = 'P';
+                  recordSubject = rec.subjectCode || "";
+                  break;
+                } else if (parsed.status === '-' || parsed.isNA || parsed.status === '—') {
+                  if (foundStatus === undefined) {
+                    foundStatus = '—';
+                    recordSubject = rec.subjectCode || "";
+                  }
+                } else {
+                  foundStatus = parsed.status;
+                  recordSubject = rec.subjectCode || "";
+                  break;
+                }
+              }
+            } else {
+              if (isCorruptedAllHyphen) {
+                foundStatus = 'P';
+                recordSubject = rec.subjectCode || "";
+                break;
+              }
+            }
+          }
+
+          if (conductedRecord) {
+            if (foundStatus === undefined) {
+              // Unmarked / unlisted student in conducted class defaults to Present 'P' (standard in Attendance.jsx)
+              foundStatus = 'P';
+              recordSubject = conductedRecord.subjectCode || "";
+            }
+          } else {
+            foundStatus = '—';
+          }
+
+          dailyRecords[rk] = foundStatus;
+
+          if (foundStatus === 'P' || foundStatus === 'A' || foundStatus === 'OD') {
             if (recordSubject) {
               if (!subjectStats[recordSubject]) {
                 subjectStats[recordSubject] = { attended: 0, absent: 0, od: 0, total: 0 };
@@ -767,13 +1098,13 @@ export default function AcademicCoordinatorDashboard() {
               odCount++;
               totalClasses++;
             }
-          } else {
-            dailyRecords[rk] = '—';
           }
         });
 
         const activeClasses = totalClasses - odCount;
-        const percentage = activeClasses > 0 ? ((attended / activeClasses) * 100).toFixed(1) : "0.0";
+        const percentage = activeClasses > 0
+          ? ((attended / activeClasses) * 100).toFixed(1)
+          : (odCount > 0 ? "100.0" : "0.0");
 
         return {
           reg: student.reg,
@@ -796,13 +1127,14 @@ export default function AcademicCoordinatorDashboard() {
         groupedPeriods,
         periodInfo,
         students: studentStats,
-        fromDate: reportFromDate,
-        toDate: reportToDate,
+        fromDate: effectiveFrom,
+        toDate: effectiveTo,
         batch: reportBatch,
         section: reportSection || "All Sections",
         academicYear: reportAcademicYear,
         semester: reportSemester,
-        selectedSubjects: selectedReportSubjects
+        selectedSubjects: selectedReportSubjects,
+        unmarkedPeriods: pendingList
       });
 
       showToast("Report generated successfully!", "success");
@@ -849,7 +1181,7 @@ export default function AcademicCoordinatorDashboard() {
       ];
     });
 
-    const csvContent = "data:text/csv;charset=utf-8," 
+    const csvContent = "data:text/csv;charset=utf-8,"
       + [headers.join(","), ...rows.map(r => r.map(val => `"${val}"`).join(","))].join("\n");
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
@@ -1124,6 +1456,246 @@ export default function AcademicCoordinatorDashboard() {
     setShowReportPdfPreview(true);
   };
 
+  const handleExportPendingAttendancePDF = async () => {
+    if (!pendingAttendanceModal.items || pendingAttendanceModal.items.length === 0) return;
+    setExportingPendingPdf(true);
+    try {
+      const items = pendingAttendanceModal.items;
+
+      // Load /logo.png as base64
+      let logoBase64 = null;
+      try {
+        logoBase64 = await getBase64ImageFromUrl('/logo.png');
+      } catch (e) {
+        console.warn('getBase64ImageFromUrl failed:', e);
+      }
+      if (!logoBase64) {
+        try {
+          const resp = await fetch('/logo.png');
+          const blob = await resp.blob();
+          logoBase64 = await new Promise(resolve => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.readAsDataURL(blob);
+          });
+        } catch { }
+      }
+
+      const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      const pageW = doc.internal.pageSize.getWidth();
+      const pageH = doc.internal.pageSize.getHeight();
+      const marginL = 12;
+      const marginR = 12;
+      const usableW = pageW - marginL - marginR;
+
+      const drawHeader = (pageNum = 1) => {
+        let y = 8;
+        if (pageNum === 1 && logoBase64) {
+          try {
+            // /logo.png aspect ratio is 9.496 (1206 x 127)
+            const logoW = Math.min(usableW, 180);
+            const logoH = logoW / 9.496;
+            const logoX = (pageW - logoW) / 2;
+            doc.addImage(logoBase64, 'PNG', logoX, y, logoW, logoH);
+            y += logoH + 4;
+          } catch (e) {
+            console.warn('Could not render logo:', e);
+          }
+        }
+
+        // Title
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(13);
+        doc.setTextColor(185, 28, 28); // Crimson red
+        doc.text("UNMARKED / PENDING ATTENDANCE REPORT", pageW / 2, y + 2, { align: "center" });
+        y += 6;
+
+        // Subtitle & Metadata Box
+        doc.setFillColor(254, 242, 242); // Rose-50
+        doc.setDrawColor(254, 205, 211); // Rose-200
+        doc.roundedRect(marginL, y, usableW, 14, 2, 2, "FD");
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        doc.setTextColor(159, 18, 57); // Rose-900
+        const line1 = `Department: ${hodDepartment || 'All Departments'}    |    Batch: ${reportBatch || 'All'}    |    Section: ${reportSection || 'All'}${selectedReportSubjects.length > 0 ? `    |    Subjects: ${selectedReportSubjects.join(', ')}` : ''}`;
+        doc.text(line1, marginL + 4, y + 5);
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7.5);
+        doc.setTextColor(75, 85, 99); // Zinc-600
+        const line2 = `Date Range: ${reportFromDate} to ${reportToDate}    |    Total Pending Classes: ${items.length}    |    Generated: ${new Date().toLocaleDateString('en-GB')} ${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}`;
+        doc.text(line2, marginL + 4, y + 10.5);
+
+        y += 18;
+        return y;
+      };
+
+      const startY = drawHeader(1);
+
+      // Prepare Table Rows
+      const tableRows = items.map((item, idx) => [
+        idx + 1,
+        `${item.date}\n(${item.day})`,
+        `Period ${item.period}`,
+        item.subjectName && item.subjectName !== item.subjectCode
+          ? `${item.subjectCode}\n${item.subjectName}`
+          : item.subjectCode,
+        item.facultyName || "Faculty Not Assigned",
+        "Pending"
+      ]);
+
+      autoTable(doc, {
+        head: [['S.No', 'Date & Day', 'Period', 'Subject Code & Title', 'Assigned Faculty', 'Status']],
+        body: tableRows,
+        startY: startY,
+        margin: { left: marginL, right: marginR, bottom: 15 },
+        theme: 'grid',
+        styles: {
+          fontSize: 7.5,
+          cellPadding: 2,
+          valign: 'middle',
+          textColor: [30, 41, 59],
+          lineColor: [226, 232, 240],
+          lineWidth: 0.15,
+        },
+        headStyles: {
+          fillColor: [185, 28, 28], // Crimson red
+          textColor: 255,
+          fontStyle: 'bold',
+          halign: 'center',
+          fontSize: 8,
+          cellPadding: 2.5
+        },
+        alternateRowStyles: {
+          fillColor: [255, 250, 250]
+        },
+        columnStyles: {
+          0: { cellWidth: 12, halign: 'center', fontStyle: 'bold' },
+          1: { cellWidth: 28, halign: 'center', fontStyle: 'bold' },
+          2: { cellWidth: 20, halign: 'center', fontStyle: 'bold', textColor: [29, 78, 216] },
+          3: { cellWidth: 62, halign: 'left' },
+          4: { cellWidth: 44, halign: 'left', fontStyle: 'bold', textColor: [15, 23, 42] },
+          5: { cellWidth: 20, halign: 'center', fontStyle: 'bold', textColor: [185, 28, 28] }
+        },
+        didDrawPage: (data) => {
+          const pageCount = doc.internal.getNumberOfPages();
+          const currPage = data.pageNumber;
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(7);
+          doc.setTextColor(148, 163, 184);
+          doc.text(
+            `Page ${currPage} of ${pageCount}  •  Batch Attendance Pending Verification  •  CKCET ERP`,
+            pageW / 2,
+            pageH - 6,
+            { align: 'center' }
+          );
+        }
+      });
+
+      // Faculty Summary Table (at the end)
+      let finalY = doc.lastAutoTable.finalY + 8;
+      const facultySummaryMap = {};
+      items.forEach(item => {
+        const fName = item.facultyName || "Faculty Not Assigned";
+        facultySummaryMap[fName] = (facultySummaryMap[fName] || 0) + 1;
+      });
+      const facultySummaryList = Object.entries(facultySummaryMap)
+        .map(([name, count]) => ({ name, count }))
+        .sort((a, b) => b.count - a.count);
+
+      const summaryTableRows = facultySummaryList.map((f, i) => [
+        i + 1,
+        f.name,
+        `${f.count} class(es)`
+      ]);
+
+      const neededHeight = summaryTableRows.length * 6 + 25;
+      if (finalY + neededHeight > pageH - 15) {
+        doc.addPage();
+        finalY = 15;
+      }
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9.5);
+      doc.setTextColor(30, 41, 59);
+      doc.text("Faculty-wise Unmarked Summary", marginL, finalY);
+      finalY += 3;
+
+      autoTable(doc, {
+        head: [['#', 'Faculty Member Name', 'Unmarked Classes']],
+        body: summaryTableRows,
+        startY: finalY,
+        margin: { left: marginL, right: marginR, bottom: 20 },
+        theme: 'grid',
+        tableWidth: 120,
+        styles: {
+          fontSize: 7.5,
+          cellPadding: 1.8,
+          valign: 'middle',
+          textColor: [30, 41, 59],
+          lineColor: [226, 232, 240],
+          lineWidth: 0.15,
+        },
+        headStyles: {
+          fillColor: [71, 85, 105], // Slate-600
+          textColor: 255,
+          fontStyle: 'bold',
+          halign: 'left',
+          fontSize: 8
+        },
+        columnStyles: {
+          0: { cellWidth: 10, halign: 'center' },
+          1: { cellWidth: 75, halign: 'left', fontStyle: 'bold' },
+          2: { cellWidth: 35, halign: 'center', fontStyle: 'bold', textColor: [185, 28, 28] }
+        },
+        didDrawPage: (data) => {
+          const pageCount = doc.internal.getNumberOfPages();
+          const currPage = data.pageNumber;
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(7);
+          doc.setTextColor(148, 163, 184);
+          doc.text(
+            `Page ${currPage} of ${pageCount}  •  Batch Attendance Pending Verification  •  CKCET ERP`,
+            pageW / 2,
+            pageH - 6,
+            { align: 'center' }
+          );
+        }
+      });
+
+      // Signature section
+      let signY = doc.lastAutoTable.finalY + 14;
+      if (signY + 20 > pageH - 10) {
+        doc.addPage();
+        signY = 25;
+      }
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+      doc.setTextColor(71, 85, 105);
+      doc.text("Academic Coordinator", marginL + 10, signY);
+      doc.text("Head of the Department", pageW / 2 - 15, signY);
+      doc.text("Principal", pageW - marginR - 30, signY);
+
+      const filename = `Pending_Attendance_${reportBatch || 'Batch'}_${reportFromDate}_to_${reportToDate}.pdf`;
+      const blob = doc.output('blob');
+      const url = URL.createObjectURL(blob);
+      setReportPdfUrl(url);
+      setReportPdfDoc(doc);
+      setReportPdfFilename(filename);
+      setShowReportPdfPreview(true);
+
+      // Direct download trigger
+      doc.save(filename);
+    } catch (err) {
+      console.error("Error generating pending attendance PDF:", err);
+      alert("Failed to generate PDF. Please try again.");
+    } finally {
+      setExportingPendingPdf(false);
+    }
+  };
+
   useEffect(() => {
     setActivitiesLoading(true);
     let list1 = [];
@@ -1190,7 +1762,7 @@ export default function AcademicCoordinatorDashboard() {
         if (st === "Indent Sent to HODs") return true;
         if (st === "Nominations In Progress" && nominated < required) return true;
         return false;
-      }).sort((a,b) => String(a.date).localeCompare(String(b.date)));
+      }).sort((a, b) => String(a.date).localeCompare(String(b.date)));
       setDutyIndents(filtered);
       setDutyIndentsLoading(false);
     }, () => { setDutyIndents([]); setDutyIndentsLoading(false); });
@@ -1262,6 +1834,9 @@ export default function AcademicCoordinatorDashboard() {
       const data = {};
       snap.forEach(doc => { data[doc.id] = doc.data(); });
       setCourseWeightageData(data);
+    }, (err) => {
+      console.warn('course_type_weightage listener error:', err);
+      setCourseWeightageData({});
     });
     return () => unsub();
   }, []);
@@ -1272,6 +1847,9 @@ export default function AcademicCoordinatorDashboard() {
       const data = {};
       snapshot.forEach(d => { data[d.id] = d.data(); });
       setCiaConfigs(data);
+    }, (err) => {
+      console.warn('cia_configs listener error:', err);
+      setCiaConfigs({});
     });
     return () => unsubscribe();
   }, []);
@@ -1427,121 +2005,232 @@ export default function AcademicCoordinatorDashboard() {
     return () => unsub();
   }, [currentUid]);
 
-  useEffect(() => {
-    if (!hodDepartment) {
-      setApprovedStudentsList([]);
-      return;
+  const updateApprovedStudents = useCallback(() => {
+    const assignedMap = assignedStudentsMapRef.current || {};
+    const seenRegs = new Set();
+    const all = [];
+
+    // 1) From approved_admissions
+    (rawApprovedSnapDataRef.current || []).forEach(({ docId, data }) => {
+      const metaDept = data._meta?.department || "";
+      let batch = data._meta?.batch || "";
+      if (!batch) {
+        const bm = docId.match(/(\d{4}-\d{4})/);
+        if (bm) batch = bm[1];
+      }
+      const progKey = data._meta?.programme || (docId.includes('_PG_') ? 'PG' : 'UG');
+
+      Object.entries(data).forEach(([key, val]) => {
+        if (key === '_order' || key.startsWith('_')) return;
+        if (assignedMap[key]) return; // already in a section
+        if (seenRegs.has(key)) return;
+        seenRegs.add(key);
+
+        const name = typeof val === 'object' && val !== null ? (val.name || '') : val;
+        all.push({
+          reg: key,
+          name,
+          batch: batch || "2026-2028",
+          programme: progKey,
+          department: metaDept,
+          docId,
+          source: 'approved_admissions',
+          raw: typeof val === 'object' && val !== null ? val : {}
+        });
+      });
+    });
+
+    // 2) From admitted enquiries (status Approved or Admitted)
+    (rawEnquiriesSnapDataRef.current || []).forEach(enq => {
+      const reg = enq.applicationNo || enq.enquiryId || enq.id;
+      if (!reg) return;
+      if (enq.section) return; // already allotted
+      if (assignedMap[reg]) return; // already in students section doc
+      if (seenRegs.has(reg)) return;
+      seenRegs.add(reg);
+
+      const enqDept = enq.department || enq.departmentName || "";
+      const name = [enq.firstName, enq.lastName].filter(Boolean).join(" ").trim() || enq.studentName || "-";
+      const rawProg = enq.programme || "";
+      const isPG = /pg|mba|mca|me|mtech/i.test(rawProg) || /business\s+administration|management/i.test(enqDept);
+      const progKey = isPG ? "PG" : "UG";
+
+      let batch = enq.batch || "";
+      if (!batch || !batch.includes("-")) {
+        const yearMatch = String(reg || enq.enquiryDate || enq.admissionDate || new Date().getFullYear()).match(/\d{4}/);
+        const startYear = yearMatch ? parseInt(yearMatch[0], 10) : new Date().getFullYear();
+        const duration = progKey === "PG" ? 2 : 4;
+        batch = `${startYear}-${startYear + duration}`;
+      }
+
+      const cleanBatch = String(batch).replace(/[.#$[\]/]/g, '_');
+      const cleanDept = String(enqDept || "Department").replace(/[.#$[\]/]/g, '_');
+      const docId = `${cleanBatch}_${progKey}_${cleanDept}`;
+
+      all.push({
+        reg,
+        name,
+        batch,
+        programme: progKey,
+        department: enqDept,
+        docId,
+        source: 'enquiries',
+        enquiryDocId: enq.id || enq.enquiryId,
+        raw: enq
+      });
+    });
+
+    // 3) From unassigned students doc (written without section)
+    (rawUnassignedStudentsSnapDataRef.current || []).forEach(({ docId, data }) => {
+      const metaDept = data._meta?.department || "";
+      let batch = data._meta?.batch || "";
+      if (!batch) {
+        const bm = docId.match(/(\d{4}-\d{4})/);
+        if (bm) batch = bm[1];
+      }
+      const progKey = data._meta?.programme || (docId.includes('_PG_') ? 'PG' : 'UG');
+
+      Object.entries(data).forEach(([key, val]) => {
+        if (key.startsWith('_')) return;
+        if (assignedMap[key]) return;
+        if (seenRegs.has(key)) return;
+        seenRegs.add(key);
+
+        const name = typeof val === 'object' && val !== null ? (val.name || '') : val;
+        all.push({
+          reg: key,
+          name,
+          batch: batch || "2026-2028",
+          programme: progKey,
+          department: metaDept,
+          docId,
+          source: 'students',
+          raw: typeof val === 'object' && val !== null ? val : {}
+        });
+      });
+    });
+
+    all.sort((a, b) => String(a.reg).localeCompare(String(b.reg), undefined, { numeric: true, sensitivity: 'base' }));
+    setRawApprovedCandidates(all);
+
+    let filtered = all;
+    if (hodDepartment) {
+      filtered = all.filter(c => {
+        return isDeptMatch(c.department, hodDepartment) || (c.docId && isDeptMatch(c.docId, hodDepartment));
+      });
     }
+    setApprovedStudentsList(filtered);
+    setStudentsLoading(false);
+  }, [hodDepartment]);
+
+  // Reactive re-filter when hodDepartment or candidates change
+  useEffect(() => {
+    if (hodDepartment) {
+      setApprovedStudentsList(rawApprovedCandidates.filter(c => {
+        return isDeptMatch(c.department, hodDepartment) || (c.docId && isDeptMatch(c.docId, hodDepartment));
+      }));
+    } else {
+      setApprovedStudentsList(rawApprovedCandidates);
+    }
+  }, [hodDepartment, rawApprovedCandidates]);
+
+  // Listener 1: approved_admissions
+  useEffect(() => {
     setStudentsLoading(true);
-    const hodNorm = sanitizeKey(hodDepartment).toLowerCase().replace(/[_ ]+/g, '');
     const unsub = onSnapshot(
       collection(db, 'approved_admissions'),
       (snap) => {
-        const all = [];
+        const list = [];
         snap.forEach(docSnap => {
-          const docId = docSnap.id;
-          const data = docSnap.data();
-          // 1) Try _meta.department first
-          let deptMatch = false;
-          if (data._meta?.department) {
-            const metaDept = sanitizeKey(data._meta.department).toLowerCase().replace(/[_ ]+/g, '');
-            deptMatch = metaDept === hodNorm || metaDept.includes(hodNorm) || hodNorm.includes(metaDept);
-          }
-          // 2) Fall back to doc ID: {batch}_{progKey}_{deptKey} where deptKey can span multiple segments
-          if (!deptMatch) {
-            const parts = docId.split('_');
-            if (parts.length > 1) {
-              // Try matching the full composite after batch against the HOD dept name
-              const batchMatch2 = docId.match(/(\d{4}-\d{4})/);
-              if (batchMatch2) {
-                const afterBatch = docId.slice(docId.indexOf(batchMatch2[1]) + batchMatch2[1].length + 1);
-                const normComposite = afterBatch.toLowerCase().replace(/[_ ]+/g, '');
-                deptMatch = normComposite === hodNorm || normComposite.includes(hodNorm) || hodNorm.includes(normComposite);
-              } else {
-                // Fallback: last segment only
-                const lastPart = parts[parts.length - 1].toLowerCase();
-                deptMatch = lastPart === hodNorm || lastPart.includes(hodNorm) || hodNorm.includes(lastPart);
-              }
-            }
-          }
-          if (!deptMatch) return;
-
-          // Extract batch from doc ID (first segment with dash)
-          let batch = "";
-          const batchMatch = docId.match(/(\d{4}-\d{4})/);
-          if (batchMatch) batch = batchMatch[1];
-
-          Object.entries(data).forEach(([key, val]) => {
-            if (key === '_order' || key.startsWith('_')) return;
-            all.push({ reg: key, name: val, batch, docId });
-          });
+          list.push({ docId: docSnap.id, data: docSnap.data() });
         });
-        all.sort((a, b) => a.reg.localeCompare(b.reg));
-        setApprovedStudentsList(all);
-        setStudentsLoading(false);
+        rawApprovedSnapDataRef.current = list;
+        updateApprovedStudents();
       },
-      () => { setApprovedStudentsList([]); setStudentsLoading(false); }
+      (err) => {
+        console.warn("Error loading approved_admissions:", err);
+        rawApprovedSnapDataRef.current = [];
+        updateApprovedStudents();
+      }
     );
     return () => unsub();
-  }, [hodDepartment]);
+  }, [updateApprovedStudents]);
 
+  // Listener 2: enquiries (status in ['Approved', 'Admitted'])
+  useEffect(() => {
+    const unsub = onSnapshot(
+      query(collection(db, 'enquiries'), where('status', 'in', ['Approved', 'Admitted'])),
+      (snap) => {
+        const list = [];
+        snap.forEach(docSnap => {
+          list.push({ id: docSnap.id, ...docSnap.data() });
+        });
+        rawEnquiriesSnapDataRef.current = list;
+        updateApprovedStudents();
+      },
+      (err) => {
+        console.warn("Error loading admitted enquiries:", err);
+        rawEnquiriesSnapDataRef.current = [];
+        updateApprovedStudents();
+      }
+    );
+    return () => unsub();
+  }, [updateApprovedStudents]);
+
+  // Listener 3: students collection (tracks section assignments and unassigned docs)
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'students'), (snap) => {
       const map = {};
+      const assignedMap = {};
+      const unassignedList = [];
       snap.forEach(docSnap => {
+        const docId = docSnap.id;
+        const isSectionDoc = /_Sec-[A-Za-z0-9]+/i.test(docId);
         const data = docSnap.data();
+        if (!isSectionDoc) {
+          unassignedList.push({ docId, data });
+        }
         Object.entries(data).forEach(([key, val]) => {
           if (key.startsWith('_')) return;
           const name = typeof val === 'object' && val !== null ? (val.name || '') : val;
-          if (name && typeof name === 'string') map[key] = name;
+          if (name && typeof name === 'string') {
+            map[key] = name;
+            if (isSectionDoc) assignedMap[key] = docId;
+          }
         });
       });
       setAllStudentNames(map);
-    }, () => setAllStudentNames({}));
+      assignedStudentsMapRef.current = assignedMap;
+      rawUnassignedStudentsSnapDataRef.current = unassignedList;
+      updateApprovedStudents();
+    }, () => {
+      setAllStudentNames({});
+      assignedStudentsMapRef.current = {};
+      rawUnassignedStudentsSnapDataRef.current = [];
+      updateApprovedStudents();
+    });
     return () => unsub();
-  }, []);
+  }, [updateApprovedStudents]);
 
   // Fetch section-assigned students per batch for this dept
   useEffect(() => {
     if (!hodDepartment) { setSectionStudents([]); return; }
-    const hodNorm = sanitizeKey(hodDepartment).toLowerCase().replace(/[_ ]+/g, '');
     const unsub = onSnapshot(collection(db, 'students'), (snap) => {
       const list = [];
       snap.forEach(docSnap => {
         const docId = docSnap.id;
+        if (!/_Sec-[A-Za-z0-9]+/i.test(docId)) return;
         const data = docSnap.data();
-        // 1) Try _meta.department first (most reliable)
+
         let deptMatch = false;
         if (data._meta?.department) {
-          const metaDept = sanitizeKey(data._meta.department).toLowerCase().replace(/[_ ]+/g, '');
-          deptMatch = metaDept === hodNorm || metaDept.includes(hodNorm) || hodNorm.includes(metaDept);
+          deptMatch = isDeptMatch(data._meta.department, hodDepartment);
         }
-        // 2) Fall back to doc ID parsing: {batch}_{progKey}_{deptKey}[_section]
         if (!deptMatch) {
-          const parts = docId.split('_');
-          // Find batch (contains a dash like 2024-2028)
-          const batchIdx = parts.findIndex(p => /\d{4}-\d{4}/.test(p));
-          if (batchIdx >= 0) {
-            // deptKey is the part right before the batch or after progKey
-            // But since progKey can be multi-part (B_Tech), dept is the last part before batch
-            // Actually in {batch}_{progKey}_{deptKey}, batch is FIRST
-            // So: parts[0] = batch, rest is {progKey}_{deptKey}[_section]
-            // deptKey = second-to-last segment (or last if no section)
-            const afterBatch = parts.slice(1);
-            // Remove section suffix if present (last part starts with Sec-)
-            const coreParts = afterBatch.length > 0 && afterBatch[afterBatch.length - 1].match(/^Sec-/)
-              ? afterBatch.slice(0, -1)
-              : afterBatch;
-            // deptKey is the last part of core
-            if (coreParts.length > 0) {
-              const lastPart = coreParts[coreParts.length - 1].toLowerCase();
-              deptMatch = lastPart === hodNorm || lastPart.includes(hodNorm) || hodNorm.includes(lastPart);
-            }
-          }
+          deptMatch = isDeptMatch(docId, hodDepartment);
         }
         if (!deptMatch) return;
 
-        // Extract batch from doc ID
         let batch = "";
         const batchMatch = docId.match(/(\d{4}-\d{4})/);
         if (batchMatch) batch = batchMatch[1];
@@ -1549,7 +2238,13 @@ export default function AcademicCoordinatorDashboard() {
         Object.entries(data).forEach(([key, val]) => {
           if (key.startsWith('_')) return;
           const name = typeof val === 'object' && val !== null ? (val.name || '') : val;
-          if (name && typeof name === 'string') list.push({ reg: key, name, batch, docId });
+          if (name && typeof name === 'string') list.push({
+            reg: key,
+            name,
+            batch,
+            docId,
+            raw: typeof val === 'object' && val !== null ? val : {}
+          });
         });
       });
       setSectionStudents(list);
@@ -1562,6 +2257,9 @@ export default function AcademicCoordinatorDashboard() {
       const data = {};
       snap.forEach(d => { data[d.id] = d.data(); });
       setSectionConfigs(data);
+    }, (err) => {
+      console.warn('batch_sections listener error:', err);
+      setSectionConfigs({});
     });
     return () => unsub();
   }, []);
@@ -1571,6 +2269,9 @@ export default function AcademicCoordinatorDashboard() {
       const configs = [];
       snap.forEach(d => { configs.push({ id: d.id, ...d.data() }); });
       setSemesterConfigs(configs);
+    }, (err) => {
+      console.warn('semester_config listener error:', err);
+      setSemesterConfigs([]);
     });
     return () => unsub();
   }, []);
@@ -1593,6 +2294,9 @@ export default function AcademicCoordinatorDashboard() {
         }
       });
       setAcademicEvents(dateMap);
+    }, (err) => {
+      console.warn('academic_calendar_events listener error:', err);
+      setAcademicEvents({});
     });
     return () => unsub();
   }, []);
@@ -1602,6 +2306,10 @@ export default function AcademicCoordinatorDashboard() {
       const data = {};
       snap.forEach(d => { data[d.id] = d.data(); });
       setDeptMetadata(data);
+      setDeptMetadataLoaded(true);
+    }, (err) => {
+      console.warn('department_metadata listener error:', err);
+      setDeptMetadata({});
       setDeptMetadataLoaded(true);
     });
     return () => unsub();
@@ -1732,29 +2440,75 @@ export default function AcademicCoordinatorDashboard() {
         if (!seen.has(key)) { seen.add(key); unique.push(a); }
       });
 
-      const attDocPromises = unique.map(async (a) => {
+      // Pro-Level Fast-Path Attendance Resolver:
+      // 1. Probes the canonical defaultDocId first (covers ~98% of subjects in 1 read).
+      // 2. Checks baseDocId if section was given.
+      // 3. Only falls back to candidate aliases if primary doc is missing.
+      // 4. Uses shared in-memory document cache to avoid re-fetching unchanged docs.
+      const fetchSubjectAttendance = async (a) => {
         const sectionSuffix = a.section ? `_${sanitizeKey(a.section)}` : "";
-        const attDocId = `${a.progKey}_${a.attDeptKey}_${sanitizeKey(a.batch)}_${sanitizeKey(a.ay)}_${a.sem}_${a.subjectCode}${sectionSuffix}`;
+        const defaultDocId = `${a.progKey}_${a.attDeptKey}_${sanitizeKey(a.batch)}_${sanitizeKey(a.ay)}_${a.sem}_${a.subjectCode}${sectionSuffix}`;
         let attRecords = {};
-        try {
-          const attSnap = await getDoc(doc(db, "attendance", attDocId));
-          if (attSnap.exists()) {
-            attRecords = getAttendanceRecords(attSnap.data());
+        let finalDocId = defaultDocId;
+
+        // FAST-PATH 1: Check canonical defaultDocId first
+        const primary = await getCachedAttendanceDoc(db, defaultDocId);
+        if (primary.exists && Object.keys(primary.records).length > 0) {
+          attRecords = primary.records;
+          return { ...a, attRecords, facultyUid: a.uid, attDocId: finalDocId };
+        }
+
+        // FAST-PATH 2: If a section was given, check counterpart without section
+        if (a.section) {
+          const baseDocId = `${a.progKey}_${a.attDeptKey}_${sanitizeKey(a.batch)}_${sanitizeKey(a.ay)}_${a.sem}_${a.subjectCode}`;
+          const baseEntry = await getCachedAttendanceDoc(db, baseDocId);
+          if (baseEntry.exists && Object.keys(baseEntry.records).length > 0) {
+            attRecords = baseEntry.records;
+            finalDocId = baseDocId;
+            return { ...a, attRecords, facultyUid: a.uid, attDocId: finalDocId };
           }
-        } catch { /* skip */ }
-        return { ...a, attRecords, facultyUid: a.uid, attDocId };
+        }
+
+        // TARGETED FALLBACK: Only if primary doc is missing or empty, probe top 4 candidates
+        const candidateDocIds = getAllCandidateAttendanceDocIds({
+          programme: a.progKey || hodProgramme,
+          department: a.attDeptKey || hodDepartment,
+          batch: a.batch,
+          academicYear: a.ay,
+          semester: a.sem,
+          subjectCode: a.subjectCode,
+          section: a.section || ''
+        });
+
+        const fallbackIds = candidateDocIds.filter(id => id !== defaultDocId).slice(0, 4);
+        for (const fbId of fallbackIds) {
+          const fbEntry = await getCachedAttendanceDoc(db, fbId);
+          if (fbEntry.exists && Object.keys(fbEntry.records).length > 0) {
+            attRecords = fbEntry.records;
+            finalDocId = fbId;
+            break;
+          }
+        }
+
+        return { ...a, attRecords, facultyUid: a.uid, attDocId: finalDocId };
+      };
+
+      const syllabusPromise = fetchAllCourseNamesMap().catch(e => {
+        console.warn('[AttendanceOverview] course names fetch error:', e);
+        return {};
       });
 
-      const syllabusPromise = (async () => {
-        try {
-          return await fetchAllCourseNamesMap();
-        } catch (e) {
-          console.warn('[AttendanceOverview] course names fetch error:', e);
-          return {};
-        }
-      })();
+      // Controlled parallel batching (chunks of 10) to prevent browser network socket exhaustion
+      const BATCH_SIZE = 10;
+      const results = [];
+      for (let i = 0; i < unique.length; i += BATCH_SIZE) {
+        if (cancelled) return;
+        const chunk = unique.slice(i, i + BATCH_SIZE);
+        const chunkResults = await Promise.all(chunk.map(fetchSubjectAttendance));
+        results.push(...chunkResults);
+      }
 
-      const [results, nameMap] = await Promise.all([Promise.all(attDocPromises), syllabusPromise]);
+      const nameMap = await syllabusPromise;
 
       if (cancelled) return;
 
@@ -1769,7 +2523,7 @@ export default function AcademicCoordinatorDashboard() {
       setAttendanceOverviewLoading(false);
     }, () => { if (!cancelled) { setAttendanceOverview({}); setAttendanceOverviewLoading(false); } });
     return () => { cancelled = true; unsub(); };
-  }, [hodDepartment, hodProgramme, currentUid, deptMetadata, deptMetadataLoaded]);
+  }, [hodDepartment, hodProgramme, currentUid, deptMetadata, deptMetadataLoaded, reloadAttendanceTrigger]);
 
   // ─── Fetch timetable allocation for each batch ───
   useEffect(() => {
@@ -2342,7 +3096,7 @@ export default function AcademicCoordinatorDashboard() {
       setReportAcademicYear(targetAY);
       const aySems = availableReportSemesters.length > 0
         ? [...new Set([...(batchConfigs.filter(c => c.academicYear === targetAY).map(c => semesterNumFor(reportBatch, c)).filter(Boolean)),
-                       ...reportBatchItems.filter(i => i.ay === targetAY).map(i => i.sem).filter(Boolean)])].sort((a, b) => parseInt(a) - parseInt(b))
+        ...reportBatchItems.filter(i => i.ay === targetAY).map(i => i.sem).filter(Boolean)])].sort((a, b) => parseInt(a) - parseInt(b))
         : [];
       const activeSem = batchConfigs.find(c => c.academicYear === targetAY && today >= c.startDate && today <= c.endDate);
       const targetSem = activeSem
@@ -2394,8 +3148,10 @@ export default function AcademicCoordinatorDashboard() {
   // Clamp initial report dates into the semester-config range once configs load
   useEffect(() => {
     if (!reportDateRange.min || !reportDateRange.max) return;
-    setReportFromDate(prev => (prev && prev >= reportDateRange.min ? prev : reportDateRange.min));
-    setReportToDate(prev => (prev && prev <= reportDateRange.max ? prev : reportDateRange.max));
+    const todayStr = formatDateKey(new Date());
+    const validMax = todayStr <= reportDateRange.max ? todayStr : reportDateRange.max;
+    setReportFromDate(prev => (prev && prev >= reportDateRange.min && prev <= reportDateRange.max ? prev : reportDateRange.min));
+    setReportToDate(prev => (prev && prev <= reportDateRange.max && prev >= reportDateRange.min ? prev : validMax));
   }, [reportDateRange]);
 
   // ═══ IA Consolidation Report — fetch non-OBE subject codes from syllabus_data ═══
@@ -3063,6 +3819,52 @@ export default function AcademicCoordinatorDashboard() {
     return getQuestionPaperHTML(qp, modalCourseOutcomes, facultySignatureForQP, selectedQPHodSignature, ciaConfigs, null, '', acSig);
   }, [modalCourseOutcomes, facultySignatureForQP, selectedQPHodSignature, ciaConfigs]);
 
+  // Resilient QP updater: if parent doc size > 1MB, automatically migrates set to a standalone flat doc
+  const saveQPStatusUpdate = async (qp, updates) => {
+    if (!qp) return;
+    const isFlat = qp._isFlatDoc || (qp.id && String(qp.id).includes('__')) || String(qp.compositeKey || '').includes('__');
+    const compKey = qp.compositeKey || qp.id;
+    const sId = qp.id || 'Exam';
+    const flatDocId = compKey.includes('__') ? compKey : `${compKey}__${sId}`;
+
+    if (isFlat) {
+      await setDoc(doc(db, 'generated_qps', flatDocId), updates, { merge: true });
+      return;
+    }
+
+    try {
+      await setDoc(doc(db, 'generated_qps', compKey), { [sId]: updates }, { merge: true });
+    } catch (err) {
+      const errStr = String(err?.message || err || '');
+      const isSizeError = errStr.includes('exceeds the maximum allowed size') || errStr.includes('size') || errStr.includes('1,048,576') || errStr.includes('bytes');
+      if (!isSizeError) {
+        throw err;
+      }
+      console.warn(`[saveQPStatusUpdate] Parent document ${compKey} exceeds 1MB Firestore limit. Automatically extracting set ${sId} into standalone flat document ${flatDocId}...`);
+
+      const sourceQP = (fullQPForModal && fullQPForModal.id === qp.id) ? { ...fullQPForModal, ...qp } : qp;
+      const flatPayload = {
+        ...sourceQP,
+        ...updates,
+        id: sId,
+        compositeKey: compKey,
+        _isFlatDoc: true
+      };
+      delete flatPayload.draft_html;
+
+      await setDoc(doc(db, 'generated_qps', flatDocId), flatPayload, { merge: true });
+
+      try {
+        await updateDoc(doc(db, 'generated_qps', compKey), {
+          [sId]: deleteField()
+        });
+        console.log(`[saveQPStatusUpdate] Successfully extracted and removed ${sId} from bloated parent doc ${compKey}.`);
+      } catch (cleanErr) {
+        console.warn(`[saveQPStatusUpdate] Parent doc field cleanup skipped:`, cleanErr);
+      }
+    }
+  };
+
   const handleRevoke = async () => {
     if (!selectedQP || !recorrectComments.trim()) {
       showToast("Please provide comments for revoking the paper.", "error");
@@ -3078,12 +3880,7 @@ export default function AcademicCoordinatorDashboard() {
         ac_signature_url: null,
         updated_at: now
       };
-      if (selectedQP._isFlatDoc || (selectedQP.id && selectedQP.id.includes('__'))) {
-        const docId = selectedQP.compositeKey.includes('__') ? selectedQP.compositeKey : `${selectedQP.compositeKey}__${selectedQP.id}`;
-        await setDoc(doc(db, 'generated_qps', docId), updates, { merge: true });
-      } else {
-        await setDoc(doc(db, 'generated_qps', selectedQP.compositeKey), { [selectedQP.id]: updates }, { merge: true });
-      }
+      await saveQPStatusUpdate(selectedQP, updates);
 
       // Notify the faculty (person below the Academic Coordinator in the chain)
       if (selectedQP.forwarded_by) {
@@ -3125,6 +3922,7 @@ export default function AcademicCoordinatorDashboard() {
     try {
       // Find HOD for the QP's department (or the coordinator's own department as fallback)
       let hodUid = null;
+      let hodName = '';
       const hodDept = selectedQP.department || hodDepartment;
       try {
         const usersSnapshot = await getDocs(collection(db, 'users'));
@@ -3138,7 +3936,10 @@ export default function AcademicCoordinatorDashboard() {
           );
           const matched = hods.find(u => norm(u.department) === targetNorm) ||
             hods.find(u => norm(u.department).includes(targetNorm) || targetNorm.includes(norm(u.department)));
-          if (matched) hodUid = matched.uid;
+          if (matched) {
+            hodUid = matched.uid;
+            hodName = matched.name || matched.displayName || matched.facultyName || '';
+          }
         }
       } catch (err) {
         console.error("Error finding HOD:", err);
@@ -3153,6 +3954,8 @@ export default function AcademicCoordinatorDashboard() {
       const updates = {
         status: 'forwarded',
         forwarded_to: hodUid,
+        forwarded_to_name: hodName || undefined,
+        hod_name: hodName || undefined,
         forwarded_at: now,
         ac_approved: true,
         ac_approved_by: currentUid,
@@ -3161,12 +3964,7 @@ export default function AcademicCoordinatorDashboard() {
         ac_comments: null,
         updated_at: now
       };
-      if (selectedQP._isFlatDoc || (selectedQP.id && selectedQP.id.includes('__'))) {
-        const docId = selectedQP.compositeKey.includes('__') ? selectedQP.compositeKey : `${selectedQP.compositeKey}__${selectedQP.id}`;
-        await setDoc(doc(db, 'generated_qps', docId), updates, { merge: true });
-      } else {
-        await setDoc(doc(db, 'generated_qps', selectedQP.compositeKey), { [selectedQP.id]: updates }, { merge: true });
-      }
+      await saveQPStatusUpdate(selectedQP, updates);
       showToast("Question paper moved to HOD for review.", "success");
       setShowQPModal(false);
     } catch (error) {
@@ -3207,8 +4005,8 @@ export default function AcademicCoordinatorDashboard() {
       {toast.show && (
         <div className="fixed top-24 left-1/2 -translate-x-1/2 z-[200] animate-in slide-in-from-top-3 fade-in duration-300">
           <div className={`flex items-center gap-3 px-5 py-3 rounded-2xl shadow-2xl border ${toast.type === "success"
-              ? "bg-emerald-50 border-emerald-200 text-emerald-800"
-              : "bg-red-50 border-red-200 text-red-800"
+            ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+            : "bg-red-50 border-red-200 text-red-800"
             }`}>
             {toast.type === "success" ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
             <span className="font-semibold text-sm">{toast.message}</span>
@@ -3259,6 +4057,14 @@ export default function AcademicCoordinatorDashboard() {
                 <FileText size={16} />
                 <span className="hidden sm:inline">QP Generator</span>
               </button>
+              <button
+                onClick={() => setFeeDueModalOpen(true)}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-amber-400/20 text-amber-300 text-sm font-bold hover:bg-amber-400/30 transition-all border border-amber-400/30 cursor-pointer active:scale-95 shadow-sm"
+                title="View Department Fee Dues"
+              >
+                <GraduationCap size={16} />
+                <span className="hidden sm:inline">Fee Due</span>
+              </button>
             </div>
           </div>
         </div>
@@ -3288,7 +4094,7 @@ export default function AcademicCoordinatorDashboard() {
 
         {/* ═══ Tasks & Approvals Grid ═══ */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8 mt-8">
-          
+
           {/* Column 1: Forwarded Question Papers */}
           <div className="bg-white rounded-3xl border border-zinc-200 shadow-sm p-6 flex flex-col h-[580px]">
             <div className="flex items-center justify-between mb-4 border-b border-zinc-100 pb-4 shrink-0">
@@ -3563,7 +4369,7 @@ export default function AcademicCoordinatorDashboard() {
                       Activity Verification Board (Academic Coordinator Review)
                     </h4>
                     <p className="text-base font-bold truncate mt-0.5">
-                      {reviewActivity.studentName || reviewActivity.facultyName} 
+                      {reviewActivity.studentName || reviewActivity.facultyName}
                       ({reviewActivity.regNo || reviewActivity.facultyId || "N/A"})
                     </p>
                   </div>
@@ -3592,14 +4398,14 @@ export default function AcademicCoordinatorDashboard() {
                     <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Points Claimed</span>
                     <span className="text-sm font-extrabold text-[#120c7a]">{reviewActivity.points || reviewActivity.totalPoints || "-"} Pts</span>
                   </div>
-                    <div className="bg-zinc-50 p-3.5 rounded-xl border border-zinc-100 col-span-2">
-                      <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Department / Batch / Section</span>
-                      <span className="text-sm font-bold text-zinc-800">{formatDepartmentDisplay(reviewActivity.department, reviewActivity.programme)} / {formatBatchDisplay(reviewActivity.batch) || reviewActivity.batch} / {reviewActivity.section || "Sec-A"}</span>
-                    </div>
+                  <div className="bg-zinc-50 p-3.5 rounded-xl border border-zinc-100 col-span-2">
+                    <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">Department / Batch / Section</span>
+                    <span className="text-sm font-bold text-zinc-800">{formatDepartmentDisplay(reviewActivity.department, reviewActivity.programme)} / {formatBatchDisplay(reviewActivity.batch) || reviewActivity.batch} / {reviewActivity.section || "Sec-A"}</span>
+                  </div>
                   <div className="bg-zinc-50 p-3.5 rounded-xl border border-zinc-100 col-span-2">
                     <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block">NBA / NAAC Mapping</span>
                     <span className="text-xs font-semibold text-zinc-700">
-                      {reviewActivity.nbaCriterion ? `NBA: ${reviewActivity.nbaCriterion}` : ""} 
+                      {reviewActivity.nbaCriterion ? `NBA: ${reviewActivity.nbaCriterion}` : ""}
                       {reviewActivity.naacCriterion ? ` | NAAC: ${reviewActivity.naacCriterion}` : ""}
                     </span>
                   </div>
@@ -3607,7 +4413,7 @@ export default function AcademicCoordinatorDashboard() {
 
                 {/* Additional fields based on activity type */}
                 <div className="bg-zinc-50 p-5 rounded-2xl border border-zinc-100 space-y-4 text-xs">
-                  {Object.entries(reviewActivity).filter(([k, v]) => 
+                  {Object.entries(reviewActivity).filter(([k, v]) =>
                     v && !["id", "status", "createdAt", "updatedAt", "activityCode", "activityName", "title", "studentName", "facultyName", "regNo", "facultyId", "studentId", "userId", "uid", "student_id", "user_id", "department", "batch", "section", "date", "fromDate", "points", "totalPoints", "evidenceUrl", "comments", "reviewedBy", "reviewedByName", "submittedById", "submittedByRole", "isStep"].includes(k)
                   ).map(([key, value]) => {
                     if (key === "formData") {
@@ -3811,8 +4617,8 @@ export default function AcademicCoordinatorDashboard() {
               {/* Row 1 */}
               <div className="bg-zinc-50 border border-zinc-150 p-3.5 rounded-2xl hover:border-blue-300 hover:bg-white transition-all duration-205">
                 <label className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-widest block mb-1">Select Batch</label>
-                <select 
-                  value={reportBatch} 
+                <select
+                  value={reportBatch}
                   onChange={(e) => { setReportBatch(e.target.value); setReportSection(""); setSelectedReportSubjects([]); setGeneratedReport(null); }}
                   className="w-full bg-transparent text-xs font-bold text-zinc-700 outline-none cursor-pointer"
                 >
@@ -3825,8 +4631,8 @@ export default function AcademicCoordinatorDashboard() {
 
               <div className="bg-zinc-50 border border-zinc-150 p-3.5 rounded-2xl hover:border-blue-300 hover:bg-white transition-all duration-205">
                 <label className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-widest block mb-1">Academic Year</label>
-                <select 
-                  value={reportAcademicYear} 
+                <select
+                  value={reportAcademicYear}
                   onChange={(e) => { setReportAcademicYear(e.target.value); setReportSemester(""); setSelectedReportSubjects([]); setGeneratedReport(null); }}
                   disabled={!reportBatch}
                   className="w-full bg-transparent text-xs font-bold text-zinc-700 outline-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
@@ -3840,8 +4646,8 @@ export default function AcademicCoordinatorDashboard() {
 
               <div className="bg-zinc-50 border border-zinc-150 p-3.5 rounded-2xl hover:border-blue-300 hover:bg-white transition-all duration-205">
                 <label className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-widest block mb-1">Semester</label>
-                <select 
-                  value={reportSemester} 
+                <select
+                  value={reportSemester}
                   onChange={(e) => { setReportSemester(e.target.value); setSelectedReportSubjects([]); setGeneratedReport(null); }}
                   disabled={!reportAcademicYear}
                   className="w-full bg-transparent text-xs font-bold text-zinc-700 outline-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
@@ -3855,8 +4661,8 @@ export default function AcademicCoordinatorDashboard() {
 
               <div className="bg-zinc-50 border border-zinc-150 p-3.5 rounded-2xl hover:border-blue-300 hover:bg-white transition-all duration-205">
                 <label className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-widest block mb-1">Select Section (Optional)</label>
-                <select 
-                  value={reportSection} 
+                <select
+                  value={reportSection}
                   onChange={(e) => { setReportSection(e.target.value); setGeneratedReport(null); }}
                   disabled={!reportBatch}
                   className="w-full bg-transparent text-xs font-bold text-zinc-700 outline-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
@@ -3932,24 +4738,38 @@ export default function AcademicCoordinatorDashboard() {
 
               <div className="bg-zinc-50 border border-zinc-150 p-3.5 rounded-2xl hover:border-blue-300 hover:bg-white transition-all duration-205">
                 <label className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-widest block mb-1">From Date</label>
-                <input 
-                  type="date" 
-                  value={reportFromDate} 
+                <input
+                  type="date"
+                  value={reportFromDate}
                   min={reportDateRange.min || undefined}
                   max={reportDateRange.max || undefined}
-                  onChange={(e) => { setReportFromDate(e.target.value); setGeneratedReport(null); }}
+                  onChange={(e) => {
+                    const newFrom = e.target.value;
+                    setReportFromDate(newFrom);
+                    if (newFrom && reportToDate && newFrom > reportToDate) {
+                      setReportToDate(newFrom);
+                    }
+                    setGeneratedReport(null);
+                  }}
                   className="w-full bg-transparent text-xs font-bold text-zinc-700 outline-none [color-scheme:light]"
                 />
               </div>
 
               <div className="bg-zinc-50 border border-zinc-150 p-3.5 rounded-2xl hover:border-blue-300 hover:bg-white transition-all duration-205">
                 <label className="text-[10px] font-extrabold text-zinc-400 uppercase tracking-widest block mb-1">To Date</label>
-                <input 
-                  type="date" 
-                  value={reportToDate} 
+                <input
+                  type="date"
+                  value={reportToDate}
                   min={reportDateRange.min || undefined}
                   max={reportDateRange.max || undefined}
-                  onChange={(e) => { setReportToDate(e.target.value); setGeneratedReport(null); }}
+                  onChange={(e) => {
+                    const newTo = e.target.value;
+                    setReportToDate(newTo);
+                    if (newTo && reportFromDate && newTo < reportFromDate) {
+                      setReportFromDate(newTo);
+                    }
+                    setGeneratedReport(null);
+                  }}
                   className="w-full bg-transparent text-xs font-bold text-zinc-700 outline-none [color-scheme:light]"
                 />
               </div>
@@ -3990,7 +4810,7 @@ export default function AcademicCoordinatorDashboard() {
             {/* Generated Report Preview */}
             {generatedReport && (
               <div className="mt-8 border-t border-zinc-200 pt-6 space-y-6">
-                
+
                 {/* Visual Analytics Dashboard */}
                 {generatedReport.students.length > 0 && (
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -4036,7 +4856,7 @@ export default function AcademicCoordinatorDashboard() {
                       <span className="text-xs font-black text-indigo-700">{averageAttendance}%</span>
                     </div>
                     <div className="w-full bg-zinc-200 rounded-full h-3 overflow-hidden shadow-inner">
-                      <div 
+                      <div
                         className={`h-full rounded-full bg-gradient-to-r ${parseFloat(averageAttendance) >= 75 ? "from-emerald-400 to-teal-500" : "from-rose-400 to-amber-500"}`}
                         style={{ width: `${averageAttendance}%` }}
                       />
@@ -4085,11 +4905,11 @@ export default function AcademicCoordinatorDashboard() {
                     {/* Premium Search / Table filter input */}
                     <div className="flex items-center gap-3 rounded-2xl border border-zinc-200 bg-white px-4 py-3 focus-within:border-[#120c7a] focus-within:ring-2 focus-within:ring-[#120c7a]/10 transition-all max-w-md shadow-sm">
                       <Search size={16} className="text-zinc-400" />
-                      <input 
-                        value={reportSearchQuery} 
+                      <input
+                        value={reportSearchQuery}
                         onChange={(e) => setReportSearchQuery(e.target.value)}
                         className="w-full bg-transparent text-xs font-semibold outline-none placeholder:text-zinc-400 text-zinc-700"
-                        placeholder="Search student by name or register number..." 
+                        placeholder="Search student by name or register number..."
                       />
                       {reportSearchQuery && (
                         <button onClick={() => setReportSearchQuery("")} className="p-0.5 rounded-full hover:bg-zinc-200 transition-colors">
@@ -4127,98 +4947,108 @@ export default function AcademicCoordinatorDashboard() {
                                 </>
                               )}
                             </tr>
-                              <tr className="border-b border-zinc-200 bg-zinc-50/50">
-                                <th className="bg-transparent" colSpan={3}></th>
-                                {(generatedReport.groupedPeriods || []).map(({ date, periods }, gi) => periods.map(p => {
-                                  const pNum = p.includes('_P') ? p.slice(p.lastIndexOf('_P') + 2) : p;
-                                  const info = generatedReport.periodInfo?.[p];
-                                  return (
-                                    <th key={p} className={`px-1.5 py-1.5 text-[9px] font-extrabold text-zinc-500 uppercase text-center border-l border-zinc-250/60 ${gi % 2 === 1 ? "bg-amber-50/30" : "bg-sky-50/20"}`} title={p}>
-                                      <span className="block">P{pNum}</span>
-                                      {info && <span className="block text-[8px] text-[#120c7a] font-black mt-0.5 normal-case tracking-normal">({info})</span>}
-                                    </th>
-                                  );
-                                }))}
-                                <th className="bg-transparent" colSpan={generatedReport.selectedSubjects && generatedReport.selectedSubjects.length > 0 ? generatedReport.selectedSubjects.length * 4 : 5}></th>
+                            <tr className="border-b border-zinc-200 bg-zinc-50/50">
+                              <th className="bg-transparent" colSpan={3}></th>
+                              {(generatedReport.groupedPeriods || []).map(({ date, periods }, gi) => periods.map(p => {
+                                const pNum = p.includes('_P') ? p.slice(p.lastIndexOf('_P') + 2) : p;
+                                const info = generatedReport.periodInfo?.[p];
+                                return (
+                                  <th key={p} className={`px-1.5 py-1.5 text-[9px] font-extrabold text-zinc-500 uppercase text-center border-l border-zinc-250/60 ${gi % 2 === 1 ? "bg-amber-50/30" : "bg-sky-50/20"}`} title={p}>
+                                    <span className="block">P{pNum}</span>
+                                    {info && <span className="block text-[8px] text-[#120c7a] font-black mt-0.5 normal-case tracking-normal">({info})</span>}
+                                  </th>
+                                );
+                              }))}
+                              <th className="bg-transparent" colSpan={generatedReport.selectedSubjects && generatedReport.selectedSubjects.length > 0 ? generatedReport.selectedSubjects.length * 4 : 5}></th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-zinc-200 bg-white">
+                            {filteredReportStudents.length === 0 ? (
+                              <tr>
+                                <td colSpan={3 + generatedReport.periods.length + (generatedReport.selectedSubjects && generatedReport.selectedSubjects.length > 0 ? generatedReport.selectedSubjects.length * 4 : 5)} className="px-6 py-10 text-center text-xs text-zinc-400 italic font-medium">
+                                  No students match your search query.
+                                </td>
                               </tr>
-                            </thead>
-                            <tbody className="divide-y divide-zinc-200 bg-white">
-                              {filteredReportStudents.length === 0 ? (
-                                <tr>
-                                  <td colSpan={3 + generatedReport.periods.length + (generatedReport.selectedSubjects && generatedReport.selectedSubjects.length > 0 ? generatedReport.selectedSubjects.length * 4 : 5)} className="px-6 py-10 text-center text-xs text-zinc-400 italic font-medium">
-                                    No students match your search query.
-                                  </td>
-                                </tr>
-                              ) : (
-                                filteredReportStudents.map((student) => (
-                                  <tr key={student.reg} className="hover:bg-zinc-50/50 transition-colors">
-                                    <td className="px-3 py-2.5 text-xs font-semibold text-zinc-700">{student.reg}</td>
-                                    <td className="px-3 py-2.5 text-xs font-bold text-zinc-800">{student.name}</td>
-                                    <td className="px-3 py-2.5 text-xs text-zinc-500 text-center">{student.section.replace('Sec-', '')}</td>
-                                    {(generatedReport.groupedPeriods || []).map(({ date, periods }, gi) => periods.map(p => {
-                                      const val = student.dailyRecords[p];
-                                      let cellBg = "";
-                                      let cellText = "";
-                                      if (val === 'P') { cellBg = "bg-emerald-50 text-emerald-700 border-emerald-100"; cellText = "P"; }
-                                      else if (val === 'A') { cellBg = "bg-rose-50 text-rose-700 border-rose-100"; cellText = "A"; }
-                                      else if (val === 'OD') { cellBg = "bg-blue-50 text-blue-700 border-blue-100"; cellText = "OD"; }
-                                      else { cellBg = "text-zinc-300"; cellText = "—"; }
+                            ) : (
+                              filteredReportStudents.map((student) => (
+                                <tr key={student.reg} className="hover:bg-zinc-50/50 transition-colors">
+                                  <td className="px-3 py-2.5 text-xs font-semibold text-zinc-700">{student.reg}</td>
+                                  <td className="px-3 py-2.5 text-xs font-bold text-zinc-800">{student.name}</td>
+                                  <td className="px-3 py-2.5 text-xs text-zinc-500 text-center">{student.section.replace('Sec-', '')}</td>
+                                  {(generatedReport.groupedPeriods || []).map(({ date, periods }, gi) => periods.map(p => {
+                                    const val = student.dailyRecords[p];
+                                    let cellBg = "";
+                                    let cellText = "";
+                                    if (val === 'P') { cellBg = "bg-emerald-50 text-emerald-700 border-emerald-100"; cellText = "P"; }
+                                    else if (val === 'A') { cellBg = "bg-rose-50 text-rose-700 border-rose-100"; cellText = "A"; }
+                                    else if (val === 'OD') { cellBg = "bg-blue-50 text-blue-700 border-blue-100"; cellText = "OD"; }
+                                    else { cellBg = "text-zinc-300"; cellText = "—"; }
 
-                                      const isGroupStart = p === periods[0];
-                                      const groupBgClass = gi % 2 === 1
-                                        ? "bg-amber-50/50"
-                                        : "bg-sky-50/40";
-                                      const borderClass = isGroupStart && gi > 0
-                                        ? "border-l-[3px] border-l-[#120c7a]/60"
-                                        : "border-l border-l-zinc-200/50";
+                                    const isGroupStart = p === periods[0];
+                                    const groupBgClass = gi % 2 === 1
+                                      ? "bg-amber-50/50"
+                                      : "bg-sky-50/40";
+                                    const borderClass = isGroupStart && gi > 0
+                                      ? "border-l-[3px] border-l-[#120c7a]/60"
+                                      : "border-l border-l-zinc-200/50";
 
+                                    return (
+                                      <td key={p} className={`px-1 py-1.5 text-center ${groupBgClass} ${borderClass}`}>
+                                        <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold border ${cellBg} shadow-sm`}>
+                                          {cellText}
+                                        </span>
+                                      </td>
+                                    );
+                                  }))}
+                                  {generatedReport.selectedSubjects && generatedReport.selectedSubjects.length > 0 ? (
+                                    generatedReport.selectedSubjects.map(code => {
+                                      const st = student.subjectStats?.[code] || { attended: 0, absent: 0, od: 0, total: 0 };
+                                      const spct = subjectStatPct(st);
                                       return (
-                                        <td key={p} className={`px-1 py-1.5 text-center ${groupBgClass} ${borderClass}`}>
-                                          <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold border ${cellBg} shadow-sm`}>
-                                            {cellText}
-                                          </span>
-                                        </td>
+                                        <Fragment key={`sc_${student.reg}_${code}`}>
+                                          <td className="px-2 py-2.5 text-xs font-bold text-zinc-800 text-center border-l border-zinc-300 bg-zinc-50">{st.total}</td>
+                                          <td className="px-2 py-2.5 text-xs font-bold text-emerald-600 text-center border-l border-zinc-200 bg-zinc-50">{st.attended}</td>
+                                          <td className="px-2 py-2.5 text-xs font-bold text-rose-600 text-center border-l border-zinc-200 bg-zinc-50">{st.absent}</td>
+                                          <td className={`px-2 py-2.5 text-xs font-black text-center border-l border-zinc-300 bg-zinc-100 ${parseFloat(spct) < 75 ? "text-rose-600" : "text-indigo-700"}`}>
+                                            {spct}%
+                                          </td>
+                                        </Fragment>
                                       );
-                                    }))}
-                                    {generatedReport.selectedSubjects && generatedReport.selectedSubjects.length > 0 ? (
-                                      generatedReport.selectedSubjects.map(code => {
-                                        const st = student.subjectStats?.[code] || { attended: 0, absent: 0, od: 0, total: 0 };
-                                        const spct = subjectStatPct(st);
-                                        return (
-                                          <Fragment key={`sc_${student.reg}_${code}`}>
-                                            <td className="px-2 py-2.5 text-xs font-bold text-zinc-800 text-center border-l border-zinc-300 bg-zinc-50">{st.total}</td>
-                                            <td className="px-2 py-2.5 text-xs font-bold text-emerald-600 text-center border-l border-zinc-200 bg-zinc-50">{st.attended}</td>
-                                            <td className="px-2 py-2.5 text-xs font-bold text-rose-600 text-center border-l border-zinc-200 bg-zinc-50">{st.absent}</td>
-                                            <td className={`px-2 py-2.5 text-xs font-black text-center border-l border-zinc-300 bg-zinc-100 ${parseFloat(spct) < 75 ? "text-rose-600" : "text-indigo-700"}`}>
-                                              {spct}%
-                                            </td>
-                                          </Fragment>
-                                        );
-                                      })
-                                    ) : (
-                                      <>
-                                        <td className="px-3 py-2.5 text-xs font-bold text-zinc-800 text-center border-l border-zinc-300 bg-zinc-50">{student.total}</td>
-                                        <td className="px-3 py-2.5 text-xs font-bold text-emerald-600 text-center border-l border-zinc-200 bg-zinc-50">{student.attended}</td>
-                                        <td className="px-3 py-2.5 text-xs font-bold text-blue-600 text-center border-l border-zinc-200 bg-zinc-50">{student.od}</td>
-                                        <td className="px-3 py-2.5 text-xs font-bold text-rose-600 text-center border-l border-zinc-200 bg-zinc-50">{student.absent}</td>
-                                        <td className={`px-3 py-2.5 text-xs font-black text-center border-l border-zinc-300 bg-zinc-100 ${parseFloat(student.percentage) < 75 ? "text-rose-600" : "text-indigo-700"}`}>
-                                          {student.percentage}%
-                                        </td>
-                                      </>
-                                    )}
-                                  </tr>
-                                ))
-                              )}
-                            </tbody>
-                          </>
-                        </table>
-                      </div>
+                                    })
+                                  ) : (
+                                    <>
+                                      <td className="px-3 py-2.5 text-xs font-bold text-zinc-800 text-center border-l border-zinc-300 bg-zinc-50">{student.total}</td>
+                                      <td className="px-3 py-2.5 text-xs font-bold text-emerald-600 text-center border-l border-zinc-200 bg-zinc-50">{student.attended}</td>
+                                      <td className="px-3 py-2.5 text-xs font-bold text-blue-600 text-center border-l border-zinc-200 bg-zinc-50">{student.od}</td>
+                                      <td className="px-3 py-2.5 text-xs font-bold text-rose-600 text-center border-l border-zinc-200 bg-zinc-50">{student.absent}</td>
+                                      <td className={`px-3 py-2.5 text-xs font-black text-center border-l border-zinc-300 bg-zinc-100 ${parseFloat(student.percentage) < 75 ? "text-rose-600" : "text-indigo-700"}`}>
+                                        {student.percentage}%
+                                      </td>
+                                    </>
+                                  )}
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </>
+                      </table>
                     </div>
-)}
-                </div>
-              )}
-            </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
+        </div>
+
+        {/* ═══ Department Fee Due Modal (Exam Fee Due & Academics Fee Due) ═══ */}
+        <DepartmentFeeDueModal
+          isOpen={feeDueModalOpen}
+          onClose={() => setFeeDueModalOpen(false)}
+          department={hodDepartment}
+          programme={hodProgramme}
+          userRole="Academic Coordinator"
+          userName={hodName}
+        />
 
         {/* ═══ Attendance Overview ═══ */}
         <div className="bg-white rounded-2xl border border-zinc-200 shadow-sm overflow-hidden">
@@ -4253,7 +5083,18 @@ export default function AcademicCoordinatorDashboard() {
                   <AlertCircle size={12} /> Outside Semester Range
                 </span>
               )}
-              {attendanceOverviewLoading && <RefreshCw size={16} className="text-white/60 animate-spin" />}
+              <button
+                type="button"
+                onClick={() => {
+                  dashboardAttDocCache.clear();
+                  setAttendanceOverviewLoading(true);
+                  setReloadAttendanceTrigger(prev => prev + 1);
+                }}
+                className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white text-xs transition-all flex items-center gap-1 cursor-pointer"
+                title="Refresh Attendance Status"
+              >
+                <RefreshCw size={14} className={attendanceOverviewLoading ? "animate-spin" : ""} />
+              </button>
               <button onClick={() => navigate("/attendance")}
                 className="px-3 py-1.5 bg-white/15 hover:bg-white/25 text-white text-[10px] font-bold rounded-xl transition-all backdrop-blur-sm border border-white/20">
                 Go to Attendance
@@ -4261,7 +5102,7 @@ export default function AcademicCoordinatorDashboard() {
             </div>
           </div>
 
-          {attendanceOverviewLoading ? (
+          {attendanceOverviewLoading && Object.keys(attendanceOverview).length === 0 ? (
             <div className="p-8 text-center">
               <div className="w-10 h-10 border-[3px] border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
               <p className="text-xs text-zinc-400 font-medium">Checking attendance records...</p>
@@ -4587,17 +5428,15 @@ export default function AcademicCoordinatorDashboard() {
                         <td className="px-3 py-2.5 text-center font-extrabold text-zinc-800 border-r border-zinc-100">{st.total}</td>
                         <td className="px-3 py-2.5 text-center font-bold text-zinc-500 border-r border-zinc-100">{st.max}</td>
                         <td className="px-3 py-2.5 text-center border-r border-zinc-100">
-                          <span className={`px-2 py-0.5 text-[10px] font-extrabold rounded-full ${
-                            parseFloat(st.avg) >= 50 ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'
-                          }`}>{st.avg}%</span>
+                          <span className={`px-2 py-0.5 text-[10px] font-extrabold rounded-full ${parseFloat(st.avg) >= 50 ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'
+                            }`}>{st.avg}%</span>
                         </td>
                         <td className="px-3 py-2.5 text-center">
-                          <span className={`px-2 py-0.5 text-[10px] font-extrabold rounded-full ${
-                            st.status === 'PASSED' ? 'bg-emerald-100 text-emerald-700'
+                          <span className={`px-2 py-0.5 text-[10px] font-extrabold rounded-full ${st.status === 'PASSED' ? 'bg-emerald-100 text-emerald-700'
                               : st.status === 'FAILED' ? 'bg-rose-100 text-rose-700'
                                 : st.status === 'ABSENT' ? 'bg-rose-100 text-rose-700'
                                   : 'bg-zinc-100 text-zinc-600'
-                          }`}>{st.status}</span>
+                            }`}>{st.status}</span>
                         </td>
                       </tr>
                     ))}
@@ -4891,37 +5730,41 @@ export default function AcademicCoordinatorDashboard() {
                     </thead>
                     <tbody className="divide-y divide-zinc-100">
                       {approvedStudentsList.map((s, i) => {
-                        const parts = s.docId.split('_');
-                        const progKey = parts[1] || "";
-                        const batchKey = parts[0] || "";
-                        const configDocId = `${progKey}_${bsKey(hodDepartment)}_${batchKey}`;
-                        const cfg = sectionConfigs[configDocId];
+                        const sDept = s.department || hodDepartment || "";
+                        const parts = (s.docId || "").split('_');
+                        const progKey = s.programme || parts[1] || "PG";
+                        const batchKey = s.batch || parts[0] || "2026-2028";
+                        const configDocId = `${progKey}_${bsKey(sDept)}_${batchKey}`;
+                        const cfg = sectionConfigs[configDocId] || Object.entries(sectionConfigs || {}).find(([k]) => isDeptMatch(k, sDept))?.[1];
                         const numSections = cfg?.numSections || 0;
                         const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-                        const sections = Array.from({ length: numSections }, (_, si) => `Sec-${letters[si]}`);
+                        const sections = numSections > 0
+                          ? Array.from({ length: numSections }, (_, si) => `Sec-${letters[si]}`)
+                          : ["Sec-A", "Sec-B", "Sec-C"];
                         const selected = sectionAssignments[`${s.docId}-${s.reg}`] || "";
 
                         return (
                           <tr key={`${s.docId}-${s.reg}`} className="hover:bg-zinc-50/50 transition-colors">
                             <td className="px-4 py-3 text-sm text-zinc-500">{i + 1}</td>
-                            <td className="px-4 py-3 text-sm font-semibold text-zinc-900">{s.name}</td>
-                            <td className="px-4 py-3 text-sm text-zinc-600">{s.reg}</td>
+                            <td className="px-4 py-3 text-sm font-semibold text-zinc-900">
+                              {s.name}
+                              {s.department && s.department !== hodDepartment && (
+                                <span className="block text-[10px] text-zinc-400 font-normal">{s.department}</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-sm text-zinc-600 font-mono">{s.reg}</td>
                             <td className="px-4 py-3 text-sm text-zinc-600">{s.batch}</td>
                             <td className="px-4 py-3">
-                              {numSections > 0 ? (
-                                <select
-                                  value={selected}
-                                  onChange={(e) => setSectionAssignments(prev => ({ ...prev, [`${s.docId}-${s.reg}`]: e.target.value }))}
-                                  className="rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs font-semibold text-zinc-700 outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10"
-                                >
-                                  <option value="">-- Select --</option>
-                                  {sections.map(sec => (
-                                    <option key={sec} value={sec}>{sec}</option>
-                                  ))}
-                                </select>
-                              ) : (
-                                <span className="text-xs text-zinc-400 italic">No sections configured</span>
-                              )}
+                              <select
+                                value={selected}
+                                onChange={(e) => setSectionAssignments(prev => ({ ...prev, [`${s.docId}-${s.reg}`]: e.target.value }))}
+                                className="rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-xs font-semibold text-zinc-700 outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10"
+                              >
+                                <option value="">-- Select --</option>
+                                {sections.map(sec => (
+                                  <option key={sec} value={sec}>{sec}</option>
+                                ))}
+                              </select>
                             </td>
                             <td className="px-4 py-3 text-center">
                               <button
@@ -4930,33 +5773,76 @@ export default function AcademicCoordinatorDashboard() {
                                   if (!sec) { showToast("Please select a section", "error"); return; }
                                   setSavingSection(true);
                                   try {
-                                    const currentSnap = await getDoc(doc(db, 'approved_admissions', s.docId));
-                                    if (!currentSnap.exists()) { showToast("Student doc not found", "error"); setSavingSection(false); return; }
-                                    const currentData = currentSnap.data();
-                                    const { [s.reg]: studentVal, ...rest } = currentData;
-                                    const newOrder = (currentData._order || []).filter(r => r !== s.reg);
-                                    await setDoc(doc(db, 'approved_admissions', s.docId), { ...rest, _order: newOrder });
+                                    const now = new Date().toISOString();
+                                    const todayStr = now.slice(0, 10);
 
+                                    // 1) Clean up from approved_admissions if present
+                                    try {
+                                      const currentSnap = await getDoc(doc(db, 'approved_admissions', s.docId));
+                                      if (currentSnap.exists()) {
+                                        const currentData = currentSnap.data();
+                                        const { [s.reg]: studentVal, ...rest } = currentData;
+                                        const newOrder = (currentData._order || []).filter(r => r !== s.reg);
+                                        await setDoc(doc(db, 'approved_admissions', s.docId), { ...rest, _order: newOrder });
+                                      }
+                                    } catch (e) {
+                                      console.warn("Could not clean from approved_admissions:", e);
+                                    }
+
+                                    // 2) Clean up from unassigned students doc if present
+                                    try {
+                                      const unassignedSnap = await getDoc(doc(db, 'students', s.docId));
+                                      if (unassignedSnap.exists()) {
+                                        const unassignedData = unassignedSnap.data();
+                                        const { [s.reg]: studentVal, ...rest } = unassignedData;
+                                        const newOrder = (unassignedData._order || []).filter(r => r !== s.reg);
+                                        await setDoc(doc(db, 'students', s.docId), { ...rest, _order: newOrder });
+                                      }
+                                    } catch (e) {
+                                      console.warn("Could not clean from unassigned students:", e);
+                                    }
+
+                                    // 3) Update enquiry if originated from enquiries
+                                    try {
+                                      const enqId = s.enquiryDocId || s.reg;
+                                      await updateDoc(doc(db, 'enquiries', enqId), {
+                                        section: sec,
+                                        sectionAllottedAt: now,
+                                        status: "Approved"
+                                      });
+                                    } catch (e) {
+                                      try {
+                                        const eqSnap = await getDocs(query(collection(db, 'enquiries'), where('enquiryId', '==', s.reg)));
+                                        eqSnap.forEach(d => {
+                                          updateDoc(d.ref, { section: sec, sectionAllottedAt: now, status: "Approved" });
+                                        });
+                                      } catch (err2) { }
+                                    }
+
+                                    // 4) Save to target section doc: students/${s.docId}_${sec}
                                     const secDocId = `${s.docId}_${sanitizeKey(sec)}`;
                                     const secSnap = await getDoc(doc(db, 'students', secDocId));
                                     const secData = secSnap.exists() ? secSnap.data() : {};
                                     const secOrder = secData._order || [];
-                                    if (!secData[s.reg]) secOrder.push(s.reg);
-                                    const joiningAY = currentData._joiningAY || {};
+                                    if (!secOrder.includes(s.reg)) secOrder.push(s.reg);
                                     const secJoiningAY = secData._joiningAY || {};
-                                    const joiningDate = currentData._joiningDate || {};
                                     const secJoiningDate = secData._joiningDate || {};
-                                    const todayStr = new Date().toISOString().slice(0, 10);
+
                                     await setDoc(doc(db, 'students', secDocId), {
                                       ...secData,
-                                      [s.reg]: studentVal,
+                                      [s.reg]: s.name,
                                       _order: secOrder,
-                                      _joiningAY: { ...secJoiningAY, [s.reg]: joiningAY[s.reg] || "" },
-                                      _joiningDate: { ...secJoiningDate, [s.reg]: joiningDate[s.reg] || todayStr }
-                                    });
+                                      _meta: {
+                                        ...(secData._meta || {}),
+                                        department: s.department || hodDepartment,
+                                        programme: s.programme || "PG",
+                                        batch: s.batch
+                                      },
+                                      _joiningAY: { ...secJoiningAY, [s.reg]: s.batch || "" },
+                                      _joiningDate: { ...secJoiningDate, [s.reg]: todayStr }
+                                    }, { merge: true });
 
-                                    // Write to student_index for dual-ID lookup
-                                    const now = new Date().toISOString();
+                                    // 5) Write to student_index for dual-ID lookup
                                     await setDoc(doc(db, 'student_index', s.reg), {
                                       canonicalId: s.reg,
                                       admissionNo: s.reg,
@@ -4966,9 +5852,9 @@ export default function AcademicCoordinatorDashboard() {
                                       batch: s.batch,
                                       _createdAt: now,
                                       _updatedAt: now
-                                    });
+                                    }, { merge: true });
 
-                                    // Update section-level mapping for bulk lookup in MarkEntry
+                                    // 6) Update section-level mapping for bulk lookup
                                     const sectionIndexRef = doc(db, 'student_section_index', secDocId);
                                     const sectionIndexSnap = await getDoc(sectionIndexRef);
                                     const sectionIndexData = sectionIndexSnap.exists() ? sectionIndexSnap.data() : {};
@@ -4976,9 +5862,11 @@ export default function AcademicCoordinatorDashboard() {
                                       ...sectionIndexData,
                                       [s.reg]: { admissionNo: s.reg, regNo: "", name: s.name },
                                       _updatedAt: now
-                                    });
+                                    }, { merge: true });
 
                                     setSectionAssignments(prev => { const n = { ...prev }; delete n[`${s.docId}-${s.reg}`]; return n; });
+                                    setApprovedStudentsList(prev => prev.filter(item => item.reg !== s.reg));
+                                    setRawApprovedCandidates(prev => prev.filter(item => item.reg !== s.reg));
                                     showToast(`${s.name} assigned to ${sec}`, "success");
                                   } catch (err) {
                                     console.error("Section assignment error:", err);
@@ -5130,12 +6018,27 @@ export default function AcademicCoordinatorDashboard() {
                   <p className="text-rose-200 text-[11px] font-semibold">Report generation blocked until attendance is completed for these periods</p>
                 </div>
               </div>
-              <button 
-                onClick={() => setPendingAttendanceModal({ open: false, items: [] })}
-                className="p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded-xl transition"
-              >
-                <X size={18} />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleExportPendingAttendancePDF}
+                  disabled={exportingPendingPdf}
+                  title="Export PDF Report in A4"
+                  className="px-3 py-1.5 bg-white/20 hover:bg-white/30 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 border border-white/30 cursor-pointer shadow-xs disabled:opacity-50"
+                >
+                  {exportingPendingPdf ? (
+                    <RefreshCw size={13} className="animate-spin" />
+                  ) : (
+                    <Download size={13} />
+                  )}
+                  <span>{exportingPendingPdf ? "Generating..." : "PDF Report"}</span>
+                </button>
+                <button
+                  onClick={() => setPendingAttendanceModal({ open: false, items: [] })}
+                  className="p-1.5 text-white/80 hover:text-white hover:bg-white/10 rounded-xl transition cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
+              </div>
             </div>
 
             <div className="p-6 space-y-4 max-h-[60vh] overflow-y-auto">
@@ -5169,8 +6072,11 @@ export default function AcademicCoordinatorDashboard() {
                             <span className="font-bold text-zinc-800">{item.subjectCode}</span>
                             <span className="block text-[10px] text-zinc-500 font-normal line-clamp-1">{item.subjectName}</span>
                           </td>
-                          <td className="py-2.5 px-3 font-semibold text-amber-700">
-                            {item.facultyName}
+                          <td className="py-2.5 px-3">
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-50 text-amber-900 font-bold border border-amber-200 text-xs">
+                              <User size={12} className="text-amber-600" />
+                              {item.facultyName}
+                            </span>
                           </td>
                         </tr>
                       ))}
@@ -5180,14 +6086,28 @@ export default function AcademicCoordinatorDashboard() {
               </div>
             </div>
 
-            <div className="px-6 py-4 bg-zinc-50 border-t border-zinc-200 flex justify-between items-center">
-              <span className="text-xs font-medium text-zinc-500">Total Pending: <strong>{pendingAttendanceModal.items.length}</strong></span>
-              <button
-                onClick={() => setPendingAttendanceModal({ open: false, items: [] })}
-                className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-900 text-white text-xs font-bold rounded-xl transition active:scale-95"
-              >
-                Understood & Close
-              </button>
+            <div className="px-6 py-4 bg-zinc-50 border-t border-zinc-200 flex justify-between items-center gap-3 flex-wrap">
+              <span className="text-xs font-medium text-zinc-500">Total Pending: <strong className="text-rose-600">{pendingAttendanceModal.items.length}</strong></span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleExportPendingAttendancePDF}
+                  disabled={exportingPendingPdf}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition shadow-md hover:shadow-lg active:scale-95 cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {exportingPendingPdf ? (
+                    <RefreshCw size={13} className="animate-spin" />
+                  ) : (
+                    <Download size={13} />
+                  )}
+                  <span>{exportingPendingPdf ? "Generating..." : "Download PDF Report (A4)"}</span>
+                </button>
+                <button
+                  onClick={() => setPendingAttendanceModal({ open: false, items: [] })}
+                  className="px-5 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-xl transition shadow-md active:scale-95 cursor-pointer flex items-center gap-1.5"
+                >
+                  <span>Close & Complete Attendance</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

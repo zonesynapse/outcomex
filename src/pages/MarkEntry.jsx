@@ -18,7 +18,7 @@ import Layout from "../components/Layout";
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
-import { formatProgDisplay, formatBatchDisplay, formatProgrammeKey } from "../lib/utils";
+import { formatProgDisplay, formatBatchDisplay, formatProgrammeKey, isDeptMatch as canonicalDeptMatch } from "../lib/utils";
 import useUnsavedChanges from "../hooks/useUnsavedChanges";
 import { fetchAllCourseNamesMap } from "../utils/courseUtils";
 
@@ -180,24 +180,10 @@ export default function MarkEntry() {
   }, []);
 
   // Canonical department matching - STRICT: both must be present and match
+  // Canonical dynamic department matching backed by Firestore department registry
   const isDeptMatch = useCallback((docDept, targetDept) => {
     if (!targetDept || !docDept) return false;
-    const norm1 = String(docDept).toLowerCase().replace(/^(department of\s+|dept of\s+|be\s+|btech\s+|me\s+|mtech\s+|ug\s+|pg\s+)/gi, '').replace(/[^a-z0-9]/g, '');
-    const norm2 = String(targetDept).toLowerCase().replace(/^(department of\s+|dept of\s+|be\s+|btech\s+|me\s+|mtech\s+|ug\s+|pg\s+)/gi, '').replace(/[^a-z0-9]/g, '');
-
-    if (!norm1 || !norm2) return false;
-    if (norm1 === norm2) return true;
-    if (norm1.includes(norm2) || norm2.includes(norm1)) return true;
-
-    if ((norm1 === 'cse' || norm1.includes('computerscience')) && (norm2 === 'cse' || norm2.includes('computerscience'))) return true;
-    if ((norm1 === 'it' || norm1.includes('informationtechnology')) && (norm2 === 'it' || norm2.includes('informationtechnology'))) return true;
-    if ((norm1 === 'aids' || norm1.includes('artificialintelligence')) && (norm2 === 'aids' || norm2.includes('artificialintelligence'))) return true;
-    if ((norm1 === 'ece' || norm1.includes('electronicsandcommunication')) && (norm2 === 'ece' || norm2.includes('electronicsandcommunication'))) return true;
-    if ((norm1 === 'eee' || norm1.includes('electricalandelectronics')) && (norm2 === 'eee' || norm2.includes('electricalandelectronics'))) return true;
-    if ((norm1 === 'mech' || norm1.includes('mechanicalengineering')) && (norm2 === 'mech' || norm2.includes('mechanicalengineering'))) return true;
-    if ((norm1 === 'civil' || norm1.includes('civilengineering')) && (norm2 === 'civil' || norm2.includes('civilengineering'))) return true;
-
-    return false;
+    return canonicalDeptMatch(docDept, targetDept);
   }, []);
   // Selection States
   const [programme, setProgramme] = useState("");
@@ -2052,26 +2038,7 @@ export default function MarkEntry() {
         if (!studentData || Object.keys(studentData).filter(k => !k.startsWith('_')).length === 0) {
           try {
             const studentsSnap = await getDocs(collection(db, 'students'));
-            const isDeptMatchLocal = (d1, d2) => {
-              if (!d1 || !d2) return true;
-              const s1 = String(d1).toLowerCase().replace(/b\.?e\.?|b\.?tech\.?|department|of|engineering/gi, '').replace(/[^a-z0-9]/g, '');
-              const s2 = String(d2).toLowerCase().replace(/b\.?e\.?|b\.?tech\.?|department|of|engineering/gi, '').replace(/[^a-z0-9]/g, '');
-              if (s1 === s2 || s1.includes(s2) || s2.includes(s1)) return true;
-              const acronyms = {
-                'artificialintelligenceanddatascience': ['aids', 'aiandds', 'ai', 'intel'],
-                'computerscienceandengineering': ['cse', 'cs'],
-                'electronicsandcommunicationengineering': ['ece', 'ec'],
-                'electricalandelectronicsengineering': ['eee', 'ee'],
-                'mechanicalengineering': ['mech', 'me'],
-                'civilengineering': ['civil', 'ce'],
-                'informationtechnology': ['it'],
-                'biomedicalengineering': ['bme', 'biomedical', 'medical']
-              };
-              for (const [full, acrs] of Object.entries(acronyms)) {
-                if ((s1.includes(full) || acrs.some(a => s1 === a)) && (s2.includes(full) || acrs.some(a => s2 === a))) return true;
-              }
-              return false;
-            };
+            const isDeptMatchLocal = isDeptMatch;
 
             studentsSnap.forEach(d => {
               const data = d.data();
@@ -3199,7 +3166,7 @@ export default function MarkEntry() {
   useEffect(() => {
     if (!dashboardQp || subjects.length === 0) return;
     const cleanCode = (s) => parseSubjectCodeKey(s);
-    const qpCode = cleanCode(dashboardQp.subject || dashboardQp.course || '');
+    const qpCode = cleanCode(dashboardQp.subject || dashboardQp.course || dashboardQp.subject_code || dashboardQp.courseCode || '');
     if (qpCode && qpCode !== subject) {
       const noSpace = (c) => String(c).replace(/\s+/g, '');
       const hit = subjects.find(s => noSpace(cleanCode(s.value)) === noSpace(qpCode) || noSpace(cleanCode(s.text)) === noSpace(qpCode));

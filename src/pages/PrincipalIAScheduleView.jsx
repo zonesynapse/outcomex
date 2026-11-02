@@ -7,7 +7,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { db, auth } from "../firebase";
 import { collection, onSnapshot, doc, updateDoc, setDoc, addDoc, serverTimestamp } from "firebase/firestore";
-import { formatDepartmentDisplay, formatBatchDisplay } from "../lib/utils";
+import { formatDepartmentDisplay, formatBatchDisplay, isSameExamEvent } from "../lib/utils";
 
 const parseSyllabusDocId = (id) => {
   const parts = id.split('_');
@@ -126,7 +126,11 @@ const getLogoDataUrl = async () => {
 const buildPrintHtml = (deptGroup, selectedBatchKey, logoUrl) => {
   const targetBatchGroups = selectedBatchKey === "ALL"
     ? deptGroup.batchGroups
-    : deptGroup.batchGroups.filter(bg => `${bg.batch}___${bg.semester}` === selectedBatchKey);
+    : deptGroup.batchGroups.filter(bg => {
+        const k1 = `${bg.batch}___${bg.semester}`;
+        const k2 = `${bg.batch}___${bg.semester}___${bg.examName || ""}`;
+        return k1 === selectedBatchKey || k2 === selectedBatchKey;
+      });
 
   const firstItem = targetBatchGroups[0]?.items[0];
   const academicYearStr = firstItem?.academicYear ? `Academic Year: ${firstItem.academicYear}` : "";
@@ -406,6 +410,10 @@ export default function PrincipalIAScheduleView({
   const [loadingSyllabus, setLoadingSyllabus] = useState(true);
   const [courseEnrolmentsMap, setCourseEnrolmentsMap] = useState({});
   const [approvingKey, setApprovingKey] = useState("");
+  const [statusFilter, setStatusFilter] = useState(hideApproved ? "PENDING" : "ALL");
+  const effectiveHideApproved = statusFilter === "PENDING";
+  const [selectedBatchFilter, setSelectedBatchFilter] = useState("ALL");
+  const [selectedExamFilter, setSelectedExamFilter] = useState("ALL");
   const [toast, setToast] = useState({ show: false, message: "", type: "success" });
   const [logoBase64, setLogoBase64] = useState(null);
 
@@ -679,7 +687,7 @@ export default function PrincipalIAScheduleView({
 
   const handleOpenPreviewModal = (group, specificBg = null) => {
     setPreviewDeptGroup(group);
-    setPreviewSelectedBatch(specificBg ? `${specificBg.batch}___${specificBg.semester}` : "ALL");
+    setPreviewSelectedBatch(specificBg ? `${specificBg.batch}___${specificBg.semester}___${specificBg.examName || ""}` : "ALL");
     setPreviewModalOpen(true);
   };
 
@@ -709,7 +717,11 @@ export default function PrincipalIAScheduleView({
       // Filter items based on selectedBatchKey
       const targetBatchGroups = selectedBatchKey === "ALL"
         ? deptGroup.batchGroups
-        : deptGroup.batchGroups.filter(bg => `${bg.batch}___${bg.semester}` === selectedBatchKey);
+        : deptGroup.batchGroups.filter(bg => {
+            const k1 = `${bg.batch}___${bg.semester}`;
+            const k2 = `${bg.batch}___${bg.semester}___${bg.examName || ""}`;
+            return k1 === selectedBatchKey || k2 === selectedBatchKey;
+          });
 
       if (!targetBatchGroups.length) {
         showToast("No schedule items found for the selected batch", "error");
@@ -937,20 +949,58 @@ export default function PrincipalIAScheduleView({
     }, 400);
   };
 
-  // 1. Read all saved QP Setter Assignments / IA Schedules (all batches)
+  // 1. Read all saved QP Setter Assignments & IA Schedules (all batches)
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, "qp_setter_assignments"), (snap) => {
-      const docs = [];
-      snap.forEach(d => docs.push({ id: d.id, ...d.data() }));
-      docs.sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")) || a.id.localeCompare(b.id));
-      setScheduleDocs(docs);
+    let qpDocs = [];
+    let iaDocs = [];
+
+    const mergeAndSet = () => {
+      const docMap = new Map();
+      qpDocs.forEach(d => docMap.set(d.id, d));
+      iaDocs.forEach(d => {
+        if (!docMap.has(d.id)) {
+          docMap.set(d.id, d);
+        } else {
+          const existing = docMap.get(d.id);
+          docMap.set(d.id, {
+            ...d,
+            ...existing,
+            assignments: { ...(d.assignments || d.timetable || {}), ...(existing.assignments || existing.timetable || {}) }
+          });
+        }
+      });
+      const all = Array.from(docMap.values());
+      all.sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")) || a.id.localeCompare(b.id));
+      setScheduleDocs(all);
       setLoadingSchedules(false);
+    };
+
+    const unsubQP = onSnapshot(collection(db, "qp_setter_assignments"), (snap) => {
+      qpDocs = [];
+      snap.forEach(d => qpDocs.push({ id: d.id, ...d.data() }));
+      mergeAndSet();
     }, (err) => {
       console.warn("qp_setter_assignments listener error:", err);
-      setScheduleDocs([]);
-      setLoadingSchedules(false);
+      mergeAndSet();
     });
-    return () => unsub();
+
+    const unsubIA = onSnapshot(collection(db, "ia_schedules"), (snap) => {
+      iaDocs = [];
+      snap.forEach(d => {
+        const data = d.data() || {};
+        const assignments = data.assignments || data.timetable || {};
+        iaDocs.push({ id: d.id, ...data, assignments });
+      });
+      mergeAndSet();
+    }, (err) => {
+      console.warn("ia_schedules listener error:", err);
+      mergeAndSet();
+    });
+
+    return () => {
+      unsubQP();
+      unsubIA();
+    };
   }, []);
 
   // 2. Read all syllabus docs to resolve department per course code
@@ -1139,18 +1189,11 @@ export default function PrincipalIAScheduleView({
   };
 
   const isValidBatchSemester = (batch, academicYear, semester) => {
-    if (!batch || !academicYear || !semester) return true;
-    const matchB = String(batch).match(/\b(20\d{2})\b/);
-    const matchAY = String(academicYear).match(/\b(20\d{2})\b/);
-    if (!matchB || !matchAY) return true;
-    const batchStart = parseInt(matchB[1], 10);
-    const yearStart = parseInt(matchAY[1], 10);
-    const yearIndex = yearStart - batchStart;
-    if (yearIndex < 0 || yearIndex > 4) return false;
-    const validSem1 = String(yearIndex * 2 + 1);
-    const validSem2 = String(yearIndex * 2 + 2);
-    const semStr = String(semester).trim();
-    return semStr === validSem1 || semStr === validSem2;
+    if (!batch || !semester) return true;
+    const semNum = parseInt(String(semester).replace(/[^0-9]/g, ''), 10);
+    if (!semNum || isNaN(semNum)) return true;
+    if (semNum < 1 || semNum > 10) return false;
+    return true;
   };
 
   const isValidDeptBatch = (progKey, dept, batch) => {
@@ -1222,9 +1265,11 @@ export default function PrincipalIAScheduleView({
 
   // Filter out legacy/stale assignment keys that belong to a different regulation
   // than the sDoc's target batch/regulation.
+  // Filter out legacy/stale assignment keys that belong to a different regulation
+  // than the sDoc's target batch/regulation.
   const getActiveAssignmentsForDoc = (sDoc) => {
     const assignments = sDoc.assignments || {};
-    const entries = Object.entries(assignments).filter(([_, as]) => Boolean(as?.examDate));
+    const entries = Object.entries(assignments).filter(([_, as]) => Boolean(as?.examDate || as?.date || as?.scheduleDate || as?.exam_date));
     if (entries.length <= 1) return entries;
 
     const targetReg = resolveBatchRegulation(sDoc.batch, "");
@@ -1263,10 +1308,19 @@ export default function PrincipalIAScheduleView({
   const normalizeBatchKey = (batchStr) => {
     if (!batchStr) return "";
     const s = String(batchStr).trim();
-    const match = s.match(/\b(20\d{2})\b/);
-    if (match) {
-      const startYr = parseInt(match[1], 10);
-      const isPG = s.toLowerCase().includes("pg") || s.toLowerCase().includes("mba") || s.toLowerCase().includes("m.e");
+    // 1. If string explicitly has start and end year (e.g. "2025-2027", "2025-27", "2025-2029", "2025-29", "25 Batch (2025-27)")
+    const twoYearMatch = s.match(/\b(20\d{2})\s*[-–—/]\s*(20\d{2}|\d{2})\b/);
+    if (twoYearMatch) {
+      const startYr = parseInt(twoYearMatch[1], 10);
+      let endYr = parseInt(twoYearMatch[2], 10);
+      if (endYr < 100) endYr += 2000;
+      return `${startYr}-${endYr}`;
+    }
+    // 2. Single 4-digit year match
+    const singleMatch = s.match(/\b(20\d{2})\b/);
+    if (singleMatch) {
+      const startYr = parseInt(singleMatch[1], 10);
+      const isPG = s.toLowerCase().includes("pg") || s.toLowerCase().includes("mba") || s.toLowerCase().includes("m.e") || s.toLowerCase().includes("m_e");
       const duration = isPG ? 2 : 4;
       return `${startYr}-${startYr + duration}`;
     }
@@ -1282,16 +1336,18 @@ export default function PrincipalIAScheduleView({
     return str.replace(/[^A-Z0-9]/g, "") || "EXAM";
   };
 
-  // Filter scheduleDocs to keep only the latest schedule document per (batch, semester, exam)
+  // Keep schedule documents by unique key: programme, exact batch, academic year, semester, exam (or document id)
   const activeLatestScheduleDocs = useMemo(() => {
     const seen = new Set();
     const result = [];
     scheduleDocs.forEach(d => {
       const normB = normalizeBatchKey(d.batch);
-      const normS = String(d.semester || "").trim();
+      const normS = String(d.semester || "").trim().replace(/[^0-9]/g, '');
       const normE = normalizeExamKey(d.examName, d.examId);
-      const groupKey = `${normB}|${normS}|${normE}`;
-      if (seen.has(groupKey)) return; // Skip older revision documents for the exact same batch/sem/exam
+      const prog = String(d.programme || d.progKey || d.program || "").trim().toUpperCase();
+      const ay = String(d.academicYear || "").trim();
+      const groupKey = `${d.id ? `${d.id}|` : ''}${prog}|${normB}|${ay}|${normS}|${normE}`;
+      if (seen.has(groupKey)) return;
       seen.add(groupKey);
       result.push(d);
     });
@@ -1304,7 +1360,7 @@ export default function PrincipalIAScheduleView({
     const out = [];
     activeLatestScheduleDocs.forEach(sDoc => {
       if (!isValidBatchSemester(sDoc.batch, sDoc.academicYear, sDoc.semester)) return;
-      if (sDoc.status === "Draft") return;
+      if (effectiveHideApproved && sDoc.status === "Draft" && hideApproved) return;
       const assignments = sDoc.assignments || {};
       // Find batch-level default timing from any subject in the schedule document that has timing configured
       let docDefaultSTime = "";
@@ -1319,9 +1375,10 @@ export default function PrincipalIAScheduleView({
       const validDocEntries = getActiveAssignmentsForDoc(sDoc);
 
       validDocEntries.forEach(([assignKey, as]) => {
-        if (!as?.examDate) return; // only subjects with assigned dates
+        const examDate = as?.examDate || as?.date || as?.scheduleDate || as?.exam_date || "";
+        if (!examDate) return; // only subjects with assigned dates
 
-        if (filterDate && !normDateMatch(as.examDate, filterDate)) return;
+        if (filterDate && !normDateMatch(examDate, filterDate)) return;
         const rawCode = String(as.code || assignKey || "").trim();
         const normKey = normCodeKey(rawCode);
 
@@ -1468,8 +1525,12 @@ export default function PrincipalIAScheduleView({
       const merged = { ...base };
       Object.entries(r).forEach(([f, v]) => {
         if (f === "departments") return;
+        if (f === "approved") {
+          // The base record is from the latest document — preserve its approval status
+          return;
+        }
         if (typeof v === "boolean") {
-          merged[f] = merged[f] === true ? true : v;
+          merged[f] = merged[f] !== undefined ? merged[f] : v;
           return;
         }
         const baseEmpty = merged[f] === undefined || merged[f] === null || merged[f] === "" || merged[f] === "-";
@@ -1495,10 +1556,12 @@ export default function PrincipalIAScheduleView({
     const grouped = {};
     Array.from(mergedBySubject.values()).forEach(r => {
       const seenLabels = new Set();
-      r.departments.forEach(d => {
-        if (!isValidDeptBatch(d.progKey, d.dept, r.batch)) return;
+      const validDepts = (r.departments || []).filter(d => isValidDeptBatch(d.progKey, d.dept, r.batch));
+      const deptsToUse = validDepts.length > 0 ? validDepts : ((r.departments && r.departments.length > 0) ? r.departments : [{ dept: "_unmapped", progKey: "" }]);
+
+      deptsToUse.forEach(d => {
         const label = d.dept === "_unmapped"
-          ? "Unknown Department"
+          ? (r.dept || "General / Common")
           : formatDepartmentDisplay(d.dept, d.progKey);
         if (seenLabels.has(label)) return;
         seenLabels.add(label);
@@ -1552,24 +1615,78 @@ export default function PrincipalIAScheduleView({
       .sort((a, b) => a.dept.localeCompare(b.dept));
   }, [activeLatestScheduleDocs, codeDeptMap, loadingSchedules, loadingSyllabus]);
 
-  const [selectedBatchFilter, setSelectedBatchFilter] = useState("ALL");
-
   const availableBatches = useMemo(() => {
     const set = new Set();
     rows.forEach(g => {
-      g.items.forEach(i => { if (i.batch) set.add(i.batch); });
+      const items = effectiveHideApproved ? g.items.filter(i => !i.approved) : g.items;
+      items.forEach(i => { if (i.batch) set.add(i.batch); });
     });
     return Array.from(set).sort((a, b) => String(b).localeCompare(String(a)));
-  }, [rows]);
+  }, [rows, effectiveHideApproved]);
+
+  // Dynamic available exams (filtered by selected batch & status)
+  const availableExams = useMemo(() => {
+    const map = new Map();
+    rows.forEach(g => {
+      let items = effectiveHideApproved ? g.items.filter(i => !i.approved) : g.items;
+      if (selectedBatchFilter !== "ALL") {
+        items = items.filter(i => String(i.batch) === String(selectedBatchFilter));
+      }
+      items.forEach(i => {
+        const en = String(i.examName || "").trim();
+        if (en) {
+          map.set(en, (map.get(en) || 0) + 1);
+        }
+      });
+    });
+    return Array.from(map.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [rows, effectiveHideApproved, selectedBatchFilter]);
+
+  // Keep selected exam filter if valid in new batch, otherwise reset to ALL
+  useEffect(() => {
+    if (selectedExamFilter !== "ALL") {
+      const stillExists = availableExams.some(e => e.name === selectedExamFilter || isSameExamEvent(e.name, selectedExamFilter));
+      if (!stillExists) {
+        setSelectedExamFilter("ALL");
+      }
+    }
+  }, [selectedBatchFilter, availableExams]);
+
+  const batchTotalItemsCount = useMemo(() => {
+    return rows.reduce((acc, g) => {
+      let items = effectiveHideApproved ? g.items.filter(i => !i.approved) : g.items;
+      if (selectedBatchFilter !== "ALL") {
+        items = items.filter(i => String(i.batch) === String(selectedBatchFilter));
+      }
+      return acc + items.length;
+    }, 0);
+  }, [rows, effectiveHideApproved, selectedBatchFilter]);
+
+  const totalBatchesItemsCount = useMemo(() => {
+    return rows.reduce((acc, g) => {
+      const items = effectiveHideApproved ? g.items.filter(i => !i.approved) : g.items;
+      return acc + items.length;
+    }, 0);
+  }, [rows, effectiveHideApproved]);
 
   const filteredRows = useMemo(() => {
     return rows.map(g => {
-      // 1. If hideApproved is true, retain only pending (unapproved) items
-      let filteredItems = hideApproved ? g.items.filter(i => !i.approved) : g.items;
+      // 1. If effectiveHideApproved is true, retain only pending (unapproved) items
+      let filteredItems = effectiveHideApproved ? g.items.filter(i => !i.approved) : g.items;
 
       // 2. Filter by selected batch if not ALL
       if (selectedBatchFilter !== "ALL") {
         filteredItems = filteredItems.filter(i => String(i.batch) === String(selectedBatchFilter));
+      }
+
+      // 3. Filter by selected exam if not ALL
+      if (selectedExamFilter !== "ALL") {
+        filteredItems = filteredItems.filter(i => {
+          const en = String(i.examName || "").trim();
+          return en === selectedExamFilter || isSameExamEvent(en, selectedExamFilter);
+        });
       }
 
       if (!filteredItems.length) return null;
@@ -1610,7 +1727,7 @@ export default function PrincipalIAScheduleView({
         batchGroups
       };
     }).filter(Boolean);
-  }, [rows, selectedBatchFilter, hideApproved]);
+  }, [rows, selectedBatchFilter, selectedExamFilter, effectiveHideApproved]);
 
   const flatScheduledItems = useMemo(() => {
     const items = [];
@@ -1710,40 +1827,56 @@ export default function PrincipalIAScheduleView({
     }
   }, [displayScheduledItems, courseEnrolmentsRawMap, studentsMasterRegsMap, onRegisterNumbersChange]);
 
+  const totalAllCount = useMemo(() => rows.reduce((sum, g) => sum + g.items.length, 0), [rows]);
+  const totalPendingCount = useMemo(() => rows.reduce((sum, g) => sum + g.items.filter(i => !i.approved).length, 0), [rows]);
+  const totalApprovedCount = useMemo(() => rows.reduce((sum, g) => sum + g.items.filter(i => i.approved).length, 0), [rows]);
+
   const totalScheduled = useMemo(() => filteredRows.reduce((sum, g) => sum + g.items.length, 0), [filteredRows]);
   const approvedCount = useMemo(() => {
     return filteredRows.reduce((sum, g) => sum + g.items.filter(i => i.approved).length, 0);
   }, [filteredRows]);
 
   const pendingCount = useMemo(() => filteredRows.reduce((sum, g) => sum + g.items.filter(i => !i.approved).length, 0), [filteredRows]);
-  const allApproved = rows.length === 0 || pendingCount === 0;
+  const allApproved = rows.length === 0 || totalPendingCount === 0;
+
+  const displayScheduledCount = useMemo(() => {
+    return rows.reduce((sum, g) => {
+      let items = g.items;
+      if (selectedBatchFilter !== "ALL") items = items.filter(i => String(i.batch) === String(selectedBatchFilter));
+      if (selectedExamFilter !== "ALL") items = items.filter(i => String(i.examName || "").trim() === selectedExamFilter || isSameExamEvent(String(i.examName || "").trim(), selectedExamFilter));
+      return sum + items.length;
+    }, 0);
+  }, [rows, selectedBatchFilter, selectedExamFilter]);
+
+  const displayApprovedCount = useMemo(() => {
+    return rows.reduce((sum, g) => {
+      let items = g.items.filter(i => i.approved);
+      if (selectedBatchFilter !== "ALL") items = items.filter(i => String(i.batch) === String(selectedBatchFilter));
+      if (selectedExamFilter !== "ALL") items = items.filter(i => String(i.examName || "").trim() === selectedExamFilter || isSameExamEvent(String(i.examName || "").trim(), selectedExamFilter));
+      return sum + items.length;
+    }, 0);
+  }, [rows, selectedBatchFilter, selectedExamFilter]);
+
+  const displayPendingCount = useMemo(() => {
+    return rows.reduce((sum, g) => {
+      let items = g.items.filter(i => !i.approved);
+      if (selectedBatchFilter !== "ALL") items = items.filter(i => String(i.batch) === String(selectedBatchFilter));
+      if (selectedExamFilter !== "ALL") items = items.filter(i => String(i.examName || "").trim() === selectedExamFilter || isSameExamEvent(String(i.examName || "").trim(), selectedExamFilter));
+      return sum + items.length;
+    }, 0);
+  }, [rows, selectedBatchFilter, selectedExamFilter]);
 
   useEffect(() => {
     if (typeof onPendingCountChange === 'function') {
-      onPendingCountChange(allApproved ? 0 : totalScheduled);
+      onPendingCountChange(totalPendingCount);
     }
-  }, [allApproved, totalScheduled, onPendingCountChange]);
+  }, [totalPendingCount, onPendingCountChange]);
 
   if (loadingSchedules || loadingSyllabus) {
     return (
       <div className="w-full flex flex-col items-center justify-center min-h-[200px] py-12 gap-3 text-zinc-400">
         <Loader2 className="animate-spin text-[#120c7a]" size={32} />
         <span className="text-xs font-bold uppercase tracking-wider">Loading IA Examination Schedule...</span>
-      </div>
-    );
-  }
-
-  if (hideApproved && allApproved) {
-    if (!showApproveButton) return null;
-    return (
-      <div className="rounded-2xl border border-emerald-200 bg-white p-12 text-center shadow-sm">
-        <div className="w-14 h-14 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto mb-4 border border-emerald-200">
-          <CheckCircle2 size={28} />
-        </div>
-        <h3 className="text-base font-black text-slate-800 mb-1">All IA Schedules Approved</h3>
-        <p className="text-xs text-slate-500 max-w-md mx-auto">
-          There are currently no examination schedules pending Principal approval. All configured exam timetables have been approved and published to faculty.
-        </p>
       </div>
     );
   }
@@ -1843,48 +1976,132 @@ export default function PrincipalIAScheduleView({
       {!hideBatchFilter && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
           <div className="bg-gradient-to-br from-blue-700 to-indigo-900 rounded-xl p-4 text-white">
-            <p className="text-2xl font-bold">{totalScheduled}</p>
+            <p className="text-2xl font-bold">{displayScheduledCount}</p>
             <p className="text-[11px] font-semibold uppercase tracking-wider opacity-80">Subjects Scheduled</p>
           </div>
           <div className="bg-gradient-to-br from-emerald-600 to-teal-800 rounded-xl p-4 text-white">
-            <p className="text-2xl font-bold">{approvedCount}</p>
+            <p className="text-2xl font-bold">{displayApprovedCount}</p>
             <p className="text-[11px] font-semibold uppercase tracking-wider opacity-80">Approved Subjects</p>
           </div>
           <div className="bg-gradient-to-br from-amber-500 to-orange-700 rounded-xl p-4 text-white">
-            <p className="text-2xl font-bold">{totalScheduled - approvedCount}</p>
+            <p className="text-2xl font-bold">{displayPendingCount}</p>
             <p className="text-[11px] font-semibold uppercase tracking-wider opacity-80">Pending Approval</p>
           </div>
         </div>
       )}
 
-      {/* Batch Filter Bar */}
-      {!hideBatchFilter && availableBatches.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 mb-5 p-2 bg-zinc-100/80 rounded-xl border border-zinc-200">
-          <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider px-2">Filter Batch:</span>
-          <button
-            onClick={() => setSelectedBatchFilter("ALL")}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${selectedBatchFilter === "ALL"
-                ? "bg-blue-600 text-white shadow-sm"
-                : "bg-white text-zinc-600 hover:bg-zinc-200/70 border border-zinc-200"
-              }`}
-          >
-            All Batches ({totalScheduled})
-          </button>
-          {availableBatches.map(b => {
-            const count = rows.reduce((acc, g) => acc + g.items.filter(i => String(i.batch) === String(b)).length, 0);
-            return (
+      {/* Batch & Status Filter Bar */}
+      {!hideBatchFilter && (
+        <div className="flex flex-col gap-2.5 mb-5 p-3 bg-zinc-100/80 rounded-2xl border border-zinc-200">
+          {/* Status View Toggle */}
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200/80 pb-2.5">
+            <div className="flex items-center gap-1.5 bg-zinc-200/70 p-1 rounded-xl">
               <button
-                key={b}
-                onClick={() => setSelectedBatchFilter(b)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${selectedBatchFilter === b
-                    ? "bg-blue-600 text-white shadow-sm"
+                onClick={() => { setStatusFilter("PENDING"); setSelectedBatchFilter("ALL"); setSelectedExamFilter("ALL"); }}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  statusFilter === "PENDING"
+                    ? "bg-amber-500 text-white shadow-xs"
+                    : "text-zinc-600 hover:text-zinc-900"
+                }`}
+              >
+                ⏳ Pending Approval ({totalPendingCount})
+              </button>
+              <button
+                onClick={() => { setStatusFilter("ALL"); setSelectedBatchFilter("ALL"); setSelectedExamFilter("ALL"); }}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  statusFilter === "ALL"
+                    ? "bg-blue-600 text-white shadow-xs"
+                    : "text-zinc-600 hover:text-zinc-900"
+                }`}
+              >
+                📋 All Schedules ({totalAllCount})
+              </button>
+            </div>
+            <div className="text-[11px] font-bold text-zinc-500">
+              {statusFilter === "PENDING" ? (
+                <span className="text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg">
+                  Showing {displayPendingCount} unapproved subjects waiting for approval
+                  {selectedBatchFilter !== "ALL" ? ` • ${formatBatchDisplay(selectedBatchFilter)}` : ""}
+                  {selectedExamFilter !== "ALL" ? ` • ${selectedExamFilter}` : ""}
+                </span>
+              ) : (
+                <span className="text-blue-700 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-lg">
+                  Showing all {displayScheduledCount} scheduled subjects ({displayApprovedCount} approved, {displayPendingCount} pending)
+                  {selectedBatchFilter !== "ALL" ? ` • ${formatBatchDisplay(selectedBatchFilter)}` : ""}
+                  {selectedExamFilter !== "ALL" ? ` • ${selectedExamFilter}` : ""}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Batch Filter Buttons */}
+          {availableBatches.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider px-1">Filter Batch:</span>
+              <button
+                onClick={() => { setSelectedBatchFilter("ALL"); setSelectedExamFilter("ALL"); }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${selectedBatchFilter === "ALL"
+                    ? "bg-[#120c7a] text-white shadow-sm"
                     : "bg-white text-zinc-600 hover:bg-zinc-200/70 border border-zinc-200"
                   }`}
               >
-                {formatBatchDisplay(b)} ({count})
+                All Batches ({totalBatchesItemsCount})
               </button>
-            );
-          })}
+              {availableBatches.map(b => {
+                const count = rows.reduce((acc, g) => {
+                  const items = effectiveHideApproved ? g.items.filter(i => !i.approved) : g.items;
+                  return acc + items.filter(i => String(i.batch) === String(b)).length;
+                }, 0);
+                return (
+                  <button
+                    key={b}
+                    onClick={() => setSelectedBatchFilter(b)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${selectedBatchFilter === b
+                        ? "bg-[#120c7a] text-white shadow-sm"
+                        : "bg-white text-zinc-600 hover:bg-zinc-200/70 border border-zinc-200"
+                      }`}
+                  >
+                    {formatBatchDisplay(b)} ({count})
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Dynamic Exam Name Filter Buttons (Batch-wise or All) */}
+          {availableExams.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-zinc-200/80">
+              <span className="text-xs font-bold text-purple-900 uppercase tracking-wider px-1 flex items-center gap-1.5">
+                <Sparkles size={13} className="text-purple-600" /> Filter Exam:
+              </span>
+              <button
+                onClick={() => setSelectedExamFilter("ALL")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  selectedExamFilter === "ALL"
+                    ? "bg-purple-700 text-white shadow-sm"
+                    : "bg-white text-zinc-600 hover:bg-purple-50 hover:text-purple-900 border border-zinc-200"
+                }`}
+              >
+                All Exams ({batchTotalItemsCount})
+              </button>
+              {availableExams.map(ex => {
+                const isSelected = selectedExamFilter === ex.name;
+                return (
+                  <button
+                    key={ex.name}
+                    onClick={() => setSelectedExamFilter(ex.name)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      isSelected
+                        ? "bg-purple-700 text-white shadow-sm"
+                        : "bg-white text-zinc-600 hover:bg-purple-50 hover:text-purple-900 border border-zinc-200"
+                    }`}
+                  >
+                    {ex.name} ({ex.count})
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -2065,10 +2282,38 @@ export default function PrincipalIAScheduleView({
         </div>
       )
     ) : filteredRows.length === 0 ? (
-        <div className="rounded-xl border border-zinc-200 bg-white p-12 text-center text-zinc-400">
-          <Calendar size={36} className="mx-auto mb-2 opacity-50" />
-          <p className="text-sm font-semibold">No IA exam schedules found.</p>
-        </div>
+        effectiveHideApproved && totalPendingCount === 0 ? (
+          <div className="rounded-2xl border border-emerald-200 bg-white p-12 text-center shadow-xs">
+            <div className="w-14 h-14 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto mb-4 border border-emerald-200 shadow-2xs">
+              <CheckCircle2 size={28} />
+            </div>
+            <h3 className="text-base font-black text-slate-800 mb-1">All IA Schedules Approved</h3>
+            <p className="text-xs text-slate-500 max-w-md mx-auto mb-4">
+              There are currently no examination schedules pending approval. All {totalAllCount} configured exam timetables have been approved and published to faculty.
+            </p>
+            {totalAllCount > 0 && (
+              <button
+                onClick={() => { setStatusFilter("ALL"); setSelectedBatchFilter("ALL"); setSelectedExamFilter("ALL"); }}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-md cursor-pointer transition-all active:scale-95"
+              >
+                View All {totalAllCount} Scheduled Subjects
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="rounded-xl border border-zinc-200 bg-white p-12 text-center text-zinc-400">
+            <Calendar size={36} className="mx-auto mb-2 opacity-50 text-blue-600" />
+            <p className="text-sm font-semibold text-zinc-700">No IA exam schedules found matching the selected filter.</p>
+            {(selectedBatchFilter !== "ALL" || selectedExamFilter !== "ALL") && (
+              <button
+                onClick={() => { setSelectedBatchFilter("ALL"); setSelectedExamFilter("ALL"); }}
+                className="mt-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-xs font-bold transition-all cursor-pointer"
+              >
+                Reset Filters
+              </button>
+            )}
+          </div>
+        )
       ) : (
         <div className="space-y-6">
           {filteredRows.map(group => {
@@ -2144,9 +2389,20 @@ export default function PrincipalIAScheduleView({
                             </span>
                           )}
                         </div>
-                        <span className="text-xs font-semibold text-zinc-500">
-                          {bg.items.length} {bg.items.length === 1 ? 'subject' : 'subjects'}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-semibold text-zinc-500">
+                            {bg.items.length} {bg.items.length === 1 ? 'subject' : 'subjects'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenPreviewModal(group, bg)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 text-xs font-bold transition-all cursor-pointer active:scale-95"
+                            title="Export this batch exam schedule as PDF"
+                          >
+                            <FileDown size={12} />
+                            <span>PDF</span>
+                          </button>
+                        </div>
                       </div>
 
                       {/* Batch Table */}
@@ -2239,7 +2495,11 @@ export default function PrincipalIAScheduleView({
       {previewModalOpen && previewDeptGroup && (() => {
         const targetBatchGroups = previewSelectedBatch === "ALL"
           ? previewDeptGroup.batchGroups
-          : previewDeptGroup.batchGroups.filter(bg => `${bg.batch}___${bg.semester}` === previewSelectedBatch);
+          : previewDeptGroup.batchGroups.filter(bg => {
+              const k1 = `${bg.batch}___${bg.semester}`;
+              const k2 = `${bg.batch}___${bg.semester}___${bg.examName || ""}`;
+              return k1 === previewSelectedBatch || k2 === previewSelectedBatch;
+            });
 
         const totalItemsInPreview = targetBatchGroups.reduce((acc, bg) => acc + bg.items.length, 0);
         const firstItem = targetBatchGroups[0]?.items[0];
@@ -2312,19 +2572,19 @@ export default function PrincipalIAScheduleView({
                   >
                     All Batches ({previewDeptGroup.items.length} subjects)
                   </button>
-                  {previewDeptGroup.batchGroups.map(bg => {
-                    const key = `${bg.batch}___${bg.semester}`;
+                  {previewDeptGroup.batchGroups.map((bg, idx) => {
+                    const key = `${bg.batch}___${bg.semester}___${bg.examName || ""}`;
                     return (
                       <button
-                        key={key}
+                        key={`${key}_${idx}`}
                         type="button"
                         onClick={() => setPreviewSelectedBatch(key)}
-                        className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${previewSelectedBatch === key
+                        className={`px-3 py-1 rounded-md text-xs font-bold transition-all whitespace-nowrap ${previewSelectedBatch === key
                             ? "bg-blue-600 text-white shadow-sm"
                             : "bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700"
                           }`}
                       >
-                        {formatBatchDisplay(bg.batch)} (Sem {bg.semester}) ({bg.items.length})
+                        {formatBatchDisplay(bg.batch)} (Sem {bg.semester}){bg.examName ? ` - ${bg.examName}` : ""} ({bg.items.length})
                       </button>
                     );
                   })}

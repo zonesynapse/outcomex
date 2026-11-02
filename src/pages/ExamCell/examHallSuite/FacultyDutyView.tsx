@@ -38,6 +38,7 @@ import {
   NotificationLog
 } from '../../../types';
 import { downloadCSV } from './allocationEngine';
+import { isDeptMatch } from '../../../lib/utils';
 import { subscribeToRealtimeSchedules } from './scheduleSync';
 import { useDepartments } from '../../../hooks/useDepartments';
 
@@ -137,22 +138,8 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
     const exact = masterRawDepartments.find((m) => m.trim() === trimmed);
     if (exact) return exact;
 
-    // 2. Normalized match against acronyms/keywords in master list
-    const matched = masterRawDepartments.find((m) => {
-      const mLower = m.toLowerCase().replace(/[^a-z0-9]/g, '');
-      if (mLower === lower) return true;
-      if (lower === 'cse' && mLower.includes('computerscience')) return true;
-      if (lower === 'it' && mLower.includes('informationtechnology')) return true;
-      if (lower === 'aids' && mLower.includes('artificialintelligence')) return true;
-      if (lower === 'ece' && mLower.includes('electronicsandcommunication')) return true;
-      if (lower === 'eee' && mLower.includes('electricalandelectronics')) return true;
-      if (lower === 'mech' && mLower.includes('mechanicalengineering')) return true;
-      if (lower === 'civil' && mLower.includes('civilengineering')) return true;
-      if (lower === 'bme' && mLower.includes('biomedical')) return true;
-      if (lower === 'robotics' && mLower.includes('roboticsandautomation')) return true;
-      if (lower === 'mba' && (mLower.includes('businessadministration') || mLower === 'administration')) return true;
-      return false;
-    });
+    // 2. Normalized match using dynamic Department Registry (Firestore backed)
+    const matched = masterRawDepartments.find((m) => isDeptMatch(m, trimmed));
 
     if (matched) return matched;
     return trimmed;
@@ -211,21 +198,7 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
 
     const targetLower = deptName.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-    const foundKey = Object.keys(deptQuotas).find((k) => {
-      const kLower = k.toLowerCase().replace(/[^a-z0-9]/g, '');
-      if (kLower === targetLower) return true;
-      if ((targetLower.includes('computerscience') || targetLower === 'cse') && (kLower.includes('computerscience') || kLower === 'cse')) return true;
-      if ((targetLower.includes('informationtechnology') || targetLower === 'it') && (kLower.includes('informationtechnology') || kLower === 'it')) return true;
-      if ((targetLower.includes('artificialintelligence') || targetLower === 'aids') && (kLower.includes('artificialintelligence') || kLower === 'aids')) return true;
-      if ((targetLower.includes('electronicsandcommunication') || targetLower === 'ece') && (kLower.includes('electronicsandcommunication') || kLower === 'ece')) return true;
-      if ((targetLower.includes('electricalandelectronics') || targetLower === 'eee') && (kLower.includes('electricalandelectronics') || kLower === 'eee')) return true;
-      if ((targetLower.includes('mechanicalengineering') || targetLower === 'mech') && (kLower.includes('mechanicalengineering') || kLower === 'mech')) return true;
-      if ((targetLower.includes('civilengineering') || targetLower === 'civil') && (kLower.includes('civilengineering') || kLower === 'civil')) return true;
-      if ((targetLower.includes('biomedical') || targetLower === 'bme') && (kLower.includes('biomedical') || kLower === 'bme')) return true;
-      if ((targetLower.includes('roboticsandautomation') || targetLower === 'robotics') && (kLower.includes('roboticsandautomation') || kLower === 'robotics')) return true;
-      if ((targetLower.includes('businessadministration') || targetLower === 'mba') && (kLower.includes('businessadministration') || kLower === 'mba')) return true;
-      return kLower.includes(targetLower) || targetLower.includes(kLower);
-    });
+    const foundKey = Object.keys(deptQuotas).find((k) => isDeptMatch(k, deptName));
 
     return foundKey ? deptQuotas[foundKey as Department] : undefined;
   };
@@ -340,14 +313,14 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
           id: 'wf-default',
           examScheduleId: 'default-exam',
           date: '2026-08-31',
-          session: 'FN',
+          session: 'FN' as const,
           timeSlot: '09:30 AM - 12:30 PM',
           noOfHalls: 0,
           hallSuperintendentCount: 0,
           bufferCount: 1,
           totalRequired: 1,
           deptQuotas: {},
-          status: 'Draft',
+          status: 'Draft' as DutyWorkflowStatus,
           coordinatorRemarks: '',
         },
       }
@@ -360,14 +333,14 @@ export const FacultyDutyView: React.FC<FacultyDutyViewProps> = ({
       id: 'wf-default',
       examScheduleId: 'default-exam',
       date: '2026-08-31',
-      session: 'FN',
+      session: 'FN' as const,
       timeSlot: '09:30 AM - 12:30 PM',
       noOfHalls: 0,
       hallSuperintendentCount: 0,
       bufferCount: 1,
       totalRequired: 1,
       deptQuotas: {},
-      status: 'Draft',
+      status: 'Draft' as DutyWorkflowStatus,
       coordinatorRemarks: '',
     };
   }, [currentRequirement]);

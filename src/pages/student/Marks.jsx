@@ -3,6 +3,11 @@ import { db, auth } from "../../firebase";
 import { doc, collection, getDoc, getDocs } from "firebase/firestore";
 import { onAuthStateChanged } from "firebase/auth";
 import { FileText, AlertCircle, Loader2, Award } from "lucide-react";
+import {
+  getCachedStudentProfile,
+  setCachedStudentProfile,
+  fetchScopedMarksDocs
+} from "../../lib/studentSession";
 
 const extractMarksDocMeta = (d) => {
   if (!d) return {};
@@ -89,17 +94,25 @@ const extractStudentMarkTotal = (s) => {
 };
 
 export default function Marks() {
-  const [studentData, setStudentData] = useState(null);
+  const [studentData, setStudentData] = useState(() => getCachedStudentProfile());
   const [loading, setLoading] = useState(true);
   const [marksList, setMarksList] = useState([]);
   const [expandedExam, setExpandedExam] = useState(null);
 
   useEffect(() => {
+    const cached = getCachedStudentProfile();
+    if (cached) {
+      setStudentData(cached);
+    }
     const unsub = onAuthStateChanged(auth, async (user) => {
       if (!user) { setLoading(false); return; }
       try {
         const snap = await getDoc(doc(db, "users", user.uid));
-        if (snap.exists()) setStudentData(snap.data());
+        if (snap.exists()) {
+          const uData = snap.data();
+          setStudentData(uData);
+          setCachedStudentProfile(user.uid, uData);
+        }
       } catch (err) { console.error(err); }
     });
     return () => unsub();
@@ -141,7 +154,11 @@ export default function Marks() {
         const targetDeptNorm = normPunct(department);
         const targetBatchNorm = normPunct(batch);
 
-        const snapshot = await getDocs(collection(db, "marks"));
+        const progKey = sanitizeKey(programme);
+        const deptKey = sanitizeKey(department);
+        const batchKey = sanitizeKey(batch);
+
+        const snapshot = await fetchScopedMarksDocs(db, { progKey, deptKey, batchKey });
         const results = [];
 
         for (const docSnap of snapshot.docs) {
@@ -184,8 +201,11 @@ export default function Marks() {
         }
 
         setMarksList(results);
-      } catch (err) { console.error("Fetch student marks error:", err); }
-      setLoading(false);
+      } catch (err) {
+        console.error("Fetch student marks error:", err);
+      } finally {
+        setLoading(false);
+      }
     };
 
     fetchMarks();
@@ -270,8 +290,9 @@ export default function Marks() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="animate-spin text-[#120c7a]" size={40} />
+      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-3">
+        <Loader2 className="animate-spin text-[#120c7a]" size={42} />
+        <p className="text-sm font-semibold text-slate-500 animate-pulse">Loading marks records...</p>
       </div>
     );
   }

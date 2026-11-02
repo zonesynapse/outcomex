@@ -1,4 +1,4 @@
-import { formatProgDisplay, parseSubjectField } from '../lib/utils';
+import { formatProgDisplay, parseSubjectField, isSameExamEvent } from '../lib/utils';
 
 const calculateDuration = (startTime, endTime, timeSlot) => {
   let start = startTime || "";
@@ -45,7 +45,7 @@ const calculateDuration = (startTime, endTime, timeSlot) => {
   return "180 min";
 };
 
-const formatExamDateDisplay = (dateVal) => {
+export const formatExamDateDisplay = (dateVal) => {
   if (!dateVal) return "";
   try {
     let d = null;
@@ -184,7 +184,7 @@ export const getQuestionPaperHTML = (
     <td style="padding: 6px; border: 1px solid #000;"><strong>Duration</strong></td>
     <td style="padding: 6px; border: 1px solid #000;">${qp.duration || calculateDuration(qp.start_time, qp.end_time, qp.time_slot || qp.timeSlot) || '180 min'}</td>
     <td style="padding: 6px; border: 1px solid #000;"><strong>Date</strong></td>
-    <td style="padding: 6px; border: 1px solid #000;">${qp.exam_date_display || formatExamDateDisplay(qp.exam_date) || (qp.exam_date ? new Date(qp.exam_date).toLocaleDateString() : '')}</td>
+    <td style="padding: 6px; border: 1px solid #000;">${(qp.allocated && qp.allocatedTo?.examDate && (!qp.allocatedTo.examName || !qp.exam_name || isSameExamEvent(qp.allocatedTo.examName, qp.exam_name)) ? formatExamDateDisplay(qp.allocatedTo.examDate) : '') || qp.exam_date_display || formatExamDateDisplay(qp.exam_date) || (qp.exam_date ? new Date(qp.exam_date).toLocaleDateString() : '')}</td>
   </tr>
   <tr>
     <td style="padding: 6px; border: 1px solid #000;"><strong>Reg. No.</strong></td>

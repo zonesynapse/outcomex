@@ -6,7 +6,7 @@ import Layout from "../components/Layout";
 import { useDepartments } from "../hooks/useDepartments";
 import { useBatches } from "../hooks/useBatches";
 import { useRegulations } from "../hooks/useRegulations";
-import { formatProgDisplay, formatBatchDisplay, getAcademicYears, sanitizeKey } from "../lib/utils";
+import { formatProgDisplay, formatBatchDisplay, getAcademicYears, sanitizeKey, isDeptMatch } from "../lib/utils";
 import { listenMentorAllocation, saveMentorAllocation } from "../services/mentorService";
 import { Users, UserPlus, AlertTriangle, ChevronDown, ChevronUp, Search, X, RefreshCw } from "lucide-react";
 
@@ -114,30 +114,7 @@ export default function MentorAllocation() {
     return Array.from({ length: count }, (_, i) => `Sec-${letters[i]}`);
   }, [batch, department, programme, sectionConfigs]);
 
-const isDeptMatch = (docDept, targetDept) => {
-  if (!targetDept) return true;
-  if (!docDept) return true;
-
-  const norm1 = String(docDept).toLowerCase().replace(/^(department of\s+|dept of\s+|be\s+|btech\s+|me\s+|mtech\s+|ug\s+|pg\s+)/gi, '').replace(/[^a-z0-9]/g, '');
-  const norm2 = String(targetDept).toLowerCase().replace(/^(department of\s+|dept of\s+|be\s+|btech\s+|me\s+|mtech\s+|ug\s+|pg\s+)/gi, '').replace(/[^a-z0-9]/g, '');
-
-  if (norm1 === norm2) return true;
-  if (norm1 && norm2 && (norm1.includes(norm2) || norm2.includes(norm1))) return true;
-
-  // Acronym vs full name checks
-  if ((norm1 === 'cse' || norm1.includes('computerscience')) && (norm2 === 'cse' || norm2.includes('computerscience'))) return true;
-  if ((norm1 === 'it' || norm1.includes('informationtechnology')) && (norm2 === 'it' || norm2.includes('informationtechnology'))) return true;
-  if ((norm1 === 'aids' || norm1.includes('artificialintelligence')) && (norm2 === 'aids' || norm2.includes('artificialintelligence'))) return true;
-  if ((norm1 === 'ece' || norm1.includes('electronicsandcommunication')) && (norm2 === 'ece' || norm2.includes('electronicsandcommunication'))) return true;
-  if ((norm1 === 'eee' || norm1.includes('electricalandelectronics')) && (norm2 === 'eee' || norm2.includes('electricalandelectronics'))) return true;
-  if ((norm1 === 'mech' || norm1.includes('mechanicalengineering')) && (norm2 === 'mech' || norm2.includes('mechanicalengineering'))) return true;
-  if ((norm1 === 'civil' || norm1.includes('civilengineering')) && (norm2 === 'civil' || norm2.includes('civilengineering'))) return true;
-  if ((norm1 === 'bme' || norm1.includes('biomedical')) && (norm2 === 'bme' || norm2.includes('biomedical'))) return true;
-  if ((norm1 === 'robotics' || norm1.includes('roboticsandautomation')) && (norm2 === 'robotics' || norm2.includes('roboticsandautomation'))) return true;
-  if ((norm1 === 'mba' || norm1.includes('businessadministration')) && (norm2 === 'mba' || norm2.includes('businessadministration'))) return true;
-
-  return false;
-};
+// isDeptMatch is imported dynamically from ../lib/utils (Firestore-backed registry)
 
   // Faculty list (from selected or logged-in user's department)
   useEffect(() => {

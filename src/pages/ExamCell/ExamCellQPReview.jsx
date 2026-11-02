@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, collection, getDoc, onSnapshot, setDoc, deleteField } from "firebase/firestore";
+import { doc, collection, getDoc, onSnapshot, setDoc, updateDoc, deleteField } from "firebase/firestore";
 import {
   FileText, Eye, X, CheckCircle2, Edit2, Loader2, Search, Landmark,
   Clock, CalendarCheck2, ShieldCheck, Sparkles, ArrowLeft, BookOpen,
@@ -731,6 +731,57 @@ export default function ExamCellQPReview() {
     typesetMath(container);
   }, [showQPModal, fullQPForModal, selectedQP]);
 
+  // Resilient QP updater: if parent doc size > 1MB, automatically migrates set to a standalone flat doc
+  const saveQPStatusUpdate = async (qp, updates) => {
+    if (!qp) return;
+    const isFlat = qp._isFlatDoc || (qp.id && String(qp.id).includes('__')) || String(qp.compositeKey || '').includes('__');
+    const compKey = qp.compositeKey || qp.id;
+    const sId = qp.id || 'Exam';
+    const flatDocId = compKey.includes('__') ? compKey : `${compKey}__${sId}`;
+
+    if (isFlat) {
+      await setDoc(doc(db, 'generated_qps', flatDocId), updates, { merge: true });
+      if (sId && sId !== flatDocId && sId !== 'Exam') {
+        try {
+          await setDoc(doc(db, 'generated_qps', flatDocId), { [sId]: deleteField() }, { merge: true });
+        } catch { /* ignore if not present */ }
+      }
+      return;
+    }
+
+    try {
+      await setDoc(doc(db, 'generated_qps', compKey), { [sId]: updates }, { merge: true });
+    } catch (err) {
+      const errStr = String(err?.message || err || '');
+      const isSizeError = errStr.includes('exceeds the maximum allowed size') || errStr.includes('size') || errStr.includes('1,048,576') || errStr.includes('bytes');
+      if (!isSizeError) {
+        throw err;
+      }
+      console.warn(`[saveQPStatusUpdate] Parent document ${compKey} exceeds 1MB Firestore limit. Automatically extracting set ${sId} into standalone flat document ${flatDocId}...`);
+
+      const sourceQP = (selectedQP && selectedQP.id === qp.id) ? { ...selectedQP, ...qp } : qp;
+      const flatPayload = {
+        ...sourceQP,
+        ...updates,
+        id: sId,
+        compositeKey: compKey,
+        _isFlatDoc: true
+      };
+      delete flatPayload.draft_html;
+
+      await setDoc(doc(db, 'generated_qps', flatDocId), flatPayload, { merge: true });
+
+      try {
+        await updateDoc(doc(db, 'generated_qps', compKey), {
+          [sId]: deleteField()
+        });
+        console.log(`[saveQPStatusUpdate] Successfully extracted and removed ${sId} from bloated parent doc ${compKey}.`);
+      } catch (cleanErr) {
+        console.warn(`[saveQPStatusUpdate] Parent doc field cleanup skipped:`, cleanErr);
+      }
+    }
+  };
+
   const handleApproveByCOE = async () => {
     if (!selectedQP) return;
     if (!coeSignature) {
@@ -748,18 +799,7 @@ export default function ExamCellQPReview() {
         forwarded_to: null,
         updated_at: now
       };
-      const isFlat = selectedQP._isFlatDoc || (selectedQP.id && selectedQP.id.includes('__')) || selectedQP.compositeKey.includes('__');
-      if (isFlat) {
-        const docId = selectedQP.compositeKey.includes('__') ? selectedQP.compositeKey : `${selectedQP.compositeKey}__${selectedQP.id}`;
-        await setDoc(doc(db, 'generated_qps', docId), updates, { merge: true });
-        if (selectedQP.id && selectedQP.id !== docId && selectedQP.id !== 'Exam') {
-          try {
-            await setDoc(doc(db, 'generated_qps', docId), { [selectedQP.id]: deleteField() }, { merge: true });
-          } catch { /* ignore if not present */ }
-        }
-      } else {
-        await setDoc(doc(db, 'generated_qps', selectedQP.compositeKey), { [selectedQP.id]: updates }, { merge: true });
-      }
+      await saveQPStatusUpdate(selectedQP, updates);
       showToast("Question paper approved and published by the Exam Cell.", "success");
       setShowQPModal(false);
       setSelectedQP(null);
@@ -768,6 +808,7 @@ export default function ExamCellQPReview() {
       showToast("Failed to approve question paper.", "error");
     }
   };
+  const handleApprove = handleApproveByCOE;
 
   const handleRecorrect = async () => {
     if (!selectedQP || !recorrectComments.trim()) {
@@ -784,13 +825,7 @@ export default function ExamCellQPReview() {
         coe_signature_url: null,
         updated_at: now
       };
-      const isFlat = selectedQP._isFlatDoc || (selectedQP.id && selectedQP.id.includes('__')) || selectedQP.compositeKey.includes('__');
-      if (isFlat) {
-        const docId = selectedQP.compositeKey.includes('__') ? selectedQP.compositeKey : `${selectedQP.compositeKey}__${selectedQP.id}`;
-        await setDoc(doc(db, 'generated_qps', docId), updates, { merge: true });
-      } else {
-        await setDoc(doc(db, 'generated_qps', selectedQP.compositeKey), { [selectedQP.id]: updates }, { merge: true });
-      }
+      await saveQPStatusUpdate(selectedQP, updates);
       showToast("Question paper sent back for recorrection.", "success");
       setShowRecorrectModal(false);
       setShowQPModal(false);
@@ -827,13 +862,7 @@ export default function ExamCellQPReview() {
         status: 'approved_by_coe',
         updated_at: now
       };
-      const isFlat = qp._isFlatDoc || (qp.id && qp.id.includes('__')) || qp.compositeKey.includes('__');
-      if (isFlat) {
-        const docId = qp.compositeKey.includes('__') ? qp.compositeKey : `${qp.compositeKey}__${qp.id}`;
-        await setDoc(doc(db, 'generated_qps', docId), updates, { merge: true });
-      } else {
-        await setDoc(doc(db, 'generated_qps', qp.compositeKey), { [qp.id]: updates }, { merge: true });
-      }
+      await saveQPStatusUpdate(qp, updates);
       showToast(`QP allocated to ${scheduleSlot.examDate} (${scheduleSlot.slot || "FN"}) successfully!`, "success");
       setAllocModal({ open: false, qp: null });
     } catch (error) {

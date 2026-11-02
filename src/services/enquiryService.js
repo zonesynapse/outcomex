@@ -324,6 +324,9 @@ export async function addEnquiry(data) {
   payload.newFields = Object.keys(payload).filter((k) => !excluded.has(k) && payload[k] !== "" && payload[k] !== null && payload[k] !== undefined);
 
   await setDoc(doc(db, ENQUIRY_ROOT, enquiryId), payload);
+  if (payload.status === "Approved" || payload.status === "Admitted") {
+    syncEnquiryToApprovedAdmissions(payload).catch((err) => console.warn("Admissions sync error:", err));
+  }
   return enquiryId;
 }
 
@@ -376,6 +379,9 @@ export async function updateEnquiry(enquiryId, updates) {
   payload.newFields = Array.from(new Set([...(Array.isArray(prev.newFields) ? prev.newFields : []), ...newlyAdded]));
 
   await updateDoc(doc(db, ENQUIRY_ROOT, enquiryId), payload);
+  if (payload.status === "Approved" || payload.status === "Admitted") {
+    syncEnquiryToApprovedAdmissions(payload).catch((err) => console.warn("Admissions sync error:", err));
+  }
 }
 
 export async function deleteEnquiry(enquiryId) {
@@ -453,5 +459,62 @@ export async function getEnquiriesStats() {
       admission: 0,
       approved: 0,
     };
+  }
+}
+
+export async function syncEnquiryToApprovedAdmissions(enquiryData) {
+  try {
+    const regNo = enquiryData.applicationNo || enquiryData.enquiryId;
+    if (!regNo) return { success: false, reason: "Missing regNo" };
+    const name = [enquiryData.firstName, enquiryData.lastName].filter(Boolean).join(" ").trim() || enquiryData.studentName || "-";
+    const rawProg = enquiryData.programme || "";
+    const isPG = /pg|mba|mca|me|mtech/i.test(rawProg) || /business\s+administration|management/i.test(enquiryData.department || "");
+    const progKey = isPG ? "PG" : "UG";
+    const department = enquiryData.department || enquiryData.departmentName || "";
+    if (!department) return { success: false, reason: "Missing department" };
+
+    // Resolve batch (e.g. 2026-2028 for PG, 2026-2030 for UG)
+    let batch = enquiryData.batch || "";
+    if (!batch || !batch.includes("-")) {
+      const yearMatch = String(enquiryData.enquiryId || enquiryData.applicationNo || enquiryData.enquiryDate || enquiryData.admissionDate || new Date().getFullYear()).match(/\d{4}/);
+      const startYear = yearMatch ? parseInt(yearMatch[0], 10) : new Date().getFullYear();
+      const duration = progKey === "PG" ? 2 : 4;
+      batch = `${startYear}-${startYear + duration}`;
+    }
+
+    const cleanBatch = String(batch).replace(/[.#$[\]/]/g, '_');
+    const cleanDept = String(department).replace(/[.#$[\]/]/g, '_');
+    const studentDocId = `${cleanBatch}_${progKey}_${cleanDept}`;
+    const studentRef = doc(db, 'approved_admissions', studentDocId);
+    const snap = await getDoc(studentRef);
+    const existingData = snap.exists() ? snap.data() : {};
+    const order = existingData._order || [];
+    if (!order.includes(regNo)) {
+      order.push(regNo);
+    }
+    order.sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' }));
+    const joiningAY = existingData._joiningAY || {};
+    const joiningDate = existingData._joiningDate || {};
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const joinDateStr = enquiryData.admissionDate || enquiryData.enquiryDate || todayStr;
+
+    await setDoc(studentRef, {
+      ...existingData,
+      [regNo]: name,
+      _order: order,
+      _meta: {
+        ...(existingData._meta || {}),
+        department,
+        programme: progKey,
+        batch
+      },
+      _joiningAY: { ...joiningAY, [regNo]: enquiryData.academicYear || batch },
+      _joiningDate: { ...joiningDate, [regNo]: joinDateStr }
+    }, { merge: true });
+
+    return { success: true, docId: studentDocId, regNo };
+  } catch (err) {
+    console.error("Failed to sync enquiry to approved_admissions:", err);
+    return { success: false, error: err };
   }
 }

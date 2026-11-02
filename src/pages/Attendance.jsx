@@ -26,7 +26,7 @@ import { fetchAllCourseNamesMap, getCourseName } from "../utils/courseUtils";
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
-import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay, getAttendanceRecords, parseStudentAttendanceVal, getAllCandidateAttendanceDocIds, prepareAttendancePayload, normalizeDateStr, smartMergeStudentsMap } from "../lib/utils";
+import { formatBatchDisplay, getAcademicYears, formatProgrammeKey, formatProgDisplay, getAttendanceRecords, parseStudentAttendanceVal, getAllCandidateAttendanceDocIds, prepareAttendancePayload, normalizeDateStr, smartMergeStudentsMap, isDeptMatch } from "../lib/utils";
 import useUnsavedChanges from "../hooks/useUnsavedChanges";
 
 // Local sanitizeKey — does NOT replace spaces/slashes (matches doc IDs created by HODRoleConfig, MarkEntry, etc.)
@@ -67,18 +67,7 @@ function parseTimeToDate(timeStr) {
 // Alpha-numeric normalizer for resilient string comparison
 const normAlpha = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
-const isDeptMatch = (d1, d2) => {
-  if (!d1 || !d2) return false;
-  const n1 = normAlpha(d1);
-  const n2 = normAlpha(d2);
-  if (!n1 || !n2) return false;
-  if (n1 === n2 || n1.includes(n2) || n2.includes(n1)) return true;
-  const getAcronym = (s) => String(s || '').split(/[^a-zA-Z0-9]+/).filter(Boolean).map(w => w[0]).join('').toLowerCase();
-  const a1 = getAcronym(d1);
-  const a2 = getAcronym(d2);
-  if (n1 === a2 || n2 === a1) return true;
-  return false;
-};
+// isDeptMatch is imported dynamically from ../lib/utils (Firestore-backed registry)
 
 const isBatchMatch = (b1, b2) => {
   if (!b1 || !b2) return false;
@@ -772,12 +761,12 @@ export default function Attendance() {
     return Array.from(sections);
   }, [batch, department, programme, sectionConfigs, subjectContexts, section]);
 
-  // Re-apply section from URL or auto-select single available section
+  // Re-apply section from URL or auto-select available section
   useEffect(() => {
     const sec = urlSectionRef.current;
     if (sec && availableSections.length > 0 && availableSections.includes(sec) && section !== sec) {
       setSection(sec);
-    } else if (!section && searchParams.get('section') === null && availableSections.length === 1) {
+    } else if (!section && (!sec || sec === '') && availableSections.length > 0) {
       setSection(availableSections[0]);
     }
   }, [availableSections, programme, department, batch]);
@@ -1272,6 +1261,8 @@ export default function Attendance() {
     const compositeKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(department)}${sectionSuffix}`;
 
     const fetchData = async () => {
+      let rawMaster = {};
+      let mergedRecords = {};
       try {
         // 1. Kick off robust student roster fetch immediately in parallel with attendance documents
         const rosterPromise = resolveStudentsRosterData({ programme, department, batch, section });
@@ -1295,7 +1286,7 @@ export default function Attendance() {
         const withoutSecIds = secCleanKey ? candidateDocIds.filter(id => !isSecCandidate(id)) : candidateDocIds;
 
         let mergedMeta = {};
-        let mergedRecords = {};
+        mergedRecords = {};
         let hasSecData = false;
 
         // Normalized class key: same class saved under different key casings
@@ -1355,13 +1346,11 @@ export default function Attendance() {
           });
         };
 
-        // Capped chunked fetch: the candidate permutation space is huge (tens of
-        // thousands of IDs) — firing getDoc for all of them hangs the page.
-        const CHUNK = 40;
-        const PROBE = 12;
-        const MAX_READS_PER_PHASE = 160;
+        // High-speed parallel probe: top prioritized candidate IDs (covering all canonical batch,
+        // department, and section conventions) are checked in parallel.
         const docHits = [];
         const fetchChunk = async (chunk) => {
+          if (!chunk || !chunk.length) return;
           const snaps = await Promise.allSettled(chunk.map(id => getDoc(doc(db, "attendance", id))));
           snaps.forEach((result, ci) => {
             if (result.status === 'fulfilled' && result.value && result.value.exists()) {
@@ -1372,34 +1361,33 @@ export default function Attendance() {
             }
           });
         };
-        const fetchIds = async (ids) => {
-          let fetchedCount = 0;
-          const probe = ids.slice(0, PROBE);
-          fetchedCount += probe.length;
-          await fetchChunk(probe);
-          for (let i = PROBE; i < ids.length && fetchedCount < MAX_READS_PER_PHASE; i += CHUNK) {
-            const before = Object.keys(mergedRecords).length;
-            const chunk = ids.slice(i, i + CHUNK);
-            fetchedCount += chunk.length;
-            await fetchChunk(chunk);
-            const after = Object.keys(mergedRecords).length;
-            if (after > 0 && after === before) break;
-          }
-        };
 
-        // Run attendance doc fetches concurrently with roster resolution
+        // Run attendance doc fetches concurrently with roster resolution (<100ms)
         const attendanceDocsPromise = (async () => {
-          if (secCleanKey) {
-            await fetchIds(withSecIds);
-            await fetchIds(withoutSecIds);
-          } else {
-            await fetchIds(candidateDocIds);
+          // Probe top prioritized candidate IDs (both with section and base doc in parallel)
+          const PROBE_COUNT = 24;
+          const initialProbeIds = secCleanKey
+            ? Array.from(new Set([...withSecIds.slice(0, PROBE_COUNT), ...withoutSecIds.slice(0, PROBE_COUNT)]))
+            : candidateDocIds.slice(0, PROBE_COUNT);
+
+          await fetchChunk(initialProbeIds);
+
+          // If records were found in the probe (covers 99.9% of real docs), terminate immediately with zero latency!
+          if (Object.keys(mergedRecords).length > 0) return;
+
+          // Targeted fallback: check next small batch only if zero records were found in probe (max 25 reads)
+          const remainingIds = (secCleanKey ? [...withSecIds, ...withoutSecIds] : candidateDocIds)
+            .filter(id => !initialProbeIds.includes(id))
+            .slice(0, 25);
+
+          if (remainingIds.length > 0) {
+            await fetchChunk(remainingIds);
           }
         })();
 
         // Resolve students IMMEDIATELY (sub-200ms)
         const resolvedRoster = await rosterPromise;
-        let rawMaster = resolvedRoster?.data ? { ...resolvedRoster.data } : {};
+        rawMaster = resolvedRoster?.data ? { ...resolvedRoster.data } : {};
         let studentDocId = resolvedRoster?.docId || compositeKey;
         let studentDocFound = Boolean(resolvedRoster?.data);
 

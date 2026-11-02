@@ -22,7 +22,7 @@ const formatDateTime = (val) => {
   } catch { return "-"; }
 };
 
-export default function Circulars({ embedded, onClose }) {
+export default function Circulars({ embedded = false, onClose = () => {} } = {}) {
   const [currentUser, setCurrentUser] = useState(null);
   const [userData, setUserData] = useState(null);
   const [circulars, setCirculars] = useState([]);

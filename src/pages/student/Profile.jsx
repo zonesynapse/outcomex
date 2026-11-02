@@ -4,6 +4,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc, getDocs, collection, setDoc, updateDoc, onSnapshot, query, where } from "firebase/firestore";
 import { User, GraduationCap, Mail, Calendar, Edit3, Check, Upload, Loader2, X, ChevronDown, ChevronRight, Save, Phone, MapPin, BookOpen, Users, Heart, Award, Globe, Hash, Camera } from "lucide-react";
 import { formatProgDisplay, sanitizeKey } from "../../lib/utils";
+import { getCachedStudentProfile, setCachedStudentProfile } from "../../lib/studentSession";
 import { getSeatConfigurationsRealtime } from "../../services/seatService";
 import { uploadBase64, userStoragePath, deleteByUrl } from "../../utils/fileUpload";
 
@@ -236,7 +237,7 @@ const mapEnquiryToProfileFields = (enq) => {
 };
 
 export default function StudentProfile() {
-  const [userData, setUserData] = useState(null);
+  const [userData, setUserData] = useState(() => getCachedStudentProfile());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
@@ -303,7 +304,18 @@ export default function StudentProfile() {
                 sDocId = idxSnap.data().studentDocId || '';
               }
 
-              // Fallback: scan students collection to find the doc containing this student
+              // Targeted fallback: compute candidate docId from uData batch, programme, and dept
+              if (!sDocId && uData.batch && uData.programme && uData.department) {
+                const candidateId = `${sanitizeKey(uData.batch)}_${sanitizeKey(uData.programme)}_${sanitizeKey(uData.department)}`;
+                try {
+                  const cSnap = await getDoc(doc(db, 'students', candidateId));
+                  if (cSnap.exists()) {
+                    sDocId = candidateId;
+                  }
+                } catch (_) {}
+              }
+
+              // Fallback: scan students collection only if targeted lookup fails
               if (!sDocId) {
                 try {
                   const studentsSnap = await getDocs(collection(db, 'students'));
@@ -323,36 +335,7 @@ export default function StudentProfile() {
             const initial = {};
             SECTIONS.forEach(sec => sec.fields.forEach(f => { initial[f.key] = ''; }));
 
-            // 1. Pre-fill from enquiries (Admission Application Data)
-            try {
-              const candidateKeys = new Set([
-                reg, uData.applicationNo, uData.enquiryId, uData.admissionNo,
-                uData.examNumber, uData.email, uData.mobile, user.email, user.uid
-              ].filter(Boolean));
-
-              for (const k of candidateKeys) {
-                const strKey = String(k).trim();
-                const qArr = [
-                  query(collection(db, "enquiries"), where("applicationNo", "==", strKey)),
-                  query(collection(db, "enquiries"), where("enquiryId", "==", strKey)),
-                  query(collection(db, "enquiries"), where("regNo", "==", strKey)),
-                  query(collection(db, "enquiries"), where("emailId", "==", strKey)),
-                  query(collection(db, "enquiries"), where("mobile", "==", strKey))
-                ];
-                for (const q of qArr) {
-                  const enqSnap = await getDocs(q);
-                  if (!enqSnap.empty) {
-                    const enqMapped = mapEnquiryToProfileFields(enqSnap.docs[0].data());
-                    Object.entries(enqMapped).forEach(([fk, fv]) => {
-                      if (fv && (!initial[fk] || !initial[fk].trim())) initial[fk] = fv;
-                    });
-                    break;
-                  }
-                }
-              }
-            } catch (enqErr) { console.warn("Enquiry prefill error:", enqErr); }
-
-            // 2. Override with saved student/profile data if edited by user/staff
+            // 1. Saved student/profile data (highest priority)
             if (sDocId && reg) {
               try {
                 const sSnap = await getDoc(doc(db, 'students', sDocId));
@@ -372,7 +355,7 @@ export default function StudentProfile() {
               if (uData._profile_data._sameAsPresent === 'true') setSameAsPresent(true);
             }
 
-            // 3. Fallback contact info from users doc
+            // 2. Fallback contact info from users doc
             if (uData.email && !initial.emailId) initial.emailId = uData.email;
             if (uData.studentName && (!initial.firstName || !initial.lastName)) {
               const parts = uData.studentName.split(' ');
@@ -380,28 +363,84 @@ export default function StudentProfile() {
               if (!initial.lastName) initial.lastName = parts.slice(1).join(' ') || '';
             }
 
-            setFormData(initial);
+            // Render profile immediately (instant 0ms lag!)
+            setFormData({ ...initial });
+            setLoading(false);
+
+            // 3. Fast Targeted Enquiry Enrichment (Parallel, non-blocking)
+            try {
+              let enqData = null;
+              if (uData.enquiryId) {
+                try {
+                  const enqDirectSnap = await getDoc(doc(db, "enquiries", uData.enquiryId));
+                  if (enqDirectSnap.exists()) enqData = enqDirectSnap.data();
+                } catch (_) {}
+              }
+
+              if (!enqData) {
+                const targetQueries = [];
+                if (reg) targetQueries.push(query(collection(db, "enquiries"), where("regNo", "==", reg)));
+                if (uData.applicationNo) targetQueries.push(query(collection(db, "enquiries"), where("applicationNo", "==", String(uData.applicationNo).trim())));
+                if (uData.admissionNo) targetQueries.push(query(collection(db, "enquiries"), where("admissionNo", "==", String(uData.admissionNo).trim())));
+                if (uData.email || user.email) targetQueries.push(query(collection(db, "enquiries"), where("emailId", "==", String(uData.email || user.email).trim())));
+
+                const snaps = await Promise.all(targetQueries.map(q => getDocs(q).catch(() => null)));
+                for (const s of snaps) {
+                  if (s && !s.empty) {
+                    enqData = s.docs[0].data();
+                    break;
+                  }
+                }
+              }
+
+              if (enqData) {
+                const enqMapped = mapEnquiryToProfileFields(enqData);
+                setFormData(prev => {
+                  const nextData = { ...prev };
+                  let changed = false;
+                  Object.entries(enqMapped).forEach(([fk, fv]) => {
+                    if (fv && (!nextData[fk] || !String(nextData[fk]).trim())) {
+                      nextData[fk] = fv;
+                      changed = true;
+                    }
+                  });
+                  return changed ? nextData : prev;
+                });
+              }
+            } catch (enqErr) {
+              console.warn("Enquiry prefill error:", enqErr);
+            }
           }
-        } catch (err) { console.error(err); }
+        } catch (err) {
+          console.error(err);
+        } finally {
+          setLoading(false);
+        }
+      } else {
+        setLoading(false);
       }
-      setLoading(false);
     });
     return () => unsub();
   }, []);
 
-  // Real-time listener for admission enquiry changes
+  // Real-time listener for admission enquiry changes (targeted single listener)
   useEffect(() => {
     if (!userData) return;
-    const candidateKeys = Array.from(new Set([
-      userData.regNo, userData.applicationNo, userData.enquiryId, userData.admissionNo,
-      userData.examNumber, userData.email, userData.emailId, auth.currentUser?.email,
-      userData.mobile, userData.parentMobile
-    ].filter(Boolean))).map(v => String(v).trim());
+    const targetKey = userData.enquiryId || userData.applicationNo || userData.regNo;
+    if (!targetKey) return;
 
-    if (candidateKeys.length === 0) return;
+    let q = null;
+    if (userData.enquiryId) {
+      q = query(collection(db, "enquiries"), where("enquiryId", "==", String(userData.enquiryId).trim()));
+    } else if (userData.applicationNo) {
+      q = query(collection(db, "enquiries"), where("applicationNo", "==", String(userData.applicationNo).trim()));
+    } else if (userData.regNo) {
+      q = query(collection(db, "enquiries"), where("regNo", "==", String(userData.regNo).trim()));
+    }
 
-    const unsubs = [];
-    const handleEnqSnap = (snap) => {
+    if (!q) return;
+
+    const unsub = onSnapshot(q, (snap) => {
       snap.forEach(d => {
         if (!d.exists()) return;
         const enqMapped = mapEnquiryToProfileFields(d.data());
@@ -417,20 +456,10 @@ export default function StudentProfile() {
           return changed ? nextData : prev;
         });
       });
-    };
+    }, () => {});
 
-    candidateKeys.forEach(k => {
-      unsubs.push(onSnapshot(query(collection(db, "enquiries"), where("applicationNo", "==", k)), handleEnqSnap, () => {}));
-      unsubs.push(onSnapshot(query(collection(db, "enquiries"), where("enquiryId", "==", k)), handleEnqSnap, () => {}));
-      unsubs.push(onSnapshot(query(collection(db, "enquiries"), where("regNo", "==", k)), handleEnqSnap, () => {}));
-    });
-    if (userData.email || auth.currentUser?.email) {
-      const email = (userData.email || auth.currentUser?.email).trim();
-      unsubs.push(onSnapshot(query(collection(db, "enquiries"), where("emailId", "==", email)), handleEnqSnap, () => {}));
-    }
-
-    return () => unsubs.forEach(fn => fn());
-  }, [userData]);
+    return () => unsub();
+  }, [userData?.enquiryId, userData?.applicationNo, userData?.regNo]);
 
   useEffect(() => {
     if (!studentDocId || !regNo) return;

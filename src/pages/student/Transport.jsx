@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import QRCode from "qrcode";
 import { auth, db } from "../../firebase";
 import { onAuthStateChanged } from "firebase/auth";

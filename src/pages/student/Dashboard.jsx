@@ -9,8 +9,16 @@ import {
   getAcademicYears,
   calculateStudentAttendanceOverview,
   cleanStudentId,
-  extractSubjectCodeFromDocId
+  extractSubjectCodeFromDocId,
+  isDeptMatch
 } from "../../lib/utils";
+import {
+  getCachedStudentProfile,
+  setCachedStudentProfile,
+  fetchScopedAttendanceDocs,
+  fetchScopedTimetableDocs,
+  fetchScopedAssignmentDocs
+} from "../../lib/studentSession";
 import {
   GraduationCap, CheckCircle, BarChart3, Clock, Bell,
   ArrowRight, BookOpen, FileText, CalendarDays, Library,
@@ -29,12 +37,16 @@ const normKey = (key) => {
 
 export default function StudentDashboard() {
   const navigate = useNavigate();
-  const [userData, setUserData] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [userData, setUserData] = useState(() => getCachedStudentProfile());
+  const [loading, setLoading] = useState(!getCachedStudentProfile());
   const [attendancePct, setAttendancePct] = useState(null);
   const [attLoading, setAttLoading] = useState(true);
 
   useEffect(() => {
+    const cached = getCachedStudentProfile();
+    if (cached) {
+      setUserData(cached);
+    }
     const unsub = onAuthStateChanged(auth, async (user) => {
       if (user) {
         try {
@@ -60,6 +72,7 @@ export default function StudentDashboard() {
               }
             }
             setUserData(uData);
+            setCachedStudentProfile(user.uid, uData);
           }
         } catch (err) {
           console.error(err);
@@ -101,10 +114,11 @@ export default function StudentDashboard() {
 
         const batchPrefix = (progKey && deptKey && batchKey) ? `${progKey}_${deptKey}_${batchKey}` : '';
 
-        const [attSnapshot, assignSnap, studentsSnap] = await Promise.all([
-          getDocs(collection(db, "attendance")),
-          getDocs(collection(db, "subject_assignments")).catch(() => ({ forEach: () => { } })),
+        const [attSnapshot, assignSnap, studentsSnap, timetableSnap] = await Promise.all([
+          fetchScopedAttendanceDocs(db, { progKey, deptKey, batchKey }),
+          fetchScopedAssignmentDocs(db, { progKey, deptKey, batchKey }),
           (batchKey && progKey && deptKey) ? getDoc(doc(db, "students", `${batchKey}_${progKey}_${deptKey}`)).catch(() => null) : Promise.resolve(null),
+          fetchScopedTimetableDocs(db, { progKey, deptKey, batchKey }),
         ]);
 
         const admissionNoForJoin = String(userData.admissionNo || userData.admNo || profData.admissionNo || stuData.admissionNo || '').trim();
@@ -134,8 +148,148 @@ export default function StudentDashboard() {
           });
         }
 
+        // Filter subject_assignments specifically for THIS student's Department, Batch, and Section
+        const batchStartYear = String(batch || '').match(/(19|20)\d{2}/)?.[0] || '';
+        const batchNormStr = String(batch || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const sectionNorm = (studentSection || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+        let activeSem = String(userData.semester || userData.sem || profData.semester || stuData.semester || '').match(/\d+/)?.[0] || '';
+        let activeAy = '';
+        if (!activeSem && batch) {
+          const years = getAcademicYears(batch);
+          if (years.length > 0) {
+            const currentYear = new Date().getFullYear();
+            const month = new Date().getMonth();
+            const isOddSem = month >= 6;
+            const foundAy = years.find((y) => {
+              const [start] = y.split('-').map(Number);
+              if (isOddSem) return start === currentYear;
+              return start + 1 === currentYear;
+            }) || years[years.length - 1];
+            if (foundAy) {
+              activeAy = foundAy;
+              const ayIndex = years.indexOf(foundAy);
+              if (ayIndex >= 0) {
+                activeSem = String(ayIndex * 2 + (isOddSem ? 1 : 2));
+              }
+            }
+          }
+        }
+
         const facultyUidMap = {};
+
+        // 1. Direct Timetable Allocations: Extract faculty assigned in Timetable Creation
+        if (timetableSnap && timetableSnap.forEach) {
+          timetableSnap.forEach(d => {
+            const dId = d.id;
+            const matchDept = isDeptMatch(dId, department) || (d.data()?.department && isDeptMatch(d.data().department, department));
+            const matchBatch = dId.includes(batchKey) || dId.includes(sanitizeKey(batch)) || (batchStartYear && dId.includes(batchStartYear));
+            if (!matchDept || !matchBatch) return;
+
+            const idNoSec = dId.replace(/_(sec|section)[-_]?[a-z0-9]*$/i, '');
+            const parts = idNoSec.split('_');
+            const dSem = parts.length > 0 ? (String(parts[parts.length - 1]).match(/\d+/)?.[0] || '') : '';
+            if (activeSem && dSem && dSem !== String(activeSem)) return;
+
+            const dData = d.data() || {};
+            if (Array.isArray(dData.allocatedSubjects)) {
+              dData.allocatedSubjects.forEach(s => {
+                if (s?.code && s.facultyUid) {
+                  facultyUidMap[s.code] = s.facultyUid;
+                }
+              });
+            }
+          });
+        }
+
+        const candidateAssignDocs = [];
         if (assignSnap && assignSnap.forEach) {
+          assignSnap.forEach(d => {
+            const dId = d.id;
+            const dData = d.data() || {};
+            const dDept = dData.department || dData._meta?.department || '';
+
+            // 1. Batch check
+            const matchBatch = dId.includes(batchKey) || 
+              dId.includes(sanitizeKey(batch)) || 
+              (batchStartYear && dId.includes(batchStartYear)) ||
+              (batchNormStr && dId.toLowerCase().replace(/[^a-z0-9]/g, '').includes(batchNormStr));
+            if (!matchBatch) return;
+
+            // 2. Department check: MUST match student's department!
+            if (dDept && !isDeptMatch(dDept, department)) return;
+            if (!isDeptMatch(dId, department)) return;
+
+            // Extract doc semester and academic year
+            const idNoSec = dId.replace(/_(sec|section)[-_]?[a-z0-9]*$/i, '');
+            const parts = idNoSec.split('_');
+            const docSem = parts.length > 0 ? (String(parts[parts.length - 1]).match(/\d+/)?.[0] || '') : '';
+            const docAy = parts.length > 1 ? (String(parts[parts.length - 2]).match(/\d{4}[-_]\d{2,4}/)?.[0] || '') : '';
+
+            let score = 0;
+
+            const normDoc = String(dId).toLowerCase().replace(/[^a-z0-9]/g, '');
+            const normTarget = String(department).toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (normDoc.includes(normTarget) || normTarget.includes(normDoc)) {
+              score += 200;
+            }
+
+            // 3. Strict Semester scoring (prevents older semesters from overriding current active semester)
+            if (activeSem && docSem) {
+              if (docSem === activeSem) {
+                score += 150;
+              } else {
+                score -= 100;
+              }
+            } else if (docSem) {
+              score += (parseInt(docSem, 10) || 1) * 15;
+            }
+
+            // 4. Academic year scoring
+            if (activeAy && docAy) {
+              if (docAy.includes(activeAy) || activeAy.includes(docAy)) {
+                score += 50;
+              } else {
+                score -= 20;
+              }
+            }
+
+            // 5. Section scoring
+            const docHasSec = /_(sec|section)[-_]?[a-z0-9]+/i.test(dId);
+            if (sectionNorm && docHasSec) {
+              const secMatch = dId.match(/_(sec|section)[-_]?([a-z0-9]+)/i);
+              const docSec = secMatch ? secMatch[2].toLowerCase() : '';
+              if (docSec === sectionNorm || sectionNorm.includes(docSec) || docSec.includes(sectionNorm)) {
+                score += 50;
+              } else {
+                score -= 30;
+              }
+            } else if (!docHasSec) {
+              score += 20;
+            }
+
+            if (progKey && dId.startsWith(progKey)) {
+              score += 10;
+            }
+
+            candidateAssignDocs.push({ id: dId, data: dData, score });
+          });
+        }
+
+        candidateAssignDocs.sort((a, b) => b.score - a.score);
+
+        if (candidateAssignDocs.length > 0) {
+          candidateAssignDocs.forEach(({ data }) => {
+            Object.entries(data).forEach(([uid, codes]) => {
+              if (uid.startsWith('_') || !Array.isArray(codes)) return;
+              codes.forEach(code => {
+                if (code && !facultyUidMap[code]) {
+                  facultyUidMap[code] = uid;
+                }
+              });
+            });
+          });
+        } else if (assignSnap && assignSnap.forEach) {
           assignSnap.forEach(d => {
             const dId = d.id;
             const matchBatch = dId.includes(batchKey) || dId.includes(sanitizeKey(batch));
@@ -154,12 +308,6 @@ export default function StudentDashboard() {
         const batchYearMatch = String(batch).match(/\d{4}\s*[-_]\s*\d{2,4}/);
         const bYear = batchYearMatch ? norm(batchYearMatch[0]) : '';
         const bStartYear = String(batch).match(/\b(20\d{2})\b/)?.[1] || '';
-        const deptNorm = norm(department);
-        const matchAcronym = department.match(/\(([^)]+)\)/);
-        const deptAcronym = matchAcronym ? norm(matchAcronym[1]) : '';
-        const words = department.replace(/^(B\.?Tech\.?|B\.?E\.?|M\.?E\.?|M\.?Tech\.?|MBA|MCA)\s+/i, '').split(/[\s&/_-]+/);
-        const softAcronym = words.length > 1 ? norm(words.map(w => w[0]).join('')) : '';
-
         const matchedAttDocs = attSnapshot.docs.filter(docSnap => {
           const id = docSnap.id;
           const idNorm = norm(id);
@@ -167,13 +315,11 @@ export default function StudentDashboard() {
           if (!hasBatch) return false;
 
           const dData = docSnap.data();
-          const docDept = norm(dData._meta?.department || dData.department || '');
+          const docDept = dData._meta?.department || dData.department || '';
           const hasDept = !department ||
-            idNorm.includes(deptNorm) ||
-            (deptAcronym && idNorm.includes(deptAcronym)) ||
-            (softAcronym && idNorm.includes(softAcronym)) ||
-            (docDept && (docDept.includes(deptNorm) || deptNorm.includes(docDept))) ||
-            (batchPrefix && id.startsWith(batchPrefix));
+            (batchPrefix && id.startsWith(batchPrefix)) ||
+            isDeptMatch(id, department) ||
+            (docDept && isDeptMatch(docDept, department));
 
           return hasDept;
         });
@@ -330,6 +476,7 @@ export default function StudentDashboard() {
     { label: "My Profile", icon: User, path: "/student/profile", bgClass: "bg-teal-50 border border-teal-100 text-teal-600", hoverColor: "group-hover:text-teal-600" },
     { label: "Attendance", icon: CheckCircle, path: "/student/attendance", bgClass: "bg-emerald-50 border border-emerald-100 text-emerald-600", hoverColor: "group-hover:text-emerald-600" },
     { label: "Marks & Results", icon: BarChart3, path: "/student/marks", bgClass: "bg-indigo-50 border border-indigo-100 text-indigo-600", hoverColor: "group-hover:text-indigo-600" },
+    { label: "ESE Exam Fee", icon: GraduationCap, path: "/student/ese-fee", bgClass: "bg-blue-50 border border-blue-100 text-[#120c7a]", hoverColor: "group-hover:text-[#120c7a]" },
     { label: "Timetable", icon: Clock, path: "/student/timetable", bgClass: "bg-amber-50 border border-amber-100 text-amber-600", hoverColor: "group-hover:text-amber-600" },
     { label: "Fee Details", icon: IndianRupee, path: "/student/fees", bgClass: "bg-rose-50 border border-rose-100 text-rose-600", hoverColor: "group-hover:text-rose-600" },
     { label: "Syllabus", icon: BookOpen, path: "/student/syllabus", bgClass: "bg-cyan-50 border border-cyan-100 text-cyan-600", hoverColor: "group-hover:text-cyan-600" },

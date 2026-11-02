@@ -3,7 +3,7 @@ import { useLocation } from "react-router-dom";
 import { auth, db } from "../../firebase";
 import { signInAnonymously } from "firebase/auth";
 import {
-  collection, doc, getDoc, getDocs, setDoc, updateDoc, onSnapshot, query, where, serverTimestamp
+  collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteField, onSnapshot, query, where, serverTimestamp
 } from "firebase/firestore";
 import {
   Lock, Eye, EyeOff, CheckCircle2, XCircle, FileText, Upload, Sparkles, AlertCircle,
@@ -1244,8 +1244,28 @@ export default function ExternalSetterWorkbench() {
         }
 
         // Prioritize loading existing saved draft or submitted paper
-        let paperToLoadA = data.draftPaperA || data.draftPaper || data.submittedPaperA || data.submittedPaper;
+        let paperToLoadA = data.draftPaper || data.draftPaperA || data.submittedPaper || data.submittedPaperA;
         let paperToLoadB = data.draftPaperB || data.submittedPaperB;
+
+        // If Set B was extracted to a standalone document due to Firestore 1MB limits, fetch it:
+        if (!paperToLoadB && (data.hasSeparateSetBDoc || data.setBDocId)) {
+          try {
+            const setBDocId = data.setBDocId || `${activeAssignmentId}__setB`;
+            const setBSnap = await getDoc(doc(db, "coe_setter_assignments", setBDocId));
+            if (setBSnap.exists()) {
+              const bData = setBSnap.data();
+              paperToLoadB = bData.submittedPaperB || bData.draftPaperB;
+              if (bData.checklistResponsesB && !data.checklistResponsesB) {
+                setChecklistResponsesB(bData.checklistResponsesB);
+              }
+              if (bData.permittedMaterialsB && !data.permittedMaterialsB) {
+                data.permittedMaterialsB = bData.permittedMaterialsB;
+              }
+            }
+          } catch (loadErr) {
+            console.warn("Could not load standalone Set B doc:", loadErr);
+          }
+        }
 
         let hasLoadedA = Boolean(paperToLoadA && paperToLoadA.sections?.length > 0);
         let hasLoadedB = Boolean(paperToLoadB && paperToLoadB.sections?.length > 0);
@@ -2250,7 +2270,7 @@ export default function ExternalSetterWorkbench() {
 
       const draftPayload = {
         draftPaper: sanitizedPaperA,
-        draftPaperA: sanitizedPaperA,
+        draftPaperA: deleteField(), // Do NOT duplicate Set A in draft to save 200KB+
         draftChecklistA: sanitizedChecklistA,
         permittedMaterials: sanitizedPermittedMaterialsA,
         permittedMaterialsA: sanitizedPermittedMaterialsA,
@@ -2374,18 +2394,29 @@ export default function ExternalSetterWorkbench() {
         status: "submitted",
         paperSubmittedAt: new Date().toISOString(),
         submittedPaper: sanitizedPaperA,
-        submittedPaperA: sanitizedPaperA,
+        submittedPaperA: deleteField(), // Do NOT duplicate Set A to save 200KB+
         checklistVerified: true,
         checklistResponses: sanitizedChecklistA,
-        checklistResponsesA: sanitizedChecklistA,
+        checklistResponsesA: deleteField(),
         permittedMaterials: sanitizedPermittedMaterialsA,
         permittedMaterialsA: sanitizedPermittedMaterialsA,
         permittedMaterialsB: sanitizedPermittedMaterialsB,
         examMonthYear: examMonthYear || assignment?.examSession || "",
         claimBillData: sanitizedClaimBill,
         submittedAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
+        updatedAt: serverTimestamp(),
+        // Delete redundant draft fields upon submission to liberate 500KB+ Firestore space
+        draftPaper: deleteField(),
+        draftPaperA: deleteField(),
+        draftPaperB: deleteField(),
+        draftChecklistA: deleteField(),
+        draftChecklistB: deleteField()
       };
+
+      // If redundant root coeSignatureBase64 exists, delete it to save 126KB
+      if (assignment?.coeSignatureUrl && assignment?.coeSignatureBase64) {
+        updatePayload.coeSignatureBase64 = deleteField();
+      }
 
       if (sanitizedPaperB) {
         updatePayload.submittedPaperB = sanitizedPaperB;
@@ -2396,7 +2427,45 @@ export default function ExternalSetterWorkbench() {
         updatePayload.aiSimilarityResult = removeUndefinedFields(aiSimilarityResult);
       }
 
-      await setDoc(doc(db, "coe_setter_assignments", targetAssignmentId), updatePayload, { merge: true });
+      try {
+        await setDoc(doc(db, "coe_setter_assignments", targetAssignmentId), updatePayload, { merge: true });
+      } catch (writeErr) {
+        const errStr = String(writeErr?.message || writeErr || "");
+        const isSizeError = errStr.includes("exceeds the maximum allowed size") || errStr.includes("size") || errStr.includes("1,048,576") || errStr.includes("bytes");
+        if (!isSizeError) {
+          throw writeErr;
+        }
+
+        console.warn(`[ExternalSetterWorkbench] Document ${targetAssignmentId} exceeds 1MB limit (${errStr}). Resiliently extracting Set B into standalone flat document...`);
+
+        // If Set B is present, extract it into a standalone document coe_setter_assignments/${targetAssignmentId}__setB
+        if (sanitizedPaperB) {
+          const setBDocId = `${targetAssignmentId}__setB`;
+          await setDoc(doc(db, "coe_setter_assignments", setBDocId), {
+            id: setBDocId,
+            assignmentId: targetAssignmentId,
+            submittedPaperB: sanitizedPaperB,
+            checklistResponsesB: sanitizedChecklistB,
+            permittedMaterialsB: sanitizedPermittedMaterialsB,
+            isSetBStandaloneDoc: true,
+            updatedAt: serverTimestamp()
+          }, { merge: true });
+
+          const fallbackPayload = {
+            ...updatePayload,
+            submittedPaperB: deleteField(),
+            checklistResponsesB: deleteField(),
+            hasSeparateSetBDoc: true,
+            setBDocId: setBDocId
+          };
+          await setDoc(doc(db, "coe_setter_assignments", targetAssignmentId), fallbackPayload, { merge: true });
+        } else {
+          // If Set A alone somehow exceeds 1MB, remove root coeSignatureBase64 and retry
+          const slimPayload = { ...updatePayload };
+          slimPayload.coeSignatureBase64 = deleteField();
+          await setDoc(doc(db, "coe_setter_assignments", targetAssignmentId), slimPayload, { merge: true });
+        }
+      }
 
       setAssignment((prev) => ({
         ...(prev || {}),

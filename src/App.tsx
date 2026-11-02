@@ -97,6 +97,8 @@ import StudentCirculars from "./pages/student/Circulars";
 import StudentPhotocopy from "./pages/student/Photocopy";
 import StudentPhotocopyProblem from "./pages/student/PhotocopyProblem";
 import StudentRevaluation from "./pages/student/Revaluation";
+import StudentReview from "./pages/student/Review";
+import StudentEseFee from "./pages/student/EseFee";
 import FacultyAppraisal from "./pages/FacultyAppraisal";
 import NonTeachingAppraisal from "./pages/NonTeachingAppraisal";
 import HODAppraisal from "./pages/HODAppraisal";
@@ -339,9 +341,11 @@ export default function App() {
         <Route path="/student/notices" element={<ProtectedRoute><StudentLayout title="Notices"><StudentNotices /></StudentLayout></ProtectedRoute>} />
         <Route path="/student/mentor" element={<ProtectedRoute><StudentLayout title="My Mentor"><StudentMentorProfile /></StudentLayout></ProtectedRoute>} />
         <Route path="/student/circulars" element={<ProtectedRoute><StudentLayout title="Circulars"><StudentCirculars /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/ese-fee" element={<ProtectedRoute><StudentLayout title="ESE Fee"><StudentEseFee /></StudentLayout></ProtectedRoute>} />
         <Route path="/student/photocopy" element={<ProtectedRoute><StudentLayout title="Photocopy"><StudentPhotocopy /></StudentLayout></ProtectedRoute>} />
         <Route path="/student/photocopy-problem" element={<ProtectedRoute><StudentLayout title="Photocopy Problem"><StudentPhotocopyProblem /></StudentLayout></ProtectedRoute>} />
         <Route path="/student/revaluation" element={<ProtectedRoute><StudentLayout title="Revaluation"><StudentRevaluation /></StudentLayout></ProtectedRoute>} />
+        <Route path="/student/review" element={<ProtectedRoute><StudentLayout title="Review"><StudentReview /></StudentLayout></ProtectedRoute>} />
         <Route path="/student/resource-hub" element={<ProtectedRoute><StudentResourceHub /></ProtectedRoute>} />
 
         {/* Redirects */}

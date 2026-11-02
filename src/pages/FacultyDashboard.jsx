@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, collection, onSnapshot, getDoc, getDocs, query, where, deleteDoc, updateDoc, deleteField } from "firebase/firestore";
 import {
-  BookOpen, Clock, Eye, Loader2, AlertCircle, Edit2, CheckCircle2,
+  BookOpen, Clock, Eye, Loader2, AlertCircle, AlertTriangle, Edit2, CheckCircle2,
   FileText, School, GraduationCap, Calendar, CalendarCheck2,
   Search, X, Sparkles, Plus, RefreshCw, Users, PenLine, Trash2, Layers,
   Lock, Unlock, TrendingUp, BarChart3, ArrowUpRight, ShieldCheck, Percent
@@ -27,8 +27,8 @@ import {
 import Layout from "../components/Layout";
 import { auth, db } from "../firebase";
 import { fetchAllCourseNamesMap, getCourseName } from "../utils/courseUtils";
-import { getAttendanceRecords, parseSubjectField, isWrittenTestQp, formatQPSetDisplay, formatProgrammeKey, sanitizeKey, isSameExamEvent, findRecordForPeriod } from "../lib/utils";
-import { getQuestionPaperHTML } from "../utils/questionPaperUtils";
+import { getAttendanceRecords, parseSubjectField, isWrittenTestQp, formatQPSetDisplay, formatProgrammeKey, sanitizeKey, isSameExamEvent, findRecordForPeriod, isDeptMatch } from "../lib/utils";
+import { getQuestionPaperHTML, formatExamDateDisplay } from "../utils/questionPaperUtils";
 import { typesetMath } from "../utils/mathJaxUtils";
 import { useRegulations } from "../hooks/useRegulations";
 
@@ -212,18 +212,17 @@ const getQPWorkflowStatus = (qp) => {
 
 const normAlpha = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
-const isDeptMatch = (d1, d2) => {
-  if (!d1 || !d2) return false;
-  const n1 = normAlpha(d1);
-  const n2 = normAlpha(d2);
-  if (!n1 || !n2) return false;
-  if (n1 === n2 || n1.includes(n2) || n2.includes(n1)) return true;
-  const getAcronym = (s) => String(s || '').split(/[^a-zA-Z0-9]+/).filter(Boolean).map(w => w[0]).join('').toLowerCase();
-  const a1 = getAcronym(d1);
-  const a2 = getAcronym(d2);
-  if (n1 === a2 || n2 === a1) return true;
-  return false;
+const extractSubjectCode = (raw) => {
+  if (!raw) return '';
+  const s = String(raw).trim();
+  if (s.includes(' - ')) return s.split(' - ')[0].trim();
+  if (s.includes(' — ')) return s.split(' — ')[0].trim();
+  const firstWord = s.split(/[\s/]+/)[0].trim();
+  if (/^[A-Za-z0-9]+$/.test(firstWord)) return firstWord;
+  return s;
 };
+
+// isDeptMatch is imported dynamically from ../lib/utils (Firestore-backed registry)
 
 const isBatchMatch = (b1, b2) => {
   if (!b1 || !b2) return false;
@@ -395,7 +394,18 @@ export default function FacultyDashboard() {
   }, [currentUid]);
 
   const [qpSetterTasks, setQpSetterTasks] = useState([]);
+  const [allTimetableAssignments, setAllTimetableAssignments] = useState([]);
+  const [ciaConfigs, setCiaConfigs] = useState([]);
   const [allSyllabusDocs, setAllSyllabusDocs] = useState([]);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "cia_configs"), (snap) => {
+      setCiaConfigs(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, (err) => {
+      console.warn("[FacultyDashboard] Error listening to cia_configs:", err);
+    });
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "syllabus_data"), (snap) => {
@@ -475,14 +485,16 @@ export default function FacultyDashboard() {
     return foundInSem;
   }, [allSyllabusDocs, getRegulationForBatch, matchRegulation]);
 
-  // Fetch QP Setter assignments for current user
+  // Fetch QP Setter assignments for current user & all timetable assignments for live lookup
   useEffect(() => {
     if (!currentUid) {
       setQpSetterTasks([]);
+      setAllTimetableAssignments([]);
       return;
     }
     const unsub = onSnapshot(collection(db, "qp_setter_assignments"), (snap) => {
       const myTasks = [];
+      const allAssignments = [];
       const userEmail = (auth.currentUser?.email || '').trim().toLowerCase();
       const sanitizeName = (n) => String(n || '').toLowerCase().replace(/^(dr|mr|mrs|prof)\.?\s+/gi, '').replace(/[^a-z0-9]/g, '');
       const normFacultyName = sanitizeName(facultyName);
@@ -495,6 +507,20 @@ export default function FacultyDashboard() {
 
         Object.values(assignments).forEach(as => {
           if (!as || typeof as !== 'object') return;
+
+          allAssignments.push({
+            docId: d.id,
+            batch: data.batch || '',
+            academicYear: data.academicYear || '',
+            semester: data.semester || '',
+            examId: data.examId || '',
+            examName: data.examName || '',
+            ciaId: data.ciaId || '',
+            ...as,
+            fromDate: as.fromDate || docFromDate || '',
+            toDate: as.toDate || docToDate || ''
+          });
+
           const setterUid = String(as.setterUid || '').trim();
           const setterName = String(as.setterName || '').trim();
           const normSetterName = sanitizeName(setterName);
@@ -527,6 +553,8 @@ export default function FacultyDashboard() {
               semester: data.semester || '',
               examId: data.examId || '',
               examName: data.examName || '',
+              ciaId: data.ciaId || '',
+              docNumSets: data.numSets || null,
               updatedAt: data.updatedAt || '',
               ...as,
               fromDate: as.fromDate || docFromDate || '',
@@ -544,6 +572,7 @@ export default function FacultyDashboard() {
       });
 
       setQpSetterTasks(myTasks);
+      setAllTimetableAssignments(allAssignments);
     }, (err) => {
       console.warn("[FacultyDashboard] Error fetching qp_setter_assignments:", err);
     });
@@ -773,7 +802,12 @@ export default function FacultyDashboard() {
         if (!batchMatch) return false;
 
         // 1. Direct subject code check: if doc contains this group's subject code and batch matches
-        const hasCode = (g.codes || []).some(code => code && cleanDocId.includes(normAlpha(code)));
+        const hasCode = (g.codes || []).some(code => {
+          if (!code) return false;
+          const cClean = normAlpha(code);
+          const pCode = normAlpha(extractSubjectCode(code));
+          return cleanDocId.includes(cClean) || (pCode && cleanDocId.includes(pCode));
+        });
         if (hasCode) return true;
 
         // 2. Class-wide check (for substitute subjects taught to the same class)
@@ -1146,9 +1180,12 @@ export default function FacultyDashboard() {
         const info = {};
         snap.forEach(d => {
           const data = d.data();
-          map[d.id] = data.facultyName || data.displayName || data.email || d.id;
+          const cleanName = data.name || data.displayName || data.facultyName || data.email || d.id;
+          map[d.id] = cleanName;
           info[d.id] = {
-            name: map[d.id],
+            id: d.id,
+            uid: d.id,
+            name: cleanName,
             role: data.role || "",
             department: data.department || ""
           };
@@ -1394,6 +1431,62 @@ export default function FacultyDashboard() {
     return acUser ? acUser.name : "";
   }, [facultyNames, usersInfoMap]);
 
+  // Resolve the HOD handling a QP's department, shown in brackets
+  // next to "Waiting for HOD Approval" so faculty know exactly which HOD is reviewing it.
+  const resolveHodName = useCallback((qp) => {
+    if (!qp) return "";
+
+    // 1. Explicit HOD name fields
+    if (qp.hod_name) return String(qp.hod_name).trim();
+    if (qp.hod_approved_by_name) return String(qp.hod_approved_by_name).trim();
+    if (qp.forwarded_to_hod_name) return String(qp.forwarded_to_hod_name).trim();
+
+    // 2. If forwarded_to points directly to an HOD user
+    if (qp.forwarded_to) {
+      const targetUser = usersInfoMap?.[qp.forwarded_to];
+      const targetRole = String(targetUser?.role || '').toLowerCase();
+      if (targetRole.includes('hod') && targetUser?.name) {
+        return targetUser.name;
+      }
+    }
+
+    // 3. Match HOD from usersInfoMap by QP's department
+    const paperDeptRaw = qp.department || (qp.compositeKey ? qp.compositeKey.split('_20')[0] : '');
+    const norm = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const qpDeptClean = norm(paperDeptRaw);
+
+    const allUsers = Object.values(usersInfoMap || {});
+    const hodUsers = allUsers.filter(u => {
+      const r = norm(u.role);
+      return r === 'hod' || (r.includes('hod') && !r.includes('coordinator') && !r.includes('principal') && !r.includes('admin'));
+    });
+
+    if (hodUsers.length > 0) {
+      const matchedHod = hodUsers.find(u => {
+        if (!u.department || !paperDeptRaw) return false;
+        if (typeof isDeptMatch === 'function' && isDeptMatch(u.department, paperDeptRaw)) return true;
+        const uDeptClean = norm(u.department);
+        return uDeptClean && (uDeptClean === qpDeptClean || uDeptClean.includes(qpDeptClean) || qpDeptClean.includes(uDeptClean));
+      });
+
+      if (matchedHod && matchedHod.name) {
+        return matchedHod.name;
+      }
+
+      if (qp.forwarded_to) {
+        const directHod = hodUsers.find(u => u.uid === qp.forwarded_to || u.id === qp.forwarded_to);
+        if (directHod && directHod.name) return directHod.name;
+      }
+    }
+
+    // Fallback: If forwarded_to exists in facultyNames
+    if (qp.forwarded_to && facultyNames?.[qp.forwarded_to]) {
+      return facultyNames[qp.forwarded_to];
+    }
+
+    return "";
+  }, [facultyNames, usersInfoMap]);
+
   const baseQps = useMemo(() => {
     return semesterTab === "current" ? currentSemesterQps : pendingQps;
   }, [pendingQps, currentSemesterQps, semesterTab]);
@@ -1462,7 +1555,33 @@ export default function FacultyDashboard() {
         setFullQPForModal(null);
         return;
       }
-      setFullQPForModal({ ...selectedQP });
+
+      // Synchronize live timetable date from qp_setter_assignments
+      const rawSubj = parseSubjectField(selectedQP.subject);
+      const rawSubjCode = String(rawSubj.code || selectedQP.subject || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+      const qpExamName = selectedQP.exam_name || selectedQP.qpaper_name || selectedQP.exam || '';
+      const qpBatch = String(selectedQP.batch || '').trim();
+      const qpSem = String(selectedQP.selected_semester || selectedQP.semester || '').replace(/[^0-9]/g, '');
+
+      const matchedTimetable = allTimetableAssignments.find(t => {
+        const tCode = String(t.code || t.subjectCode || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (tCode !== rawSubjCode) return false;
+        if (qpExamName && t.examName && !isSameExamEvent(qpExamName, t.examName)) return false;
+        if (qpBatch && t.batch && qpBatch !== String(t.batch).trim()) return false;
+        if (qpSem && t.semester && qpSem !== String(t.semester).replace(/[^0-9]/g, '')) return false;
+        return true;
+      });
+
+      const enrichedQP = { ...selectedQP };
+      if (matchedTimetable && matchedTimetable.examDate) {
+        enrichedQP.exam_date = matchedTimetable.examDate;
+        enrichedQP.exam_date_display = formatExamDateDisplay(matchedTimetable.examDate);
+        if (matchedTimetable.startTime) enrichedQP.start_time = matchedTimetable.startTime;
+        if (matchedTimetable.endTime) enrichedQP.end_time = matchedTimetable.endTime;
+        if (matchedTimetable.slot || matchedTimetable.timeSlot) enrichedQP.time_slot = matchedTimetable.slot || matchedTimetable.timeSlot;
+      }
+
+      setFullQPForModal(enrichedQP);
       const savedCos = selectedQP.course_outcomes || selectedQP.courseOutcomes;
       if (Array.isArray(savedCos) && savedCos.length > 0) {
         setModalCourseOutcomes(savedCos);
@@ -1576,7 +1695,7 @@ export default function FacultyDashboard() {
       }
     };
     fetchDetails();
-  }, [selectedQP, getRegulationForBatch]);
+  }, [selectedQP, getRegulationForBatch, allTimetableAssignments]);
 
   const renderQuestionPaper = useCallback((qp) => {
     if (!qp) return "";
@@ -1661,12 +1780,8 @@ export default function FacultyDashboard() {
       const yesterday = new Date(today);
       yesterday.setDate(today.getDate() - 1);
 
-      // Start date of window: max of (30 days ago, semStart)
-      let checkStart = new Date(today);
-      checkStart.setDate(today.getDate() - 30);
-      if (semStart > checkStart) {
-        checkStart = new Date(semStart);
-      }
+      // Start date of window: semStart (checks entire semester range, not just 30 days)
+      let checkStart = new Date(semStart);
 
       // End date of window: min of (yesterday, semEnd)
       let checkEnd = new Date(yesterday);
@@ -1718,17 +1833,20 @@ export default function FacultyDashboard() {
           Object.entries(daySchedule).forEach(([period, entries]) => {
             entries.forEach(entry => {
               const parts = String(entry).split('|');
-              const code = parts[0] || '';
-              if (!code) return;
+              const rawCode = parts[0] || '';
+              if (!rawCode) return;
+              const code = extractSubjectCode(rawCode) || rawCode;
 
               // Robust Attendance Document Matcher across all attendance collections
               const cleanCode = normClean(code);
+              const cleanRawCode = normClean(rawCode);
               const cleanSec = normClean(currentSec);
 
               let recordsMap = {};
               for (const [dId, aData] of Object.entries(facultyAttendanceData || {})) {
                 const cleanDId = normClean(dId);
-                if (!cleanDId.includes(cleanCode)) continue;
+                const codeMatch = cleanDId.includes(cleanCode) || (cleanRawCode && cleanDId.includes(cleanRawCode));
+                if (!codeMatch) continue;
                 if (!isDeptMatch(dId, g.department)) continue;
                 if (!isBatchMatch(dId, g.batch)) continue;
                 if (cleanSec && !cleanDId.includes(cleanSec) && dId.includes('_Sec-')) continue;
@@ -1780,14 +1898,15 @@ export default function FacultyDashboard() {
                   date: dateStr,
                   period: parseInt(period),
                   code,
+                  rawCode,
                   progKey: g.progKey,
                   department: g.department,
                   batch: g.batch,
                   academicYear: g.academicYear,
                   semester: g.semester,
-                  section: g.section || '',
-                  subjectName: getCourseName(courseNames, code, g.department, g.progKey) || '',
-                  batchLabel: `${formatAssignmentDisplay(g.progKey, g.department)} ${g.batch} Sem ${g.semester}${g.section ? ` (${g.section})` : ''}`,
+                  section: currentSec,
+                  subjectName: getCourseName(courseNames, code, g.department, g.progKey) || getCourseName(courseNames, rawCode, g.department, g.progKey) || '',
+                  batchLabel: `${formatAssignmentDisplay(g.progKey, g.department)} ${g.batch} Sem ${g.semester}${currentSec ? ` (${currentSec})` : ''}`,
                   dayName,
                   groupKey: `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}`
                 });
@@ -1809,36 +1928,58 @@ export default function FacultyDashboard() {
   const missedCount = useMemo(() => attendanceTasks.length, [attendanceTasks]);
 
   const qpSetterTaskCards = useMemo(() => {
-    const todayStr = formatDateKey(new Date());
+    const now = new Date();
+    const todayStr = formatDateKey(now);
     const normBatch = (v) => String(v || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    // Robust date component parser supporting ISO (YYYY-MM-DD), DD-MM-YYYY, DD/MM/YYYY, and Date instances
+    const parseDateComponents = (dVal) => {
+      if (!dVal) return null;
+      if (dVal instanceof Date && !isNaN(dVal.getTime())) {
+        return { yr: dVal.getFullYear(), mo: dVal.getMonth() + 1, dy: dVal.getDate() };
+      }
+      const s = String(dVal).trim();
+      const isoM = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+      if (isoM) {
+        return { yr: parseInt(isoM[1], 10), mo: parseInt(isoM[2], 10), dy: parseInt(isoM[3], 10) };
+      }
+      const dmyM = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+      if (dmyM) {
+        return { yr: parseInt(dmyM[3], 10), mo: parseInt(dmyM[2], 10), dy: parseInt(dmyM[1], 10) };
+      }
+      const parsed = new Date(s);
+      if (!isNaN(parsed.getTime())) {
+        return { yr: parsed.getFullYear(), mo: parsed.getMonth() + 1, dy: parsed.getDate() };
+      }
+      return null;
+    };
+
+    // Cutoff: Hide task cards on the day before the assigned exam date at 5:00 PM (17:00)
+    // Month in JS Date is 0-indexed; (dy - 1) handles month/year rollbacks automatically
+    const getExamCutoffTime = (examDateStr) => {
+      const parts = parseDateComponents(examDateStr);
+      if (!parts) return null;
+      return new Date(parts.yr, parts.mo - 1, parts.dy - 1, 17, 0, 0, 0);
+    };
+
+    // Submission deadline window ends at 23:59:59.999 of toDate
+    const getSubmissionWindowEnd = (toDateStr) => {
+      const parts = parseDateComponents(toDateStr);
+      if (!parts) return null;
+      return new Date(parts.yr, parts.mo - 1, parts.dy, 23, 59, 59, 999);
+    };
+
     return qpSetterTasks
       .filter((task) => {
         // Strictly require an assigned exam date for the subject to show on Faculty Dashboard
         const hasExamDate = task.examDate && String(task.examDate).trim().length > 0;
         if (!hasExamDate) return false;
 
-        // Submission window deadline check:
-        // "submission date mudinja odanae andha task poiranum"
-        // Once the submission deadline (toDate) has passed, or if toDate is missing and examDate has passed,
-        // the task must immediately be removed from the Faculty Dashboard.
-        const parseToIso = (dVal) => {
-          if (!dVal) return '';
-          const s = String(dVal).trim();
-          if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-          const parsed = new Date(s);
-          if (!isNaN(parsed.getTime())) {
-            const y = parsed.getFullYear();
-            const m = String(parsed.getMonth() + 1).padStart(2, '0');
-            const d = String(parsed.getDate()).padStart(2, '0');
-            return `${y}-${m}-${d}`;
-          }
-          return '';
-        };
-
-        const toDateIso = parseToIso(task.toDate);
-        const examDateIso = parseToIso(task.examDate);
-        const effectiveDeadline = toDateIso || examDateIso;
-        if (effectiveDeadline && effectiveDeadline < todayStr) {
+        // Visibility Rule:
+        // Do NOT hide when submission deadline (toDate) has passed!
+        // Instead, hide ONLY on the day before their exam date at 5:00 PM.
+        const examCutoff = getExamCutoffTime(task.examDate);
+        if (examCutoff && now.getTime() > examCutoff.getTime()) {
           return false;
         }
 
@@ -1903,7 +2044,30 @@ export default function FacultyDashboard() {
           return isWrittenTest;
         });
 
-        const requiredSets = parseInt(task.numSets, 10) || 1;
+        // Resolve configured set count:
+        // 1. From matching cia_configs (Curriculum Exam Version Sets) for this exam event / AY
+        // 2. From task.numSets / task.sets / task.num_set / task.docNumSets
+        // 3. Fallback to 1
+        const cleanStr = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        const taskExamNameNorm = cleanStr(task.examName || "");
+        const taskExamIdNorm = cleanStr(task.examId || "");
+        const taskCiaIdNorm = cleanStr(task.ciaId || "");
+
+        const matchingCiaCfg = (ciaConfigs || []).find(c => {
+          if (taskCiaIdNorm && cleanStr(c.id) === taskCiaIdNorm) return true;
+          if (taskExamIdNorm && cleanStr(c.id) === taskExamIdNorm) return true;
+          const cName = c.examName || c.exam || c.name || c.title || "";
+          if (cName && isSameExamEvent(task.examName, cName)) return true;
+          if (cName && cleanStr(cName) === taskExamNameNorm) return true;
+          return false;
+        });
+
+        const ayKey = sanitizeKey(task.academicYear);
+        const ayVal = ayKey && matchingCiaCfg?.numSetsByAy ? matchingCiaCfg.numSetsByAy[ayKey] : undefined;
+        const ciaNumSets = parseInt(ayVal ?? matchingCiaCfg?.numSets ?? "", 10) || 0;
+
+        const rawNumSets = parseInt(task.numSets ?? task.num_set ?? task.sets ?? task.docNumSets ?? "", 10) || 0;
+        const requiredSets = Math.max(ciaNumSets, rawNumSets, 1);
         const createdCount = generatedSets.length;
 
         // Determine which set numbers have already been created by this faculty for this subject,
@@ -1921,8 +2085,21 @@ export default function FacultyDashboard() {
         const nextSetLabel = `Set ${nextSetNum}`;
 
         const isDone = createdCount >= requiredSets;
-        const isOverdue = !isDone && task.toDate && task.toDate < todayStr;
-        const isDueSoon = !isDone && task.toDate && task.toDate >= todayStr;
+        const toDateEnd = getSubmissionWindowEnd(task.toDate);
+        const examCutoff = getExamCutoffTime(task.examDate);
+        // Warning state: submission date (toDate) has passed, but exam cutoff has not passed yet
+        const isSubmissionOverdue = Boolean(toDateEnd && now.getTime() > toDateEnd.getTime());
+        const isOverdue = !isDone && isSubmissionOverdue;
+        const isDueSoon = !isDone && !isOverdue && Boolean(toDateEnd && now.getTime() <= toDateEnd.getTime());
+
+        const cutoffDisplay = examCutoff ? (() => {
+          try {
+            const dayStr = examCutoff.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+            return `${dayStr} at 5:00 PM`;
+          } catch {
+            return 'Day before exam at 5:00 PM';
+          }
+        })() : 'Day before exam at 5:00 PM';
 
         const taskDeptList = Array.isArray(task.departments) && task.departments.length > 0 ? task.departments : [];
 
@@ -1993,6 +2170,9 @@ export default function FacultyDashboard() {
           isDone,
           isOverdue,
           isDueSoon,
+          isSubmissionOverdue,
+          examCutoff,
+          cutoffDisplay,
           progKey: resolvedProgKey,
           department: resolvedDept,
           departments: orderedDepartments,
@@ -2046,11 +2226,20 @@ export default function FacultyDashboard() {
         if (ka !== kb) return ka.localeCompare(kb);
         return String(b.academicYear || '').localeCompare(String(a.academicYear || ''));
       });
-  }, [qpSetterTasks, baseQps, currentUid, assignedGroups, courseBankNameMap, allSyllabusDocs, isValidSubjectForBatchSem, facultyDept]);
+  }, [qpSetterTasks, baseQps, currentUid, assignedGroups, courseBankNameMap, allSyllabusDocs, isValidSubjectForBatchSem, facultyDept, ciaConfigs]);
+
+  const pendingQpTasks = qpSetterTaskCards.filter(t => !t.isDone);
+  const overdueQpTasks = pendingQpTasks.filter(t => t.isOverdue);
 
   const statsCards = [
     { label: "Assigned Subjects", value: assignedCount, icon: BookOpen, color: "indigo" },
-    { label: "QP Tasks", value: qpSetterTaskCards.filter(t => !t.isDone).length, icon: PenLine, color: "indigo" },
+    {
+      label: "QP Tasks",
+      value: pendingQpTasks.length,
+      badge: overdueQpTasks.length > 0 ? `${overdueQpTasks.length} Warning` : null,
+      icon: PenLine,
+      color: overdueQpTasks.length > 0 ? "amber" : "indigo"
+    },
     { label: "Drafts", value: totalDraftCount, icon: FileText, color: "slate" },
     { label: "Pending Review", value: totalForwardedCount, icon: Clock, color: "blue" },
     { label: "Approved", value: totalApprovedCount, icon: CheckCircle2, color: "emerald" },
@@ -2137,7 +2326,9 @@ export default function FacultyDashboard() {
       Object.entries(daySchedule).forEach(([period, entries]) => {
         entries.forEach(entry => {
           const parts = String(entry).split('|');
-          const code = parts[0] || '';
+          const rawCode = parts[0] || '';
+          if (!rawCode) return;
+          const code = extractSubjectCode(rawCode) || rawCode;
           const currentSec = g.section || (g.sections && g.sections.length > 0 ? g.sections[0] : '');
           const sectionSuffix = currentSec ? `_${sanitizeKey(currentSec)}` : '';
           const exactAttDocIdNum = `${g.progKey}_${sanitizeKey(g.department)}_${sanitizeKey(g.batch)}_${sanitizeKey(g.academicYear)}_${semNum}_${code}${sectionSuffix}`;
@@ -2157,8 +2348,10 @@ export default function FacultyDashboard() {
 
           if (!attData) {
             const cleanCode = normAlpha(code);
+            const cleanRawCode = normAlpha(rawCode);
             for (const [dId, aData] of Object.entries(facultyAttendanceData || {})) {
-              if (normAlpha(dId).includes(cleanCode) && isBatchMatch(dId, g.batch) && isDeptMatch(dId, g.department)) {
+              const dClean = normAlpha(dId);
+              if ((dClean.includes(cleanCode) || (cleanRawCode && dClean.includes(cleanRawCode))) && isBatchMatch(dId, g.batch) && isDeptMatch(dId, g.department)) {
                 attData = aData;
                 break;
               }
@@ -2204,7 +2397,10 @@ export default function FacultyDashboard() {
               const subRec = findRecordForPeriod(aRecords, attendanceDate, period);
               if (!subRec) continue;
 
-              if (!normAlpha(dId).includes(normAlpha(code))) {
+              const cleanCode = normAlpha(code);
+              const cleanRawCode = normAlpha(rawCode);
+              const dClean = normAlpha(dId);
+              if (!dClean.includes(cleanCode) && (!cleanRawCode || !dClean.includes(cleanRawCode))) {
                 rec = subRec;
                 subFound = true;
                 const dIdParts = dId.split('_');
@@ -2355,6 +2551,12 @@ export default function FacultyDashboard() {
                   <div className={`p-2.5 rounded-xl ${c.iconBg}`}>
                     <Icon size={20} className={c.text} />
                   </div>
+                  {s.badge && (
+                    <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1 animate-pulse shadow-2xs">
+                      <AlertTriangle size={11} className="text-amber-700" />
+                      {s.badge}
+                    </span>
+                  )}
                 </div>
                 <p className="text-2xl font-bold text-zinc-900 tracking-tight">{s.value}</p>
                 <p className="text-xs font-semibold text-zinc-500 mt-1 uppercase tracking-wider">{s.label}</p>
@@ -2373,11 +2575,17 @@ export default function FacultyDashboard() {
                   <PenLine size={22} className="text-indigo-700" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-black text-slate-800 tracking-tight flex items-center gap-2">
+                  <h2 className="text-lg font-black text-slate-800 tracking-tight flex items-center gap-2 flex-wrap">
                     Question Paper Setter Tasks
                     <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-indigo-100 text-[#120c7a] border border-indigo-200">
                       {qpSetterTaskCards.filter(t => !t.isDone).length} Pending
                     </span>
+                    {qpSetterTaskCards.some(t => !t.isDone && t.isOverdue) && (
+                      <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-amber-100 text-amber-900 border border-amber-300 flex items-center gap-1 animate-pulse shadow-2xs">
+                        <AlertTriangle size={12} className="text-amber-700" />
+                        {qpSetterTaskCards.filter(t => !t.isDone && t.isOverdue).length} Overdue Warning
+                      </span>
+                    )}
                   </h2>
                   <p className="text-xs text-slate-500 font-medium">
                     You have been assigned as QP Setter for the following subjects in IA Schedule / Exam Cell
@@ -2395,7 +2603,7 @@ export default function FacultyDashboard() {
                     className={`rounded-2xl border p-5 transition-all duration-200 flex flex-col justify-between space-y-4 shadow-sm hover:shadow-md ${task.isDone
                       ? 'bg-emerald-50/40 border-emerald-200'
                       : task.isOverdue
-                        ? 'bg-red-50/30 border-red-200'
+                        ? 'bg-gradient-to-br from-amber-50/60 via-white to-amber-50/30 border-amber-300 ring-1 ring-amber-300/80 shadow-amber-50'
                         : 'bg-gradient-to-br from-white to-indigo-50/30 border-indigo-200/80 hover:border-indigo-400'
                       }`}
                   >
@@ -2410,8 +2618,8 @@ export default function FacultyDashboard() {
                             <CheckCircle2 size={13} /> Completed ({task.createdCount}/{task.requiredSets} Sets)
                           </span>
                         ) : task.isOverdue ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-black px-2.5 py-1 rounded-full bg-red-100 text-red-800 border border-red-300 animate-pulse">
-                            <AlertCircle size={13} /> Overdue ({task.createdCount}/{task.requiredSets} Sets)
+                          <span className="inline-flex items-center gap-1 text-[11px] font-black px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs animate-pulse">
+                            <AlertTriangle size={13} className="text-amber-700" /> Overdue Warning ({task.createdCount}/{task.requiredSets} Sets)
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-[11px] font-black px-2.5 py-1 rounded-full bg-amber-100 text-amber-900 border border-amber-300">
@@ -2461,13 +2669,22 @@ export default function FacultyDashboard() {
                       )}
 
                       {/* Submission Window & Exam Date */}
-                      <div className="bg-slate-50/80 rounded-xl p-3 border border-slate-200/80 space-y-1.5 text-xs text-slate-600">
+                      <div className={`rounded-xl p-3 border space-y-2 text-xs ${task.isOverdue ? 'bg-amber-50/80 border-amber-200/80 text-amber-900' : 'bg-slate-50/80 border-slate-200/80 text-slate-600'}`}>
                         <div className="flex items-center justify-between">
                           <span className="font-semibold text-slate-500">Submission Window:</span>
                           <span className="font-bold text-slate-800">
-                            {task.fromDate || '---'} → <span className={task.isOverdue ? "text-red-600 font-extrabold" : "text-slate-800"}>{task.toDate || '---'}</span>
+                            {task.fromDate || '---'} → <span className={task.isOverdue ? "text-amber-800 font-extrabold" : "text-slate-800"}>{task.toDate || '---'}</span>
                           </span>
                         </div>
+                        {task.isOverdue && !task.isDone && (
+                          <div className="p-2.5 rounded-lg bg-amber-100/90 border border-amber-300/90 text-amber-950 text-[11px] flex items-start gap-1.5 leading-snug">
+                            <AlertTriangle size={13} className="text-amber-700 shrink-0 mt-0.5" />
+                            <div>
+                              <span className="font-extrabold">Submission Deadline Passed:</span> You can still submit until{' '}
+                              <span className="font-extrabold underline text-amber-950">{task.cutoffDisplay || 'the day before exam at 5:00 PM'}</span>. Card will hide after 5:00 PM.
+                            </div>
+                          </div>
+                        )}
                         {task.examDate && (
                           <div className="flex items-center justify-between pt-1 border-t border-slate-200/60">
                             <span className="font-semibold text-slate-500">Exam Date:</span>
@@ -2484,7 +2701,10 @@ export default function FacultyDashboard() {
                           if (!q || !q.allocated || !q.allocatedTo) return false;
                           const targetCode = String(task.code || '').toLowerCase().replace(/[^a-z0-9]/g, '');
                           const qSubjCode = String(q.allocatedTo.subjectCode || parseSubjectField(q.subject).code || q.subject || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-                          return targetCode === qSubjCode;
+                          if (targetCode !== qSubjCode) return false;
+                          const qExamName = q.exam_name || q.qpaper_name || q.allocatedTo.examName || '';
+                          if (task.examName && qExamName && !isSameExamEvent(task.examName, qExamName)) return false;
+                          return true;
                         });
 
                         if (!allocatedQP) return null;
@@ -2547,11 +2767,13 @@ export default function FacultyDashboard() {
                         }}
                         className={`w-full py-2.5 px-4 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 shadow-sm cursor-pointer ${task.isDone
                           ? 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300'
-                          : 'bg-[#120c7a] hover:bg-[#100b6e] text-white shadow-indigo-200'
+                          : task.isOverdue
+                            ? 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-200 font-black'
+                            : 'bg-[#120c7a] hover:bg-[#100b6e] text-white shadow-indigo-200'
                           }`}
                       >
                         <Sparkles size={15} />
-                        {task.isDone ? 'Generate Additional Set' : `Create Question Paper (${pendingSets} Left)`}
+                        {task.isDone ? 'Generate Additional Set' : task.isOverdue ? `Submit Paper (${pendingSets} Left) ⚠️` : `Create Question Paper (${pendingSets} Left)`}
                       </button>
                     </div>
                   </div>
@@ -2772,8 +2994,8 @@ export default function FacultyDashboard() {
                     </div>
                   </div>
 
-                  <div className="w-full h-64 md:h-72">
-                    <ResponsiveContainer width="100%" height="100%">
+                  <div className="w-full h-64 md:h-72 min-w-0 min-h-[260px]">
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={240} debounce={50}>
                       <AreaChart
                         data={facultySalaryInfo.chartData}
                         margin={{ top: 20, right: 20, left: -5, bottom: 20 }}
@@ -2855,8 +3077,8 @@ export default function FacultyDashboard() {
                     </div>
                   </div>
 
-                  <div className="w-full h-64 md:h-72">
-                    <ResponsiveContainer width="100%" height="100%">
+                  <div className="w-full h-64 md:h-72 min-w-0 min-h-[260px]">
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={240} debounce={50}>
                       <BarChart
                         data={facultySalaryInfo.chartData}
                         margin={{ top: 25, right: 20, left: -10, bottom: 20 }}
@@ -3246,7 +3468,11 @@ export default function FacultyDashboard() {
                           </div>
                         </div>
                         <button
-                          onClick={() => navigate(`/attendance?prog=${task.progKey}&dept=${task.department}&batch=${task.batch}&ay=${task.academicYear}&sem=${task.semester}&subject=${task.code}&date=${task.date}${task.period > 0 ? `&period=${task.period}` : ''}&section=${task.section}`)}
+                          onClick={() => {
+                            const pureCode = extractSubjectCode(task.code) || task.code;
+                            const targetSec = task.section || 'Sec-A';
+                            navigate(`/attendance?prog=${task.progKey}&dept=${encodeURIComponent(task.department)}&batch=${task.batch}&ay=${task.academicYear}&sem=${task.semester}&subject=${encodeURIComponent(pureCode)}&date=${task.date}${task.period > 0 ? `&period=${task.period}` : ''}&section=${encodeURIComponent(targetSec)}`);
+                          }}
                           className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-[#120c7a]/5 text-[#120c7a] text-xs font-bold hover:bg-[#120c7a]/10 transition-all"
                         >
                           <Edit2 size={14} />
@@ -3297,20 +3523,34 @@ export default function FacultyDashboard() {
                           {qp.batch || "-"}
                         </span>
                       </div>
-                      {qp.hod_comments && (
-                        <div className="mt-2 flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl">
-                          <AlertCircle size={14} className="text-amber-600 shrink-0 mt-0.5" />
-                          <p className="text-xs text-amber-800 leading-relaxed">{qp.hod_comments}</p>
-                        </div>
-                      )}
+                      {(() => {
+                        const reason = qp.hod_comments || qp.ac_comments || qp.coe_comments || qp.recorrect_comments || qp.comments || qp.rejection_reason || qp.remarks || qp.reason;
+                        if (!reason) return null;
+                        const source = qp.coe_comments ? "Exam Cell" : qp.ac_comments ? "Academic Coordinator" : qp.hod_comments ? "HOD" : "Reviewer";
+                        return (
+                          <div className="mt-2.5 flex items-start gap-2.5 p-3 bg-amber-50 border border-amber-200 rounded-xl shadow-2xs">
+                            <AlertCircle size={15} className="text-amber-600 shrink-0 mt-0.5" />
+                            <div className="text-xs text-amber-900 leading-relaxed">
+                              <span className="font-bold text-amber-950">{source} Comments: </span>
+                              <span>{reason}</span>
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
-                    <button
-                      onClick={() => navigate(`/question-paper-generator?id=${qp.id}&compositeKey=${qp.compositeKey}&set=${encodeURIComponent(formatQPSetDisplay(qp))}`)}
-                      className="shrink-0 inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#120c7a] text-white text-xs font-bold hover:bg-[#0f0a66] transition-all shadow-sm active:scale-95"
-                    >
-                      <Edit2 size={14} />
-                      Fix & Re-forward
-                    </button>
+                    {(() => {
+                      const reason = qp.hod_comments || qp.ac_comments || qp.coe_comments || qp.recorrect_comments || qp.comments || qp.rejection_reason || qp.remarks || qp.reason || '';
+                      const reasonParam = reason ? `&reason=${encodeURIComponent(reason)}` : '';
+                      return (
+                        <button
+                          onClick={() => navigate(`/question-paper-generator?id=${qp.id}&edit=${qp.id}&compositeKey=${qp.compositeKey}&set=${encodeURIComponent(formatQPSetDisplay(qp))}&status=${encodeURIComponent(qp.status || 'recorrected')}${reasonParam}`, { state: { qp, recorrectReason: reason } })}
+                          className="shrink-0 inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#120c7a] text-white text-xs font-bold hover:bg-[#0f0a66] transition-all shadow-sm active:scale-95 cursor-pointer"
+                        >
+                          <Edit2 size={14} />
+                          Fix & Re-forward
+                        </button>
+                      );
+                    })()}
                   </div>
                 </div>
               ))}
@@ -3824,7 +4064,7 @@ export default function FacultyDashboard() {
                             {qp.ac_approved ? (
                               <span className="text-purple-700 font-bold flex items-center gap-1.5">
                                 <span className="w-2 h-2 rounded-full bg-purple-600 animate-pulse"></span>
-                                Waiting for HOD Approval
+                                Waiting for HOD Approval{(() => { const hodName = resolveHodName(qp); return hodName ? ` (${hodName})` : ''; })()}
                               </span>
                             ) : (
                               <span className="text-blue-700 font-bold flex items-center gap-1.5">
@@ -3840,12 +4080,20 @@ export default function FacultyDashboard() {
                             <span>Approved by HOD & Workflow Completed</span>
                           </div>
                         )}
-                        {qp.status === 'recorrected' && qp.hod_comments && (
-                          <div className="mt-2 flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl">
-                            <AlertCircle size={14} className="text-amber-600 shrink-0 mt-0.5" />
-                            <p className="text-xs text-amber-800 leading-relaxed">{qp.hod_comments}</p>
-                          </div>
-                        )}
+                        {qp.status === 'recorrected' && (() => {
+                          const reason = qp.hod_comments || qp.ac_comments || qp.coe_comments || qp.recorrect_comments || qp.comments || qp.rejection_reason || qp.remarks || qp.reason;
+                          if (!reason) return null;
+                          const source = qp.coe_comments ? "Exam Cell" : qp.ac_comments ? "Academic Coordinator" : qp.hod_comments ? "HOD" : "Reviewer";
+                          return (
+                            <div className="mt-2 flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-xl shadow-2xs">
+                              <AlertCircle size={14} className="text-amber-600 shrink-0 mt-0.5" />
+                              <div className="text-xs text-amber-900 leading-relaxed">
+                                <span className="font-bold text-amber-950">{source} Comments: </span>
+                                <span>{reason}</span>
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </div>
                       <div className="shrink-0 flex items-center gap-1.5">
                         {isOfficiallyReleasedForMarkEntry(qp) && (
@@ -3865,15 +4113,19 @@ export default function FacultyDashboard() {
                         >
                           <Eye size={16} />
                         </button>
-                        {canEditQp(qp) && (
-                          <button
-                            onClick={() => navigate(`/question-paper-generator?id=${qp.id}&compositeKey=${qp.compositeKey}&set=${encodeURIComponent(formatQPSetDisplay(qp))}`)}
-                            className="p-2 rounded-lg bg-[#120c7a]/10 border border-[#120c7a]/20 text-[#120c7a] hover:bg-[#120c7a]/20 transition-all shadow-sm active:scale-95"
-                            title="Edit"
-                          >
-                            <Edit2 size={16} />
-                          </button>
-                        )}
+                        {canEditQp(qp) && (() => {
+                          const reason = qp.hod_comments || qp.ac_comments || qp.coe_comments || qp.recorrect_comments || qp.comments || qp.rejection_reason || qp.remarks || qp.reason || '';
+                          const reasonParam = (qp.status === 'recorrected' && reason) ? `&reason=${encodeURIComponent(reason)}` : '';
+                          return (
+                            <button
+                              onClick={() => navigate(`/question-paper-generator?id=${qp.id}&edit=${qp.id}&compositeKey=${qp.compositeKey}&set=${encodeURIComponent(formatQPSetDisplay(qp))}&status=${encodeURIComponent(qp.status || '')}${reasonParam}`, { state: { qp, recorrectReason: reason } })}
+                              className="p-2 rounded-lg bg-[#120c7a]/10 border border-[#120c7a]/20 text-[#120c7a] hover:bg-[#120c7a]/20 transition-all shadow-sm active:scale-95 cursor-pointer"
+                              title="Edit"
+                            >
+                              <Edit2 size={16} />
+                            </button>
+                          );
+                        })()}
                         {canEditQp(qp) && (
                           <button
                             onClick={() => handleDeleteQp(qp)}
@@ -3926,14 +4178,18 @@ export default function FacultyDashboard() {
                     <PenLine size={16} /> Mark Entry
                   </button>
                 )}
-                {canEditQp(selectedQP) && (
-                  <button
-                    onClick={() => { setShowQPModal(false); navigate(`/question-paper-generator?id=${selectedQP.id}&compositeKey=${selectedQP.compositeKey}&set=${encodeURIComponent(formatQPSetDisplay(selectedQP))}`); }}
-                    className="inline-flex items-center gap-2 bg-[#120c7a] hover:bg-[#0f0a66] text-white px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-sm hover:shadow-md active:scale-95"
-                  >
-                    <Edit2 size={16} /> Edit Paper
-                  </button>
-                )}
+                {canEditQp(selectedQP) && (() => {
+                  const selReason = selectedQP.hod_comments || selectedQP.ac_comments || selectedQP.coe_comments || selectedQP.recorrect_comments || selectedQP.comments || selectedQP.rejection_reason || selectedQP.remarks || selectedQP.reason || '';
+                  const selReasonParam = (selectedQP.status === 'recorrected' && selReason) ? `&reason=${encodeURIComponent(selReason)}` : '';
+                  return (
+                    <button
+                      onClick={() => { setShowQPModal(false); navigate(`/question-paper-generator?id=${selectedQP.id}&edit=${selectedQP.id}&compositeKey=${selectedQP.compositeKey}&set=${encodeURIComponent(formatQPSetDisplay(selectedQP))}&status=${encodeURIComponent(selectedQP.status || '')}${selReasonParam}`, { state: { qp: selectedQP, recorrectReason: selReason } }); }}
+                      className="inline-flex items-center gap-2 bg-[#120c7a] hover:bg-[#0f0a66] text-white px-4 py-2.5 rounded-xl text-sm font-bold transition-all shadow-sm hover:shadow-md active:scale-95"
+                    >
+                      <Edit2 size={16} /> Edit Paper
+                    </button>
+                  );
+                })()}
                 <button onClick={() => { setShowQPModal(false); setSelectedQP(null); }}
                   className="p-2.5 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100 rounded-xl transition-all">
                   <X size={20} />

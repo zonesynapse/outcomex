@@ -1430,13 +1430,36 @@ export default function CoeDashboard() {
     const unsub = onSnapshot(collection(db, "coe_setter_assignments"), (snap) => {
       const list = [];
       snap.forEach((doc) => {
-        list.push({ id: doc.id, ...doc.data() });
+        const d = doc.data();
+        if (d.isSetBStandaloneDoc) return; // Ignore standalone Set B documents from root listing
+        list.push({ id: doc.id, ...d });
       });
       setAssignments(list);
       setLoadingAssignments(false);
     });
     return () => unsub();
   }, []);
+
+  // Hydrate Set B for review if it was saved as a standalone document due to Firestore 1MB limits
+  useEffect(() => {
+    if (!selectedReviewAssignment) return;
+    if (!selectedReviewAssignment.submittedPaperB && (selectedReviewAssignment.hasSeparateSetBDoc || selectedReviewAssignment.setBDocId)) {
+      const setBDocId = selectedReviewAssignment.setBDocId || `${selectedReviewAssignment.id}__setB`;
+      getDoc(doc(db, "coe_setter_assignments", setBDocId)).then((snap) => {
+        if (snap.exists()) {
+          const bData = snap.data();
+          if (bData.submittedPaperB) {
+            setSelectedReviewAssignment((prev) => prev ? {
+              ...prev,
+              submittedPaperB: bData.submittedPaperB,
+              checklistResponsesB: bData.checklistResponsesB || prev.checklistResponsesB,
+              permittedMaterialsB: bData.permittedMaterialsB || prev.permittedMaterialsB
+            } : prev);
+          }
+        }
+      }).catch(console.warn);
+    }
+  }, [selectedReviewAssignment?.id, selectedReviewAssignment?.hasSeparateSetBDoc]);
 
   // Resiliently sync/backfill setterPassword in coe_setter_assignments for any legacy records
   useEffect(() => {
@@ -3752,6 +3775,10 @@ Contact: 94884 93434`}
                                 if (window.confirm(`Are you sure you want to delete assignment for ${ass.subjectCode} (${ass.setterName})?`)) {
                                   try {
                                     await deleteDoc(doc(db, "coe_setter_assignments", ass.id));
+                                    if (ass.hasSeparateSetBDoc || ass.setBDocId) {
+                                      const setBDocId = ass.setBDocId || `${ass.id}__setB`;
+                                      try { await deleteDoc(doc(db, "coe_setter_assignments", setBDocId)); } catch (e) { /* ignore */ }
+                                    }
                                     alert("Assignment deleted successfully!");
                                   } catch (err) {
                                     alert("Failed to delete assignment: " + err.message);

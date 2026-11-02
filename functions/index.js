@@ -847,9 +847,15 @@ exports.createExamCellPaymentSession = onCall(
     await db.collection("exam_cell_payments").doc(orderId).set(paymentRecord);
 
     if (appId) {
-      const collectionName = (category || "").toLowerCase().includes("revaluation")
-        ? "revaluation_applications"
-        : "photocopy_applications";
+      let collectionName = "photocopy_applications";
+      const catLower = (category || "").toLowerCase();
+      if (catLower.includes("review")) {
+        collectionName = "review_applications";
+      } else if (catLower.includes("revaluation")) {
+        collectionName = "revaluation_applications";
+      } else if (catLower.includes("ese")) {
+        collectionName = "ese_fee_registrations";
+      }
       try {
         await db.collection(collectionName).doc(appId).update({
           orderId,
@@ -954,16 +960,26 @@ exports.verifyExamCellPayment = onCall(
 
     if (localStatus === "SUCCESS") {
       let targetAppId = appId || paymentRecord.appId;
-      const isRevaluationCategory = (paymentRecord.category || "").toLowerCase().includes("revaluation");
-      const targetCollection = isRevaluationCategory ? "revaluation_applications" : "photocopy_applications";
+      const catLower = (paymentRecord.category || "").toLowerCase();
+      let targetCollection = "photocopy_applications";
+      if (catLower.includes("review")) {
+        targetCollection = "review_applications";
+      } else if (catLower.includes("revaluation")) {
+        targetCollection = "revaluation_applications";
+      } else if (catLower.includes("ese")) {
+        targetCollection = "ese_fee_registrations";
+      }
 
       if (!targetAppId) {
         try {
           let appSnap = await db.collection(targetCollection).where("orderId", "==", orderId).limit(1).get();
-          if (appSnap.empty && isRevaluationCategory) {
-            appSnap = await db.collection("photocopy_applications").where("orderId", "==", orderId).limit(1).get();
-          } else if (appSnap.empty) {
-            appSnap = await db.collection("revaluation_applications").where("orderId", "==", orderId).limit(1).get();
+          if (appSnap.empty) {
+            for (const col of ["ese_fee_registrations", "review_applications", "revaluation_applications", "photocopy_applications"]) {
+              if (col !== targetCollection) {
+                appSnap = await db.collection(col).where("orderId", "==", orderId).limit(1).get();
+                if (!appSnap.empty) break;
+              }
+            }
           }
           if (!appSnap.empty) {
             targetAppId = appSnap.docs[0].id;
@@ -980,11 +996,17 @@ exports.verifyExamCellPayment = onCall(
           let appSnap = await appRef.get();
 
           if (!appSnap.exists) {
-            const alternateCollection = isRevaluationCategory ? "photocopy_applications" : "revaluation_applications";
-            appRef = db.collection(alternateCollection).doc(targetAppId);
-            appSnap = await appRef.get();
-            if (appSnap.exists) {
-              activeCollection = alternateCollection;
+            for (const altCol of ["review_applications", "revaluation_applications", "photocopy_applications"]) {
+              if (altCol !== activeCollection) {
+                const altRef = db.collection(altCol).doc(targetAppId);
+                const altSnap = await altRef.get();
+                if (altSnap.exists) {
+                  activeCollection = altCol;
+                  appRef = altRef;
+                  appSnap = altSnap;
+                  break;
+                }
+              }
             }
           }
 
@@ -1016,7 +1038,7 @@ exports.verifyExamCellPayment = onCall(
             };
 
             if (!currentAppData.status || currentAppData.status === "Payment Pending" || currentAppData.status === "Applied") {
-              updateFields.status = "Submitted to HOD";
+              updateFields.status = activeCollection === "ese_fee_registrations" ? "Paid" : "Submitted to HOD";
             }
 
             await appRef.update(updateFields);

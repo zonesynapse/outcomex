@@ -260,7 +260,7 @@ export default function AdmissionConfirmation() {
       const progKey = formatProgrammeKey(data.programme);
       if (!data.batch || !progKey || !data.department) return;
       const studentDocId = `${sanitizeKey(data.batch)}_${progKey}_${sanitizeKey(data.department)}`;
-      const studentRef = doc(db, 'students', studentDocId);
+      const studentRef = doc(db, 'approved_admissions', studentDocId);
       const snap = await getDoc(studentRef);
       const existingData = snap.exists() ? snap.data() : {};
       const order = existingData._order || [];
@@ -276,6 +276,7 @@ export default function AdmissionConfirmation() {
         ...existingData,
         [regNo]: name,
         _order: order,
+        _meta: { ...(existingData._meta || {}), department: data.department, programme: progKey, batch: data.batch },
         _joiningAY: { ...joiningAY, [regNo]: data.academicYear || "" },
         _joiningDate: { ...joiningDate, [regNo]: joinDateStr }
       });

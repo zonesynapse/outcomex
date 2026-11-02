@@ -430,7 +430,7 @@ export default function StepAnalytics() {
                   No data available for compliance visualization.
                 </div>
               ) : (
-                <ResponsiveContainer width="100%" height="100%">
+                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={220}>
                   <BarChart data={deptComplianceChartData} margin={{ top: 10, right: 10, left: -20, bottom: 5 }}>
                     <XAxis dataKey="name" stroke="#a1a1aa" fontSize={11} tickLine={false} />
                     <YAxis stroke="#a1a1aa" fontSize={11} domain={[0, 100]} tickLine={false} />
@@ -456,7 +456,7 @@ export default function StepAnalytics() {
               ) : (
                 <>
                   <div className="h-48">
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={180}>
                       <PieChart>
                         <Pie
                           data={categoryPointsChartData}

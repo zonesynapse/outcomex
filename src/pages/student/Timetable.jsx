@@ -9,6 +9,11 @@ import {
 } from "lucide-react";
 import { getAcademicYears, formatBatchDisplay, formatProgrammeKey, sanitizeKey } from "../../lib/utils";
 import { fetchAllCourseNamesMap, getCourseName } from "../../utils/courseUtils";
+import {
+  getCachedStudentProfile,
+  setCachedStudentProfile,
+  fetchScopedTimetableDocs
+} from "../../lib/studentSession";
 
 const normKey = (key) => {
   if (!key) return '';
@@ -107,7 +112,7 @@ function formatExamTimingDisplay(item) {
 
 export default function Timetable() {
   const location = useLocation();
-  const [studentData, setStudentData] = useState(null);
+  const [studentData, setStudentData] = useState(() => getCachedStudentProfile());
   const [loading, setLoading] = useState(true);
   const [timetable, setTimetable] = useState(null);
   const [courseNames, setCourseNames] = useState({});
@@ -176,12 +181,18 @@ export default function Timetable() {
   }, [location]);
 
   useEffect(() => {
+    const cached = getCachedStudentProfile();
+    if (cached) {
+      setStudentData(cached);
+    }
     const unsub = onAuthStateChanged(auth, async (user) => {
       if (!user) { setLoading(false); return; }
       try {
         const snap = await getDoc(doc(db, "users", user.uid));
         if (snap.exists()) {
-          setStudentData(snap.data());
+          const uData = snap.data();
+          setStudentData(uData);
+          setCachedStudentProfile(user.uid, uData);
           document.title = "Student Portal - Timetable";
         }
       } catch (err) { console.error(err); }
@@ -258,15 +269,17 @@ export default function Timetable() {
 
         // Broad fallback: scan timetable_allocations for matching batch
         if (!foundTimetable) {
-          const allSnap = await getDocs(collection(db, "timetable_allocations"));
+          const allSnap = await fetchScopedTimetableDocs(db, { progKey, deptKey, batchKey });
           const candidates = [];
-          allSnap.forEach((d) => {
-            const data = d.data();
-            const docBatch = normKey(data.batch || "");
-            const docBatchId = normKey(d.id);
-            if (!docBatch.includes(batchNorm) && !docBatchId.includes(batchNorm)) return;
-            candidates.push({ id: d.id, data });
-          });
+          if (allSnap && allSnap.forEach) {
+            allSnap.forEach((d) => {
+              const data = d.data();
+              const docBatch = normKey(data.batch || "");
+              const docBatchId = normKey(d.id);
+              if (!docBatch.includes(batchNorm) && !docBatchId.includes(batchNorm)) return;
+              candidates.push({ id: d.id, data });
+            });
+          }
           if (candidates.length === 1) {
             foundTimetable = candidates[0].data;
           } else if (candidates.length > 1) {
@@ -520,8 +533,9 @@ export default function Timetable() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="animate-spin text-[#120c7a]" size={40} />
+      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-3">
+        <Loader2 className="animate-spin text-[#120c7a]" size={42} />
+        <p className="text-sm font-semibold text-slate-500 animate-pulse">Loading timetable schedule...</p>
       </div>
     );
   }

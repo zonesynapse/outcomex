@@ -7,7 +7,7 @@ import { formatProgDisplay } from "../../lib/utils";
 import { 
   LayoutDashboard, User, CheckCircle, BarChart3, Clock, IndianRupee,
   BookOpen, FileText, CalendarDays, ClipboardList, Library, Briefcase,
-  Download, Bell, Menu, X, Award, Users, Megaphone, Globe, Building2, Copy, FileWarning, FileCheck, Bus
+  Download, Bell, Menu, X, Award, Users, Megaphone, Globe, Building2, Copy, FileWarning, FileCheck, FileSearch, Bus, GraduationCap
 } from "lucide-react";
 
 const studentMenuItems = [
@@ -15,9 +15,11 @@ const studentMenuItems = [
   { id: "profile", icon: User, label: "My Profile", path: "/student/profile" },
   { id: "attendance", icon: CheckCircle, label: "Attendance", path: "/student/attendance" },
   { id: "marks", icon: BarChart3, label: "Marks & Results", path: "/student/marks" },
+  { id: "ese-fee", icon: GraduationCap, label: "ESE Fee", path: "/student/ese-fee" },
   { id: "photocopy", icon: Copy, label: "Photocopy", path: "/student/photocopy" },
   { id: "photocopy-problem", icon: FileWarning, label: "Photocopy Problem", path: "/student/photocopy-problem" },
   { id: "revaluation", icon: FileCheck, label: "Revaluation", path: "/student/revaluation" },
+  { id: "review", icon: FileSearch, label: "Review", path: "/student/review" },
   { id: "timetable", icon: Clock, label: "Timetable", path: "/student/timetable" },
   { id: "transport", icon: Bus, label: "Transport", path: "/student/transport" },
   { id: "fees", icon: IndianRupee, label: "Fee Details", path: "/student/fees" },

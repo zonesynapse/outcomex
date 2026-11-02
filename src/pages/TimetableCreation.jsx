@@ -475,7 +475,8 @@ export default function TimetableCreation() {
       // revisit-after-save grid matches exactly what was saved.
       const payload = {
         ...allocatedTemplate,
-        subjectAllocation
+        subjectAllocation,
+        allocatedSubjects
       };
       try {
         await updateDoc(doc(db, 'timetable_allocations', saveKey), payload);

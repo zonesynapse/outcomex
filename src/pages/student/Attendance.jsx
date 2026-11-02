@@ -6,8 +6,21 @@ import { CalendarCheck2, AlertCircle, Loader2, Check, X } from "lucide-react";
 import {
   calculateStudentAttendanceOverview,
   cleanStudentId,
-  extractSubjectCodeFromDocId
+  extractSubjectCodeFromDocId,
+  isDeptMatch,
+  getAcademicYears
 } from "../../lib/utils";
+import {
+  getCachedStudentProfile,
+  setCachedStudentProfile,
+  getCachedStudentIndex,
+  fetchScopedAttendanceDocs,
+  fetchScopedTimetableDocs,
+  fetchScopedAssignmentDocs,
+  fetchTargetedFacultyNames,
+  getCachedSyllabus,
+  getCachedRegulation
+} from "../../lib/studentSession";
 
 const sanitizeKey = (key) => {
   if (!key) return '';
@@ -32,7 +45,7 @@ const getPercentBarColor = (p) => {
 };
 
 export default function Attendance() {
-  const [studentData, setStudentData] = useState(null);
+  const [studentData, setStudentData] = useState(() => getCachedStudentProfile());
   const [loading, setLoading] = useState(true);
   const [subjectWise, setSubjectWise] = useState([]);
   const [dateWiseRows, setDateWiseRows] = useState([]);
@@ -43,11 +56,19 @@ export default function Attendance() {
   const [totalOd, setTotalOd] = useState(0);
 
   useEffect(() => {
+    const cached = getCachedStudentProfile();
+    if (cached) {
+      setStudentData(cached);
+    }
     const unsub = onAuthStateChanged(auth, async (user) => {
       if (!user) { setLoading(false); return; }
       try {
         const snap = await getDoc(doc(db, "users", user.uid));
-        if (snap.exists()) setStudentData(snap.data());
+        if (snap.exists()) {
+          const uData = snap.data();
+          setStudentData(uData);
+          setCachedStudentProfile(user.uid, uData);
+        }
       } catch (err) { console.error(err); }
     });
     return () => unsub();
@@ -68,16 +89,14 @@ export default function Attendance() {
         const batchKey = sanitizeKey(batch);
 
         const batchPrefix = `${progKey}_${deptKey}_${batchKey}`;
-        const batchPrefixEnd = `${batchPrefix}\uf8ff`;
 
-        // 1. Resolve student's section from student_index
+        // 1. Resolve student's section from student_index with session caching
         let studentSection = studentData.section || studentData.sec || '';
         let canonicalId = null;
         if (regNo || studentData.reg) {
           try {
-            const idxSnap = await getDoc(doc(db, 'student_index', sanitizeKey(regNo || studentData.reg)));
-            if (idxSnap.exists()) {
-              const idxData = idxSnap.data();
+            const idxData = await getCachedStudentIndex(db, regNo || studentData.reg);
+            if (idxData) {
               canonicalId = idxData.canonicalId || idxData.admissionNo || null;
               if (idxData.studentDocId) {
                 const secMatch = idxData.studentDocId.match(/_(Sec-[A-Za-z0-9]+)/i);
@@ -89,12 +108,13 @@ export default function Attendance() {
           }
         }
 
-        const [allAttSnap, batchRegSnap, assignSnap, usersSnap, studentsSnap] = await Promise.all([
-          getDocs(collection(db, "attendance")),
-          getDoc(doc(db, "batch_regulations", progKey)).catch(() => null),
-          getDocs(collection(db, "subject_assignments")),
-          getDocs(collection(db, "users")),
+        // 2. High-performance Scoped Queries (Fetches ONLY this student's department batch docs)
+        const [allAttSnap, regulation, assignSnap, studentsSnap, timetableSnap] = await Promise.all([
+          fetchScopedAttendanceDocs(db, { progKey, deptKey, batchKey }),
+          getCachedRegulation(db, progKey, batch),
+          fetchScopedAssignmentDocs(db, { progKey, deptKey, batchKey }),
           getDoc(doc(db, "students", `${batchKey}_${progKey}_${deptKey}`)).catch(() => null),
+          fetchScopedTimetableDocs(db, { progKey, deptKey, batchKey }),
         ]);
 
         const joiningDate = studentData.joiningDate ||
@@ -103,40 +123,15 @@ export default function Attendance() {
           (studentData.admissionNo ? studentsSnap?.data()?._joiningDate?.[studentData.admissionNo] : '') ||
           '';
 
-        let regulation = "";
-        if (batchRegSnap?.exists()) {
-          const regData = batchRegSnap.data();
-          regulation = regData[batch] || regData[Object.keys(regData)[0]] || "";
-        }
-
         let subjectNames = {};
         if (regulation) {
-          const syllabusSnap = await getDoc(doc(db, "syllabus_data", `${progKey}_${deptKey}_${sanitizeKey(regulation)}`)).catch(() => null);
-          if (syllabusSnap?.exists()) {
-            const syllabus = syllabusSnap.data();
+          const syllabus = await getCachedSyllabus(db, progKey, deptKey, regulation);
+          if (syllabus) {
             Object.values(syllabus.semesters || {}).forEach(semList => {
               if (Array.isArray(semList)) semList.forEach(s => { if (s?.code) subjectNames[s.code] = s.name; });
             });
           }
         }
-
-        const facultyUidMap = {};
-        assignSnap.forEach(d => {
-          const dId = d.id;
-          const matchBatch = dId.includes(batchKey) || dId.includes(sanitizeKey(batch));
-          if (!matchBatch) return;
-          const data = d.data();
-          Object.entries(data).forEach(([uid, codes]) => {
-            if (uid.startsWith('_') || !Array.isArray(codes)) return;
-            codes.forEach(code => { if (!facultyUidMap[code]) facultyUidMap[code] = uid; });
-          });
-        });
-
-        const facultyNames = {};
-        usersSnap.forEach(d => {
-          const u = d.data();
-          facultyNames[d.id] = u.facultyName || u.displayName || u.email || '';
-        });
 
         const studentIds = [regNo, studentData.admissionNo, studentData.admNo, studentData.id, studentData.reg, canonicalId]
           .filter(Boolean)
@@ -168,12 +163,6 @@ export default function Attendance() {
         const batchYearMatch = String(batch).match(/\d{4}\s*[-_]\s*\d{2,4}/);
         const bYear = batchYearMatch ? norm(batchYearMatch[0]) : '';
         const bStartYear = String(batch).match(/\b(20\d{2})\b/)?.[1] || '';
-        const deptNorm = norm(department);
-        const matchAcronym = department.match(/\(([^)]+)\)/);
-        const deptAcronym = matchAcronym ? norm(matchAcronym[1]) : '';
-        const words = department.replace(/^(B\.?Tech\.?|B\.?E\.?|M\.?E\.?|M\.?Tech\.?|MBA|MCA)\s+/i, '').split(/[\s&/_-]+/);
-        const softAcronym = words.length > 1 ? norm(words.map(w => w[0]).join('')) : '';
-
         const matchedAttDocs = allAttSnap.docs.filter(docSnap => {
           const id = docSnap.id;
           const idNorm = norm(id);
@@ -181,16 +170,219 @@ export default function Attendance() {
           if (!hasBatch) return false;
 
           const dData = docSnap.data();
-          const docDept = norm(dData._meta?.department || dData.department || '');
+          const docDept = dData._meta?.department || dData.department || '';
           const hasDept = !department ||
-            idNorm.includes(deptNorm) ||
-            (deptAcronym && idNorm.includes(deptAcronym)) ||
-            (softAcronym && idNorm.includes(softAcronym)) ||
-            (docDept && (docDept.includes(deptNorm) || deptNorm.includes(docDept))) ||
-            id.startsWith(batchPrefix);
+            (batchPrefix && id.startsWith(batchPrefix)) ||
+            isDeptMatch(id, department) ||
+            (docDept && isDeptMatch(docDept, department));
 
           return hasDept;
         });
+
+        // Determine student's active semester and academic year
+        let activeSem = String(studentData.semester || studentData.sem || studentData.currentSemester || '').match(/\d+/)?.[0] || '';
+        let activeAy = '';
+
+        if (!activeSem && batch) {
+          const years = getAcademicYears(batch);
+          if (years.length > 0) {
+            const currentYear = new Date().getFullYear();
+            const month = new Date().getMonth();
+            const isOddSem = month >= 6;
+            const foundAy = years.find((y) => {
+              const [start] = y.split('-').map(Number);
+              if (isOddSem) return start === currentYear;
+              return start + 1 === currentYear;
+            }) || years[years.length - 1];
+            if (foundAy) {
+              activeAy = foundAy;
+              const ayIndex = years.indexOf(foundAy);
+              if (ayIndex >= 0) {
+                activeSem = String(ayIndex * 2 + (isOddSem ? 1 : 2));
+              }
+            }
+          }
+        }
+
+        // Cross-check active semester from actual attendance documents
+        let maxAttSem = 0;
+        let detectedAttAy = '';
+        matchedAttDocs.forEach(d => {
+          const parts = d.id.split('_');
+          const batchIdx = parts.findIndex(p => /^\d{4}-\d{4}$/.test(p));
+          if (batchIdx >= 0 && batchIdx + 2 < parts.length) {
+            const ay = parts[batchIdx + 1];
+            const sem = String(parts[batchIdx + 2]).match(/\d+/)?.[0];
+            if (sem) {
+              const sNum = parseInt(sem, 10);
+              if (sNum > maxAttSem) {
+                maxAttSem = sNum;
+                detectedAttAy = ay;
+              }
+            }
+          }
+        });
+        if (maxAttSem > 0) {
+          activeSem = String(maxAttSem);
+          if (detectedAttAy) activeAy = detectedAttAy;
+        }
+
+        const batchStartYear = String(batch || '').match(/(19|20)\d{2}/)?.[0] || '';
+        const batchNormStr = String(batch || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const sectionNorm = (studentSection || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+        const facultyUidMap = {};
+        const timetableFacultyMap = {};
+
+        // 1. Direct Timetable Allocations: Extract faculty assigned in Timetable Creation
+        if (timetableSnap && timetableSnap.forEach) {
+          timetableSnap.forEach(d => {
+            const dId = d.id;
+            const matchDept = isDeptMatch(dId, department) || (d.data()?.department && isDeptMatch(d.data().department, department));
+            const matchBatch = dId.includes(batchKey) || dId.includes(sanitizeKey(batch)) || (batchStartYear && dId.includes(batchStartYear));
+            if (!matchDept || !matchBatch) return;
+
+            const idNoSec = dId.replace(/_(sec|section)[-_]?[a-z0-9]*$/i, '');
+            const parts = idNoSec.split('_');
+            const dSem = parts.length > 0 ? (String(parts[parts.length - 1]).match(/\d+/)?.[0] || '') : '';
+            if (activeSem && dSem && dSem !== String(activeSem)) return;
+
+            const dData = d.data() || {};
+            // If allocatedSubjects array was stored by TimetableCreation
+            if (Array.isArray(dData.allocatedSubjects)) {
+              dData.allocatedSubjects.forEach(s => {
+                if (s?.code) {
+                  if (s.facultyName && s.facultyName !== '—') {
+                    timetableFacultyMap[s.code] = s.facultyName;
+                  }
+                  if (s.facultyUid) {
+                    facultyUidMap[s.code] = s.facultyUid;
+                  }
+                }
+              });
+            }
+            // Template subjects
+            if (Array.isArray(dData.subjects)) {
+              dData.subjects.forEach(s => {
+                const code = s.code || s.acronym || '';
+                const fName = s.faculty || s.facultyName || '';
+                if (code && fName && fName !== '—' && !timetableFacultyMap[code]) {
+                  timetableFacultyMap[code] = fName;
+                }
+              });
+            }
+          });
+        }
+
+        // 2. Filter subject_assignments specifically for THIS student's Department, Batch, and Section
+        const candidateAssignDocs = [];
+        assignSnap.forEach(d => {
+          const dId = d.id;
+          const dData = d.data() || {};
+          const dDept = dData.department || dData._meta?.department || '';
+
+          // 1. Batch check
+          const matchBatch = dId.includes(batchKey) || 
+            dId.includes(sanitizeKey(batch)) || 
+            (batchStartYear && dId.includes(batchStartYear)) ||
+            (batchNormStr && dId.toLowerCase().replace(/[^a-z0-9]/g, '').includes(batchNormStr));
+          if (!matchBatch) return;
+
+          // 2. Department check: MUST match student's department!
+          // 2. Department check: MUST match student's department!
+          // NEVER allow an assignment doc from another department (e.g. EEE or CSE) to match an ECE student!
+          if (dDept && !isDeptMatch(dDept, department)) return;
+          if (!isDeptMatch(dId, department)) return;
+
+          // Extract doc semester and academic year
+          const idNoSec = dId.replace(/_(sec|section)[-_]?[a-z0-9]*$/i, '');
+          const parts = idNoSec.split('_');
+          const docSem = parts.length > 0 ? (String(parts[parts.length - 1]).match(/\d+/)?.[0] || '') : '';
+          const docAy = parts.length > 1 ? (String(parts[parts.length - 2]).match(/\d{4}[-_]\d{2,4}/)?.[0] || '') : '';
+
+          let score = 0;
+
+          // Exact department score boost:
+          const normDoc = norm(dId);
+          const normTarget = norm(department);
+          if (normDoc.includes(normTarget) || normTarget.includes(normDoc)) {
+            score += 200;
+          }
+
+          // 3. Strict Semester scoring (Crucial: prevents older semesters like Sem 1-4 from overwriting Sem 7)
+          if (activeSem && docSem) {
+            if (docSem === activeSem) {
+              score += 150;
+            } else {
+              score -= 100;
+            }
+          } else if (docSem) {
+            score += (parseInt(docSem, 10) || 1) * 15;
+          }
+
+          // 4. Academic year scoring
+          if (activeAy && docAy) {
+            if (docAy.includes(activeAy) || activeAy.includes(docAy)) {
+              score += 50;
+            } else {
+              score -= 20;
+            }
+          }
+
+          // 5. Section scoring:
+          // +50 if it specifically matches student's section (e.g. Sec-A)
+          // +20 if it is a general unsectioned doc
+          // -30 if it is for a different section
+          const docHasSec = /_(sec|section)[-_]?[a-z0-9]+/i.test(dId);
+          if (sectionNorm && docHasSec) {
+            const secMatch = dId.match(/_(sec|section)[-_]?([a-z0-9]+)/i);
+            const docSec = secMatch ? secMatch[2].toLowerCase() : '';
+            if (docSec === sectionNorm || sectionNorm.includes(docSec) || docSec.includes(sectionNorm)) {
+              score += 50;
+            } else {
+              score -= 30;
+            }
+          } else if (!docHasSec) {
+            score += 20;
+          }
+
+          if (progKey && dId.startsWith(progKey)) {
+            score += 10;
+          }
+
+          candidateAssignDocs.push({ id: dId, data: dData, score });
+        });
+
+        // Sort candidate docs so the active semester and section matching doc is processed first
+        candidateAssignDocs.sort((a, b) => b.score - a.score);
+
+        if (candidateAssignDocs.length > 0) {
+          candidateAssignDocs.forEach(({ data }) => {
+            Object.entries(data).forEach(([uid, codes]) => {
+              if (uid.startsWith('_') || !Array.isArray(codes)) return;
+              codes.forEach(code => {
+                if (code && !facultyUidMap[code]) {
+                  facultyUidMap[code] = uid;
+                }
+              });
+            });
+          });
+        } else {
+          // Fail-safe fallback within same batch if department format differs
+          assignSnap.forEach(d => {
+            const dId = d.id;
+            const matchBatch = dId.includes(batchKey) || dId.includes(sanitizeKey(batch));
+            if (!matchBatch) return;
+            const data = d.data();
+            Object.entries(data).forEach(([uid, codes]) => {
+              if (uid.startsWith('_') || !Array.isArray(codes)) return;
+              codes.forEach(code => { if (!facultyUidMap[code]) facultyUidMap[code] = uid; });
+            });
+          });
+        }
+
+        const facultyUidsToFetch = Object.values(facultyUidMap).filter(Boolean);
+        const facultyNames = await fetchTargetedFacultyNames(db, facultyUidsToFetch);
 
         // Pre-fetch course enrolment documents to verify elective enrollments accurately
         const uniqueEnrolKeys = new Set();
@@ -228,6 +420,7 @@ export default function Attendance() {
           joiningDate,
           facultyUidMap,
           facultyNames,
+          timetableFacultyMap,
           subjectNames,
           maxPeriodsPerDay: 8
         });
@@ -238,8 +431,11 @@ export default function Attendance() {
         setTotalPresent(overview.totalPresent);
         setTotalOd(overview.totalOd);
         setOverallPercentage(overview.overallPercentage);
-      } catch (err) { console.error(err); }
-      setLoading(false);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
     };
 
     fetchAttendance();
@@ -264,8 +460,9 @@ export default function Attendance() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <Loader2 className="animate-spin text-[#120c7a]" size={40} />
+      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-3">
+        <Loader2 className="animate-spin text-[#120c7a]" size={42} />
+        <p className="text-sm font-semibold text-slate-500 animate-pulse">Loading attendance records...</p>
       </div>
     );
   }
