@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { onSnapshot, doc, setDoc, updateDoc, collection, query, orderBy, serverTimestamp, addDoc, getDoc, getDocs } from "firebase/firestore";
 import { db, auth } from "../../firebase";
 import Layout from "../../components/Layout";
@@ -6,7 +6,7 @@ import AnnaUniversityPhotocopyModal from "../../components/AnnaUniversityPhotoco
 import AnnaUniversityFeeReportModal from "../../components/AnnaUniversityFeeReportModal";
 import EsePaidFeeReportModal from "../../components/EsePaidFeeReportModal";
 import * as XLSX from "xlsx";
-import { formatDepartmentDisplay, isDeptMatch, sanitizeKey, formatProgrammeKey, formatProgDisplay, formatBatchDisplay, getRecentBatches } from "../../lib/utils";
+import { formatDepartmentDisplay, isDeptMatch, sanitizeKey, formatProgrammeKey, formatProgDisplay, formatBatchDisplay, getRecentBatches, getDeptFromRegNo, stripDegreePrefixDynamic } from "../../lib/utils";
 import { useDepartments } from "../../hooks/useDepartments";
 import { useBatches } from "../../hooks/useBatches";
 import {
@@ -38,6 +38,8 @@ const isBatchMatch = (b1, b2) => {
 
 // Global in-memory cache for loaded student class lists (0ms instant hits)
 const studentRosterCache = new Map();
+// Global dynamic set of programmes registered in Firestore
+const dynamicProgrammeSet = new Set();
 
 // In-flight request deduplication & shared all-students snapshot cache
 let allStudentsCollectionPromise = null;
@@ -83,9 +85,9 @@ function extractDeptVariations(dept) {
     variations.add(noCode.replace(/[^a-zA-Z0-9]/g, "_"));
   }
 
-  // Strip degree prefix (e.g. "B.E. Bio Medical Engineering" -> "Bio Medical Engineering")
-  const baseDept = (noCode || raw).replace(/^(B\.?Tech\.?|B\.?E\.?|M\.?E\.?|M\.?Tech\.?|MBA|MCA)\s+/i, "").trim();
-  if (baseDept) {
+  // Strip degree prefix dynamically (Zero hardcoding — supports any degree created in Firestore)
+  const baseDept = stripDegreePrefixDynamic(noCode || raw, Array.from(dynamicProgrammeSet));
+  if (baseDept && baseDept !== (noCode || raw)) {
     variations.add(baseDept);
     variations.add(sanitizeKey(baseDept));
     variations.add(baseDept.replace(/[^a-zA-Z0-9]/g, "_"));
@@ -109,6 +111,13 @@ function extractBatchVariations(batch) {
 
   variations.add(raw);
   variations.add(sanitizeKey(raw));
+  variations.add(raw.replace(/[.#$[\]/ ]/g, "_"));
+  variations.add(raw.replace(/[^a-zA-Z0-9]/g, "_"));
+  variations.add(raw.toLowerCase().replace(/[^a-z0-9]/g, "_"));
+
+  const cleanBatch = sanitizeKey(raw);
+  variations.add(cleanBatch.replace(/_Batch_\([^)]+\)/i, "_Batch"));
+  variations.add(cleanBatch.replace(/_Batch/i, ""));
 
   const yearsMatch = raw.match(/(\d{4})\s*[-_]\s*(\d{2,4})/);
   if (yearsMatch) {
@@ -125,8 +134,12 @@ function extractBatchVariations(batch) {
     variations.add(`${shortY1}_Batch`);
     variations.add(`${shortY1} Batch`);
     variations.add(`${shortY1}`);
-    variations.add(`${shortY1}_Batch__${y1}_${shortY2}_`);
-    variations.add(`${shortY1}_Batch__${y1}_${y2}_`);
+    variations.add(`${shortY1}_batch_${y1}_${shortY2}`);
+    variations.add(`${shortY1}_batch_${y1}_${y2}`);
+    variations.add(`${shortY1}_Batch_${y1}_${shortY2}`);
+    variations.add(`${shortY1}_Batch_${y1}_${y2}`);
+    variations.add(`${shortY1}_batch_${y1}_${shortY2}`.toLowerCase());
+    variations.add(`${shortY1}_batch_${y1}_${y2}`.toLowerCase());
   }
 
   const batchNumMatch = raw.match(/(\d{2})\s*Batch/i);
@@ -134,6 +147,7 @@ function extractBatchVariations(batch) {
     variations.add(`${batchNumMatch[1]}_Batch`);
     variations.add(`${batchNumMatch[1]} Batch`);
     variations.add(`${batchNumMatch[1]}`);
+    variations.add(`${batchNumMatch[1]}_batch`.toLowerCase());
   }
 
   return Array.from(variations).filter(Boolean);
@@ -168,8 +182,26 @@ async function fetchStudentsForClass({ programme, department, batch, section }) 
   }
   const allSecVariations = Array.from(new Set([...secVariations, ""]));
 
+  const cleanBatch = sanitizeKey(batch);
+  const rawNoCode = String(department).replace(/^\d+\s*[-_:]\s*/, "").trim();
+  const cleanDeptNoCode = sanitizeKey(rawNoCode);
+  const rawNoDegree = stripDegreePrefixDynamic(rawNoCode, Array.from(dynamicProgrammeSet));
+  const cleanDeptNoDegree = sanitizeKey(rawNoDegree);
+  const cleanDept = sanitizeKey(department);
+
+  // Top high-priority candidates to hit in first ~20ms
+  const topCandidates = [];
+  for (const s of allSecVariations) {
+    topCandidates.push(`${cleanBatch}_${progKey}_${cleanDeptNoCode}${s}`);
+    topCandidates.push(`${cleanBatch}_${progKey}_${cleanDeptNoDegree}${s}`);
+    topCandidates.push(`${cleanBatch}_${cleanDeptNoCode}${s}`);
+    topCandidates.push(`${cleanBatch}_${cleanDeptNoDegree}${s}`);
+    topCandidates.push(`${cleanBatch}_${progKey}_${cleanDept}${s}`);
+    topCandidates.push(`${cleanBatch}_${cleanDept}${s}`);
+  }
+
   // Generate prioritized candidate doc IDs
-  const candidateDocIds = [];
+  const candidateDocIds = [...topCandidates];
   for (const b of batchCandidates) {
     for (const d of deptCandidates) {
       for (const p of progCandidates) {
@@ -211,34 +243,37 @@ async function fetchStudentsForClass({ programme, department, batch, section }) 
     }
   }
 
-  // 2. Broad fallback scan using shared cached snapshot (only if direct IDs missed)
+  // 2. Bounded fallback scan (max 1000ms timeout race, never hangs)
   if (!studentData || Object.keys(studentData).filter((k) => !k.startsWith("_")).length === 0) {
     try {
-      const studentsSnap = await getAllStudentsSnapShared();
-      let matchedDoc = null;
-      let matchedBaseDoc = null;
+      const scanPromise = getAllStudentsSnapShared().then((studentsSnap) => {
+        let matchedDoc = null;
+        let matchedBaseDoc = null;
 
-      studentsSnap.forEach((d) => {
-        const data = d.data();
-        const meta = data?._meta || {};
-        const docDept = meta.department || d.id;
-        const docBatch = meta.batch || d.id;
+        studentsSnap.forEach((d) => {
+          const data = d.data();
+          const meta = data?._meta || {};
+          const docDept = meta.department || d.id;
+          const docBatch = meta.batch || d.id;
 
-        if (isBatchMatch(docBatch, batch) && isDeptMatch(docDept, department)) {
-          const count = Object.keys(data).filter((k) => !k.startsWith("_")).length;
-          if (count > 0) {
-            const docIdLower = d.id.toLowerCase();
-            const secLower = section ? section.toLowerCase().replace(/[^a-z0-9]/g, "") : "";
-            if (secLower && secLower !== "all" && docIdLower.includes(secLower)) {
-              matchedDoc = data;
-            } else if (!matchedBaseDoc) {
-              matchedBaseDoc = data;
+          if (isBatchMatch(docBatch, batch) && isDeptMatch(docDept, department)) {
+            const count = Object.keys(data).filter((k) => !k.startsWith("_")).length;
+            if (count > 0) {
+              const docIdLower = d.id.toLowerCase();
+              const secLower = section ? section.toLowerCase().replace(/[^a-z0-9]/g, "") : "";
+              if (secLower && secLower !== "all" && docIdLower.includes(secLower)) {
+                matchedDoc = data;
+              } else if (!matchedBaseDoc) {
+                matchedBaseDoc = data;
+              }
             }
           }
-        }
+        });
+        return matchedDoc || matchedBaseDoc;
       });
 
-      studentData = matchedDoc || matchedBaseDoc;
+      const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(null), 1000));
+      studentData = await Promise.race([scanPromise, timeoutPromise]);
     } catch (e) {
       console.warn("Student fallback scan error:", e);
     }
@@ -338,6 +373,23 @@ export default function ExamFormSettingPage() {
   const { departments: progDepartments, durations: progDurations } = useDepartments();
   const { getActiveBatches } = useBatches(progDurations);
 
+  // Sync dynamic programmes from Firestore into dynamicProgrammeSet (Zero Hardcoding)
+  useEffect(() => {
+    if (progDepartments && typeof progDepartments === "object") {
+      Object.keys(progDepartments).forEach((p) => {
+        if (p) dynamicProgrammeSet.add(p);
+      });
+      Object.values(progDepartments).flat().forEach((d) => {
+        if (!d || typeof d !== "string") return;
+        const noCode = d.replace(/^\d+\s*[-_:]\s*/, "").trim();
+        const firstWord = noCode.split(/\s+/)[0];
+        if (firstWord && firstWord.length <= 8) {
+          dynamicProgrammeSet.add(firstWord);
+        }
+      });
+    }
+  }, [progDepartments]);
+
   // ESE Registration States
   const [eseExams, setEseExams] = useState([]);
   const [selectedExamId, setSelectedExamId] = useState("");
@@ -359,6 +411,8 @@ export default function ExamFormSettingPage() {
   const [studentsList, setStudentsList] = useState([]);
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [studentFees, setStudentFees] = useState({});
+  const [allEseStudentFees, setAllEseStudentFees] = useState([]);
+  const [activeFeeDocId, setActiveFeeDocId] = useState("");
   const [eseFromDate, setEseFromDate] = useState("");
   const [eseToDate, setEseToDate] = useState("");
   const [commonFeeInput, setCommonFeeInput] = useState("");
@@ -446,32 +500,44 @@ export default function ExamFormSettingPage() {
   // Realtime sync of all form windows
   useEffect(() => {
     const unsubs = FORM_TABS.map((tab) =>
-      onSnapshot(doc(db, "exam_cell_settings", tab.id), (snap) => {
-        if (snap.exists()) {
-          const d = snap.data() || {};
-          setForms((prev) => ({
-            ...prev,
-            [tab.id]: {
-              isOpen: d.isOpen !== false,
-              fromDate: d.fromDate || "",
-              toDate: d.toDate || "",
-              selectedExamId: d.selectedExamId || "",
-              feePerSubject: d.feePerSubject ?? tab.defaultFee,
-              instructions: d.instructions || "",
-            },
-          }));
-          if (tab.id === "ese_registration" && d.selectedExamId) {
-            setSelectedExamId((prev) => prev || d.selectedExamId);
+      onSnapshot(
+        doc(db, "exam_cell_settings", tab.id),
+        (snap) => {
+          if (snap.exists()) {
+            const d = snap.data() || {};
+            setForms((prev) => ({
+              ...prev,
+              [tab.id]: {
+                isOpen: d.isOpen !== false,
+                fromDate: d.fromDate || "",
+                toDate: d.toDate || "",
+                selectedExamId: d.selectedExamId || "",
+                feePerSubject: d.feePerSubject ?? tab.defaultFee,
+                instructions: d.instructions || "",
+              },
+            }));
+            if (tab.id === "ese_registration" && d.selectedExamId) {
+              setSelectedExamId((prev) => prev || d.selectedExamId);
+            }
           }
+          setLoading(false);
+        },
+        (err) => {
+          console.warn(`exam_cell_settings ${tab.id} error:`, err);
+          setLoading(false);
         }
-        setLoading(false);
-      })
+      )
     );
-    return () => unsubs.forEach((u) => u());
+    const safetyTimer = setTimeout(() => setLoading(false), 1200);
+    return () => {
+      clearTimeout(safetyTimer);
+      unsubs.forEach((u) => u());
+    };
   }, []);
 
-  // Realtime sync of submitted photocopy applications (Filter out unpaid / Payment Pending applications)
+  // Realtime sync of submitted photocopy applications (Only when Photocopy tab is active)
   useEffect(() => {
+    if (activeTab !== "photocopy") return;
     const q = query(collection(db, "photocopy_applications"), orderBy("appliedAt", "desc"));
     const unsub = onSnapshot(q, (snap) => {
       const list = snap.docs
@@ -489,7 +555,7 @@ export default function ExamFormSettingPage() {
       setLoadingApps(false);
     });
     return () => unsub();
-  }, []);
+  }, [activeTab]);
 
   // Submitted Photocopy Problem Discrepancy Applications state
   const [problemApps, setProblemApps] = useState([]);
@@ -500,8 +566,9 @@ export default function ExamFormSettingPage() {
   const [revokeProblemMessage, setRevokeProblemMessage] = useState("");
   const [revokingProblem, setRevokingProblem] = useState(false);
 
-  // Realtime sync of submitted photocopy problem applications
+  // Realtime sync of submitted photocopy problem applications (Only when problem tab is active)
   useEffect(() => {
+    if (activeTab !== "photocopy_problem") return;
     const unsub = onSnapshot(collection(db, "photocopy_problem_applications"), (snap) => {
       const list = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       list.sort((a, b) => {
@@ -516,7 +583,7 @@ export default function ExamFormSettingPage() {
       setLoadingProblemApps(false);
     });
     return () => unsub();
-  }, []);
+  }, [activeTab]);
 
   // Submitted Revaluation Applications state
   const [revaluationApps, setRevaluationApps] = useState([]);
@@ -525,6 +592,7 @@ export default function ExamFormSettingPage() {
   const [showRevalModal, setShowRevalModal] = useState(false);
 
   useEffect(() => {
+    if (activeTab !== "revaluation") return;
     const q = query(collection(db, "revaluation_applications"), orderBy("appliedAt", "desc"));
     const unsub = onSnapshot(q, (snap) => {
       const list = snap.docs
@@ -541,7 +609,7 @@ export default function ExamFormSettingPage() {
       setLoadingRevalApps(false);
     });
     return () => unsub();
-  }, []);
+  }, [activeTab]);
 
   const handleUpdateRevaluationStatus = async (appId, newStatus) => {
     setUpdatingStatusId(appId);
@@ -560,6 +628,7 @@ export default function ExamFormSettingPage() {
   };
 
   useEffect(() => {
+    if (activeTab !== "review") return;
     const q = query(collection(db, "review_applications"), orderBy("appliedAt", "desc"));
     const unsub = onSnapshot(q, (snap) => {
       const list = snap.docs
@@ -576,7 +645,7 @@ export default function ExamFormSettingPage() {
       setLoadingReviewApps(false);
     });
     return () => unsub();
-  }, []);
+  }, [activeTab]);
 
   const handleUpdateReviewStatus = async (appId, newStatus) => {
     setUpdatingStatusId(appId);
@@ -660,6 +729,8 @@ export default function ExamFormSettingPage() {
         const savedExam = forms.ese_registration?.selectedExamId;
         if (savedExam && list.some(e => e.id === savedExam)) {
           setSelectedExamId(savedExam);
+        } else if (list.length > 0) {
+          setSelectedExamId(list[0].id);
         }
       }
     }, (err) => {
@@ -852,46 +923,187 @@ export default function ExamFormSettingPage() {
     };
   }, [eseProgramme, eseDepartment, eseBatch, eseSection]);
 
+  // Realtime sync of all ese_student_fees docs across departments & batches
+  useEffect(() => {
+    const unsub = onSnapshot(
+      collection(db, "ese_student_fees"),
+      (snap) => {
+        const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        setAllEseStudentFees(list);
+      },
+      (err) => {
+        console.warn("ese_student_fees collection error:", err);
+      }
+    );
+    return () => unsub();
+  }, []);
+
   // Realtime sync of saved fees for chosen exam + class filters
   useEffect(() => {
-    if (!selectedExamId || !eseProgramme || !eseDepartment || !eseBatch) {
+    const activeExam = selectedExamId || forms.ese_registration?.selectedExamId || (eseExams.length > 0 ? eseExams[0].id : "");
+    if (!eseProgramme || !eseDepartment || !eseBatch) {
       setStudentFees({});
       setEseFromDate("");
       setEseToDate("");
       setLastFeeSaveInfo(null);
+      setActiveFeeDocId("");
       return;
     }
 
-    const feeDocId = `ese_fee_${selectedExamId}_${formatProgrammeKey(eseProgramme)}_${sanitizeKey(eseDepartment)}_${sanitizeKey(eseBatch)}_${sanitizeKey(eseSection || 'ALL')}`;
-    const unsub = onSnapshot(doc(db, "ese_student_fees", feeDocId), (snap) => {
-      if (snap.exists()) {
-        const d = snap.data();
-        setStudentFees(d.fees || {});
-        setEseFromDate(d.fromDate || "");
-        setEseToDate(d.toDate || "");
-        setLastFeeSaveInfo({
-          updatedAt: d.updatedAt?.toDate ? d.updatedAt.toDate().toLocaleString() : "Recently",
-          updatedBy: d.updatedBy || "Exam Cell",
-          count: Object.keys(d.fees || {}).length,
-          total: d.totalAllocatedFee || 0,
-          fromDate: d.fromDate || "",
-          toDate: d.toDate || "",
-        });
-      } else {
-        setStudentFees({});
-        setEseFromDate("");
-        setEseToDate("");
-        setLastFeeSaveInfo(null);
-      }
-    }, (err) => {
-      console.warn("ese_student_fees listener error:", err);
+    // Match candidate documents by examId, department, and batch
+    let matchingDocs = allEseStudentFees.filter((cfg) => {
+      if (activeExam && cfg.examId && cfg.examId !== activeExam) return false;
+      const deptOk =
+        isDeptMatch(cfg.department, eseDepartment) ||
+        (Array.isArray(cfg.students) && cfg.students.some((s) => {
+          const rd = getDeptFromRegNo(s.reg);
+          return rd && isDeptMatch(rd, eseDepartment);
+        })) ||
+        (cfg.fees && Object.keys(cfg.fees).some((reg) => {
+          const rd = getDeptFromRegNo(reg);
+          return rd && isDeptMatch(rd, eseDepartment);
+        }));
+      if (!deptOk) return false;
+      if (!isBatchMatch(cfg.batch, eseBatch)) return false;
+      return true;
     });
 
-    return () => unsub();
-  }, [selectedExamId, eseProgramme, eseDepartment, eseBatch, eseSection]);
+    // Fallback: If examId filter was too restrictive, match by department & batch directly
+    if (matchingDocs.length === 0) {
+      matchingDocs = allEseStudentFees.filter((cfg) => {
+        const deptOk =
+          isDeptMatch(cfg.department, eseDepartment) ||
+          (Array.isArray(cfg.students) && cfg.students.some((s) => {
+            const rd = getDeptFromRegNo(s.reg);
+            return rd && isDeptMatch(rd, eseDepartment);
+          })) ||
+          (cfg.fees && Object.keys(cfg.fees).some((reg) => {
+            const rd = getDeptFromRegNo(reg);
+            return rd && isDeptMatch(rd, eseDepartment);
+          }));
+        if (!deptOk) return false;
+        if (!isBatchMatch(cfg.batch, eseBatch)) return false;
+        return true;
+      });
+    }
 
-  // Realtime sync of student fee payments to lock fees for paid students
+    if (matchingDocs.length === 0) {
+      setStudentFees({});
+      setEseFromDate("");
+      setEseToDate("");
+      setLastFeeSaveInfo(null);
+      setActiveFeeDocId("");
+      return;
+    }
+
+    // Determine target doc based on section
+    let targetDoc = null;
+    if (eseSection && eseSection !== "ALL") {
+      targetDoc = matchingDocs.find((d) => {
+        const s = (d.section || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        const targetS = eseSection.toLowerCase().replace(/[^a-z0-9]/g, "");
+        return s === targetS || s.includes(targetS) || targetS.includes(s);
+      });
+    }
+
+    if (!targetDoc) {
+      targetDoc = matchingDocs[0];
+    }
+
+    // Merge fees across matching documents for this department and batch
+    const combinedFees = {};
+    let fromDate = "";
+    let toDate = "";
+    let latestUpdated = null;
+    let updater = "Exam Cell";
+
+    matchingDocs.forEach((d) => {
+      // If a specific section is chosen, skip other non-matching sections
+      if (eseSection && eseSection !== "ALL" && d.section && d.section !== "ALL") {
+        const s = d.section.toLowerCase().replace(/[^a-z0-9]/g, "");
+        const targetS = eseSection.toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (s !== targetS && !s.includes(targetS) && !targetS.includes(s)) return;
+      }
+
+      if (d.fees && typeof d.fees === "object") {
+        Object.entries(d.fees).forEach(([reg, fee]) => {
+          if (fee !== undefined && fee !== null && fee !== "") {
+            combinedFees[reg] = Number(fee);
+          }
+        });
+      }
+      if (Array.isArray(d.students)) {
+        d.students.forEach((s) => {
+          if (s.reg && s.fee !== undefined && s.fee !== null && s.fee !== "") {
+            if (combinedFees[s.reg] === undefined) {
+              combinedFees[s.reg] = Number(s.fee);
+            }
+          }
+        });
+      }
+      if (d.fromDate && !fromDate) fromDate = d.fromDate;
+      if (d.toDate && !toDate) toDate = d.toDate;
+      if (!latestUpdated || (d.updatedAt && d.updatedAt > latestUpdated)) {
+        latestUpdated = d.updatedAt;
+        updater = d.updatedBy || updater;
+      }
+    });
+
+    setStudentFees(combinedFees);
+    setEseFromDate(fromDate);
+    setEseToDate(toDate);
+    setActiveFeeDocId(targetDoc?.id || "");
+
+    setLastFeeSaveInfo({
+      updatedAt: latestUpdated?.toDate ? latestUpdated.toDate().toLocaleString() : "Recently",
+      updatedBy: updater,
+      count: Object.keys(combinedFees).length,
+      total: Object.values(combinedFees).reduce((sum, v) => sum + (Number(v) || 0), 0),
+      fromDate: fromDate,
+      toDate: toDate,
+    });
+  }, [allEseStudentFees, selectedExamId, forms.ese_registration?.selectedExamId, eseExams, eseProgramme, eseDepartment, eseBatch, eseSection]);
+
+  // Realtime sync of student fee payments to lock fees for paid students across all payment collections
   const [feeRegistrations, setFeeRegistrations] = useState([]);
+  const [eseFeePayments, setEseFeePayments] = useState([]);
+  const [gatewayPayments, setGatewayPayments] = useState([]);
+  const [userLookup, setUserLookup] = useState(new Map());
+
+  // Listen to users collection for auth UID, email, and register number mapping
+  useEffect(() => {
+    const unsub = onSnapshot(
+      collection(db, "users"),
+      (snap) => {
+        const map = new Map();
+        snap.forEach((d) => {
+          const u = d.data();
+          const reg = (u.regNo || u.registerNumber || u.examNumber || u.rollNo || "").trim();
+          if (reg) {
+            const cleanReg = normAlpha(reg);
+            if (cleanReg) {
+              map.set(cleanReg.toLowerCase(), cleanReg);
+              if (d.id) map.set(d.id.toLowerCase(), cleanReg);
+              if (u.uid) map.set(String(u.uid).toLowerCase(), cleanReg);
+              if (u.email) map.set(String(u.email).toLowerCase().trim(), cleanReg);
+              if (u.studentEmail) map.set(String(u.studentEmail).toLowerCase().trim(), cleanReg);
+              const uName = (u.displayName || u.name || u.studentName || "").trim().toLowerCase();
+              if (uName) {
+                map.set(uName, cleanReg);
+                const stripped = uName.replace(/[^a-z0-9]/g, "");
+                if (stripped) map.set(stripped, cleanReg);
+              }
+            }
+          }
+        });
+        setUserLookup(map);
+      },
+      (err) => console.warn("users listener error in ExamFormSettingPage:", err)
+    );
+    return () => unsub();
+  }, []);
+
+  // Listen to ese_fee_registrations
   useEffect(() => {
     const qRegs = query(collection(db, "ese_fee_registrations"));
     const unsub = onSnapshot(
@@ -910,47 +1122,227 @@ export default function ExamFormSettingPage() {
     return () => unsub();
   }, []);
 
+  // Listen to ese_fee_payments
+  useEffect(() => {
+    const unsub = onSnapshot(
+      collection(db, "ese_fee_payments"),
+      (snap) => {
+        const list = [];
+        snap.forEach((d) => {
+          list.push({ id: d.id, ...d.data() });
+        });
+        setEseFeePayments(list);
+      },
+      (err) => console.warn("ese_fee_payments listener error in ExamFormSettingPage:", err)
+    );
+    return () => unsub();
+  }, []);
+
+  // Listen to exam_cell_payments
+  useEffect(() => {
+    const unsub = onSnapshot(
+      collection(db, "exam_cell_payments"),
+      (snap) => {
+        const list = [];
+        snap.forEach((d) => {
+          const data = d.data();
+          const st = (data.status || data.paymentStatus || "").toUpperCase();
+          if (
+            st === "SUCCESS" ||
+            st === "CHARGED" ||
+            st === "PAID" ||
+            data.billAttached ||
+            data.electronicBill ||
+            data.receiptNo
+          ) {
+            list.push({ id: d.id, ...data });
+          }
+        });
+        setGatewayPayments(list);
+      },
+      (err) => console.warn("exam_cell_payments listener error in ExamFormSettingPage:", err)
+    );
+    return () => unsub();
+  }, []);
+
   // Map of students who have completed payment for the active exam/class
   const paidStudentsMap = useMemo(() => {
     const map = new Map();
+    const activeExam = selectedExamId || forms.ese_registration?.selectedExamId || (eseExams.length > 0 ? eseExams[0].id : "");
 
-    feeRegistrations.forEach((p) => {
-      const pStatus = (p.paymentStatus || p.status || "").toLowerCase();
+    // Deduplicate payments across all three sources
+    const combinedEseList = [...feeRegistrations, ...eseFeePayments];
+    const seenPayKeys = new Set();
+    const dedupedEseList = [];
+
+    combinedEseList.forEach((p) => {
+      const oId = p.orderId || p.id || p.transactionId;
+      const cleanR = normAlpha(
+        p.regNo ||
+        p.registerNumber ||
+        p.studentRegNo ||
+        p.examNumber ||
+        (typeof p.id === "string" && p.id.includes("_") ? p.id.split("_").pop() : "")
+      );
+      const pKey = cleanR && oId ? `${cleanR}_${oId}` : (oId || cleanR || Math.random());
+      if (seenPayKeys.has(pKey)) return;
+      seenPayKeys.add(pKey);
+      dedupedEseList.push(p);
+    });
+
+    gatewayPayments.forEach((ep) => {
+      const cat = (ep.category || "").toLowerCase();
+      if (cat && !cat.includes("ese") && !cat.includes("exam") && !cat.includes("examination")) {
+        return;
+      }
+      const oId = ep.id || ep.orderId;
+      const rrn = ep.gatewayResponse?.rrn || ep.rrn;
+      const match = dedupedEseList.find((p) => (oId && p.orderId === oId) || (rrn && p.rrn === rrn));
+      if (match) {
+        match.paymentStatus = "Paid";
+        match.status = "Paid";
+        match.billAttached = true;
+        if (ep.amount || ep.chargedAmount) match.feeAmount = ep.amount || ep.chargedAmount;
+        if (!match.uid && ep.uid) match.uid = ep.uid;
+        if (!match.studentId && ep.studentId) match.studentId = ep.studentId;
+        if (!match.studentEmail && ep.studentEmail) match.studentEmail = ep.studentEmail;
+        if (!match.studentName && ep.studentName) match.studentName = ep.studentName;
+        if (!match.regNo && ep.regNo) match.regNo = ep.regNo;
+      } else {
+        dedupedEseList.push({
+          ...ep,
+          feeAmount: ep.amount || ep.chargedAmount || 4600,
+          paymentStatus: "Paid",
+          status: "Paid",
+          paidAt: ep.verifiedAt || ep.createdAt || ep.updatedAt,
+          billAttached: true,
+        });
+      }
+    });
+
+    dedupedEseList.forEach((p) => {
+      const pStatus = (p.paymentStatus || p.status || p.hdfcStatus || "").toLowerCase();
       const isPaid =
         pStatus === "paid" ||
         pStatus === "success" ||
         pStatus === "successful" ||
+        pStatus === "charged" ||
+        pStatus === "completed" ||
         p.billAttached === true ||
         Boolean(p.receiptNo) ||
         Boolean(p.paidAt);
 
       if (!isPaid) return;
 
-      const reg = p.regNo || p.studentRegNo;
-      if (!reg) return;
-      const cleanReg = normAlpha(reg);
+      let rawReg = (
+        p.registerNumber ||
+        p.regNo ||
+        p.studentRegNo ||
+        p.examNumber ||
+        p.rollNo ||
+        (typeof p.appId === "string" && p.appId.includes("_") ? p.appId.split("_").pop() : "") ||
+        (typeof p.id === "string" && p.id.includes("_") && !p.id.startsWith("ESE_") ? p.id.split("_").pop() : "") ||
+        ""
+      ).trim();
 
-      // Match selected examination if set
-      if (selectedExamId && p.examId && p.examId !== selectedExamId) {
+      // Scan string fields for CKCET Anna Univ register number (4207...)
+      if (!rawReg || !/4207\d{8}/.test(rawReg)) {
+        const scanFields = [p.appId, p.registrationId, p.id, p.orderId, p.studentEmail, p.email, p.studentRegNo, p.regNo];
+        for (const f of scanFields) {
+          if (typeof f === "string" && f) {
+            const m = f.match(/(?:^|[^0-9])(4207\d{8})(?:[^0-9]|$)/);
+            if (m) {
+              rawReg = m[1];
+              break;
+            }
+          }
+        }
+      }
+
+      // Fallback resolution via users lookup by UID (including ESE_<UID> doc IDs)
+      if (!rawReg) {
+        const uids = [
+          p.uid,
+          p.studentId,
+          p.studentUid,
+          typeof p.id === "string" && p.id.startsWith("ESE_") ? p.id.replace("ESE_", "") : "",
+        ].filter(Boolean);
+        for (const u of uids) {
+          const k = String(u).trim().toLowerCase();
+          const matched = userLookup.get(k);
+          if (matched) {
+            rawReg = matched;
+            break;
+          }
+        }
+      }
+
+      // Fallback resolution via email
+      if (!rawReg) {
+        const emails = [p.studentEmail, p.email].filter(Boolean);
+        for (const em of emails) {
+          const cleanEmail = String(em).trim().toLowerCase();
+          const matched = userLookup.get(cleanEmail);
+          if (matched) {
+            rawReg = matched;
+            break;
+          }
+        }
+      }
+
+      // Fallback resolution via name
+      if (!rawReg) {
+        const names = [p.studentName, p.candidateName, p.name].filter(Boolean);
+        for (const nm of names) {
+          const rawNm = String(nm).trim().toLowerCase();
+          if (rawNm && !rawNm.includes("@")) {
+            const stripped = rawNm.replace(/[^a-z0-9]/g, "");
+            const matched = userLookup.get(rawNm) || userLookup.get(stripped);
+            if (matched) {
+              rawReg = matched;
+              break;
+            }
+          }
+        }
+      }
+
+      let cleanReg = normAlpha(rawReg);
+      if (cleanReg && !map.has(cleanReg) && userLookup.has(cleanReg)) {
+        cleanReg = userLookup.get(cleanReg);
+      }
+
+      if (!cleanReg) return;
+
+      // Match department if selected: if Anna Univ code belongs to another department, skip
+      const regDept = getDeptFromRegNo(rawReg);
+      if (eseDepartment && regDept && !isDeptMatch(regDept, eseDepartment)) {
+        return;
+      }
+      if (
+        eseDepartment &&
+        p.department &&
+        p.department !== "General" &&
+        p.department !== "—" &&
+        !isDeptMatch(p.department, eseDepartment) &&
+        regDept &&
+        !isDeptMatch(regDept, eseDepartment)
+      ) {
         return;
       }
 
-      // Match department if present on payment record
-      if (eseDepartment && p.department && !isDeptMatch(p.department, eseDepartment)) {
-        return;
-      }
+      const itemAmt = Number(p.feeAmount || p.amount || p.chargedAmount || 0);
 
       map.set(cleanReg, {
         isPaid: true,
-        amountPaid: Number(p.feeAmount || 0),
-        orderId: p.orderId || p.transactionId || "",
-        receiptNo: p.receiptNo || "",
-        paidAt: p.paidAt || p.timestamp || null,
+        amountPaid: itemAmt > 0 ? itemAmt : 4600,
+        orderId: p.orderId || p.transactionId || p.id || "",
+        receiptNo: p.receiptNo || (p.orderId ? `REC-ESE-${p.orderId}` : ""),
+        paidAt: p.paidAt || p.timestamp || p.verifiedAt || null,
       });
     });
 
     return map;
-  }, [feeRegistrations, selectedExamId, eseDepartment]);
+  }, [feeRegistrations, eseFeePayments, gatewayPayments, userLookup, selectedExamId, forms.ese_registration?.selectedExamId, eseExams, eseDepartment]);
 
   // Create new Exam handler
   const handleCreateExam = async (e) => {
@@ -1036,7 +1428,7 @@ export default function ExamFormSettingPage() {
       "S.No": idx + 1,
       "Register Number": st.reg,
       "Name": st.name,
-      "Fee Amount": studentFees[st.reg] !== undefined ? studentFees[st.reg] : "",
+      "Fee Amount": lookupFee(st.reg),
     }));
 
     const ws = XLSX.utils.json_to_sheet(rows);
@@ -1133,9 +1525,13 @@ export default function ExamFormSettingPage() {
   };
 
   const handleSaveStudentFees = async () => {
-    if (!selectedExamId) {
+    const activeExam = selectedExamId || forms.ese_registration?.selectedExamId || (eseExams.length > 0 ? eseExams[0].id : "");
+    if (!activeExam) {
       showToast("Please select an Examination first.", "error");
       return;
+    }
+    if (!selectedExamId && activeExam) {
+      setSelectedExamId(activeExam);
     }
     if (!eseProgramme || !eseDepartment || !eseBatch) {
       showToast("Please choose Programme, Department, and Batch.", "error");
@@ -1152,8 +1548,15 @@ export default function ExamFormSettingPage() {
 
     setSavingFees(true);
     try {
-      const feeDocId = `ese_fee_${selectedExamId}_${formatProgrammeKey(eseProgramme)}_${sanitizeKey(eseDepartment)}_${sanitizeKey(eseBatch)}_${sanitizeKey(eseSection || 'ALL')}`;
-      const curExam = eseExams.find(e => e.id === selectedExamId);
+      let feeDocId = activeFeeDocId;
+      if (!feeDocId) {
+        const cleanDept = (eseDepartment || "").replace(/^\d+\s*[-_:]\s*/, "").trim().replace(/[^a-zA-Z0-9]/g, "_");
+        const batchYears = (eseBatch || "").match(/(\d{4})\s*[-_]\s*(\d{2,4})/);
+        const cleanBatch = batchYears ? `${batchYears[1]}-${batchYears[2].length === 2 ? `20${batchYears[2]}` : batchYears[2]}` : sanitizeKey(eseBatch);
+        const cleanSec = (eseSection && eseSection !== "ALL") ? sanitizeKey(eseSection) : "Sec-A";
+        feeDocId = `ese_fee_${activeExam}_${formatProgrammeKey(eseProgramme)}_${cleanDept}_${cleanBatch}_${cleanSec}`;
+      }
+      const curExam = eseExams.find(e => e.id === activeExam) || (eseExams.length > 0 ? eseExams[0] : null);
 
       // Ensure any paid student retains their paid fee amount
       const mergedFees = { ...studentFees };
@@ -1166,7 +1569,7 @@ export default function ExamFormSettingPage() {
       const totalAllocatedFee = Object.values(mergedFees).reduce((sum, v) => sum + (Number(v) || 0), 0);
 
       await setDoc(doc(db, "ese_student_fees", feeDocId), {
-        examId: selectedExamId,
+        examId: activeExam,
         examName: curExam?.name || "",
         programme: eseProgramme,
         department: eseDepartment,
@@ -1223,28 +1626,69 @@ export default function ExamFormSettingPage() {
     );
   }, [studentsList, studentSearchQuery]);
 
+  const lookupFee = useCallback((reg) => {
+    if (!reg) return "";
+    if (studentFees[reg] !== undefined && studentFees[reg] !== null && studentFees[reg] !== "") return studentFees[reg];
+    const clean = normAlpha(reg);
+    for (const [k, v] of Object.entries(studentFees)) {
+      if (normAlpha(k) === clean && v !== undefined && v !== null && v !== "") return v;
+    }
+
+    // Direct Firestore Safety Fallback: Check allEseStudentFees matching this class
+    for (const cfg of allEseStudentFees) {
+      const deptOk =
+        isDeptMatch(cfg.department, eseDepartment) ||
+        (Array.isArray(cfg.students) && cfg.students.some((s) => {
+          const rd = getDeptFromRegNo(s.reg);
+          return rd && isDeptMatch(rd, eseDepartment);
+        })) ||
+        (cfg.fees && Object.keys(cfg.fees).some((r) => {
+          const rd = getDeptFromRegNo(r);
+          return rd && isDeptMatch(rd, eseDepartment);
+        }));
+      if (!deptOk) continue;
+      if (!isBatchMatch(cfg.batch, eseBatch)) continue;
+
+      if (cfg.fees) {
+        if (cfg.fees[reg] !== undefined && cfg.fees[reg] !== null && cfg.fees[reg] !== "") return cfg.fees[reg];
+        for (const [k, v] of Object.entries(cfg.fees)) {
+          if (normAlpha(k) === clean && v !== undefined && v !== null && v !== "") return v;
+        }
+      }
+      if (Array.isArray(cfg.students)) {
+        const found = cfg.students.find((s) => normAlpha(s.reg) === clean);
+        if (found && found.fee !== undefined && found.fee !== null && found.fee !== "") return found.fee;
+      }
+    }
+
+    return "";
+  }, [studentFees, allEseStudentFees, eseDepartment, eseBatch]);
+
   const totalAllocatedFees = useMemo(() => {
     return studentsList.reduce((sum, st) => {
       const paidInfo = paidStudentsMap.get(normAlpha(st.reg));
-      const v = paidInfo?.amountPaid !== undefined ? paidInfo.amountPaid : Number(studentFees[st.reg]);
+      const feeVal = lookupFee(st.reg);
+      const v = paidInfo?.amountPaid !== undefined ? paidInfo.amountPaid : Number(feeVal);
       return sum + (isNaN(v) ? 0 : v);
     }, 0);
-  }, [studentsList, studentFees, paidStudentsMap]);
+  }, [studentsList, lookupFee, paidStudentsMap]);
 
   const studentsWithFeeCount = useMemo(() => {
     return studentsList.filter((st) => {
       const paidInfo = paidStudentsMap.get(normAlpha(st.reg));
-      return (paidInfo?.amountPaid || Number(studentFees[st.reg])) > 0;
+      const feeVal = lookupFee(st.reg);
+      return (paidInfo?.amountPaid || Number(feeVal)) > 0;
     }).length;
-  }, [studentsList, studentFees, paidStudentsMap]);
+  }, [studentsList, lookupFee, paidStudentsMap]);
 
   const paidStudentsCount = useMemo(() => {
     return studentsList.filter((st) => paidStudentsMap.has(normAlpha(st.reg))).length;
   }, [studentsList, paidStudentsMap]);
 
   const selectedExam = useMemo(() => {
-    return eseExams.find((e) => e.id === selectedExamId);
-  }, [eseExams, selectedExamId]);
+    const activeExam = selectedExamId || forms.ese_registration?.selectedExamId || (eseExams.length > 0 ? eseExams[0].id : "");
+    return eseExams.find((e) => e.id === activeExam) || (eseExams.length > 0 ? eseExams[0] : null);
+  }, [eseExams, selectedExamId, forms.ese_registration?.selectedExamId]);
 
   const handleUpdatePhotocopyStatus = async (appId, newStatus) => {
     setUpdatingStatusId(appId);
@@ -1955,7 +2399,7 @@ export default function ExamFormSettingPage() {
                         </thead>
                         <tbody className="divide-y divide-slate-100 text-xs font-medium">
                           {filteredStudents.map((st, idx) => {
-                            const feeVal = studentFees[st.reg] !== undefined ? studentFees[st.reg] : "";
+                            const feeVal = lookupFee(st.reg);
                             const paidInfo = paidStudentsMap.get(normAlpha(st.reg));
                             const isPaid = Boolean(paidInfo?.isPaid);
                             const hasFee = Number(feeVal) > 0 || isPaid;

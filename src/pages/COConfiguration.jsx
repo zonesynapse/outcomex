@@ -841,7 +841,27 @@ Return an exhaustive list of all plausible mappings.`;
         meta: {
           updatedAt: new Date().toISOString()
         }
-      });
+      }, { merge: true });
+
+      if (sectionSuffix) {
+        const generalMappingDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}_${sanitizeKey(semester)}`;
+        await setDoc(doc(db, 'mapping_summary', generalMappingDocId), {
+          summary,
+          thresholds,
+          cutoff: cutoff === "" ? "" : Number(cutoff),
+          percentageSplit: {
+            internal: Number(percentageSplit.internal || 0),
+            university: Number(percentageSplit.university || 0)
+          },
+          directIndirectSplit: {
+            direct: Number(directIndirectSplit.direct || 0),
+            indirect: Number(directIndirectSplit.indirect || 0)
+          },
+          meta: {
+            updatedAt: new Date().toISOString()
+          }
+        }, { merge: true });
+      }
       setSuccessMessage("Mapping summary saved successfully!");
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);
@@ -876,6 +896,25 @@ Return an exhaustive list of all plausible mappings.`;
           updatedAt: new Date().toISOString()
         }
       }, { merge: true });
+
+      if (sectionSuffix) {
+        const generalMappingDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}_${sanitizeKey(semester)}`;
+        await setDoc(doc(db, 'mapping_summary', generalMappingDocId), {
+          thresholds,
+          cutoff: cutoff === "" ? "" : Number(cutoff),
+          percentageSplit: {
+            internal: Number(percentageSplit.internal || 0),
+            university: Number(percentageSplit.university || 0)
+          },
+          directIndirectSplit: {
+            direct: Number(directIndirectSplit.direct || 0),
+            indirect: Number(directIndirectSplit.indirect || 0)
+          },
+          meta: {
+            updatedAt: new Date().toISOString()
+          }
+        }, { merge: true });
+      }
       setSuccessMessage("Thresholds and cutoff saved successfully!");
       setShowSuccess(true);
       setTimeout(() => setShowSuccess(false), 3000);

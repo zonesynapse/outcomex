@@ -17,6 +17,8 @@ import { useDepartments } from "../hooks/useDepartments";
 import { db } from "../firebase";
 import { collection, getDocs, query, where, getCountFromServer, doc, getDoc, setDoc, updateDoc, onSnapshot } from "firebase/firestore";
 import { formatProgrammeKey, sanitizeKey as sanitizeKeyUtils, getAttendanceRecords } from "../lib/utils";
+import { getCanonicalDept, parseStudentDoc } from "./FeeDashboard";
+import { isBatchMatch, isProgMatch } from "../utils/feeAllocation";
 
 const sanitizeKey = (key) => {
   if (!key) return '';
@@ -670,19 +672,14 @@ export default function PrincipalDashboard() {
     return () => unsub();
   }, []);
 
-  // Fetch all students (section-assigned)
+  // Real-time synchronization of students collection (official namelists matching Reports.jsx)
   useEffect(() => {
-    const fetchStudents = async () => {
-      try {
-        const snap = await getDocs(collection(db, 'students'));
-        const list = [];
-        snap.forEach(d => { list.push({ id: d.id, ...d.data() }); });
-        setStudentsList(list);
-      } catch (err) {
-        console.error("Error fetching students:", err);
-      }
-    };
-    fetchStudents();
+    const unsub = onSnapshot(collection(db, 'students'), (snap) => {
+      const list = [];
+      snap.forEach(d => { list.push({ id: d.id, ...d.data() }); });
+      setStudentsList(list);
+    }, (err) => console.error("Error listening to students:", err));
+    return () => unsub();
   }, []);
 
   const admissionItems = useMemo(() => applications.filter((e) => e.status === "Admission"), [applications]);
@@ -708,25 +705,122 @@ export default function PrincipalDashboard() {
     return Object.values(allDeptMap || {}).flat().sort((a, b) => a.localeCompare(b));
   }, [allDeptMap]);
 
-  const activeBatches = useMemo(() => {
+  // Active Semester Configs from AcademicCalendar.jsx (strictly matching current active date range; past date ranges excluded)
+  const activeSemesterConfigs = useMemo(() => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const set = new Set();
-    semesterConfigs.forEach(cfg => {
-      if (!cfg.startDate || !cfg.endDate) return;
+
+    return semesterConfigs.filter(cfg => {
+      if (!cfg.startDate || !cfg.endDate) return false;
       const start = new Date(cfg.startDate + 'T00:00:00');
-      const end = new Date(cfg.endDate + 'T00:00:00');
-      if (today < start || today > end) return;
+      const end = new Date(cfg.endDate + 'T23:59:59');
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) return false;
+      // Current date must fall within start and end date (past date ranges are strictly excluded)
+      return today >= start && today <= end;
+    });
+  }, [semesterConfigs]);
+
+  const activeBatches = useMemo(() => {
+    const set = new Set();
+    activeSemesterConfigs.forEach(cfg => {
       const batches = Array.isArray(cfg.batch) ? cfg.batch : (cfg.batch ? [cfg.batch] : []);
       batches.forEach(b => set.add(b));
     });
     return set;
-  }, [semesterConfigs]);
+  }, [activeSemesterConfigs]);
 
+  // Official Student Namelist mapped from students collection (primary) + approved_admissions (unassigned fallback)
+  // Aligned with Reports.jsx Student Namelist
+  const allStudents = useMemo(() => {
+    const studentMap = new Map();
+
+    // 1. Process students collection (uploaded official namelists matching Reports.jsx)
+    studentsList.forEach(d => {
+      const { batch, department, programme, section } = parseStudentDoc(d.id, d);
+      const studentDataMap = d._student_data || {};
+
+      Object.entries(d).forEach(([k, val]) => {
+        if (k.startsWith("_") || k === "id") return;
+        const reg = String(k).trim();
+        if (!reg) return;
+        const regKey = reg.toUpperCase();
+        const extra = studentDataMap[reg] || {};
+
+        let sName = "";
+        if (typeof val === "object" && val !== null) {
+          sName = val.name || val.studentName || val.displayName || "";
+        } else if (typeof val === "string") {
+          sName = val.trim();
+        }
+        if (!sName && extra.name) sName = extra.name;
+        if (!sName && extra.studentName) sName = extra.studentName;
+
+        const rawDept = extra.department || department;
+        const stuDept = getCanonicalDept(rawDept);
+        const stuBatch = extra.batch || batch;
+
+        studentMap.set(regKey, {
+          id: reg,
+          regNo: reg,
+          name: sName || reg,
+          department: stuDept || "General",
+          batch: stuBatch || "Unknown",
+          programme: programme || "UG",
+          section: section || "",
+          isUnassigned: false
+        });
+      });
+    });
+
+    // 2. Process approved_admissions (unassigned / newly admitted students not yet in namelist)
+    approvedAdmissionsDocs.forEach(d => {
+      const { batch, department, programme } = parseStudentDoc(d.id, d);
+
+      Object.entries(d).forEach(([k, val]) => {
+        if (k.startsWith("_") || k === "id") return;
+        const reg = String(k).trim();
+        if (!reg) return;
+        const regKey = reg.toUpperCase();
+        if (!studentMap.has(regKey)) {
+          const sName = typeof val === "object" && val !== null ? (val.name || val.studentName || "") : (typeof val === "string" ? val.trim() : "");
+          const stuDept = getCanonicalDept(department);
+          studentMap.set(regKey, {
+            id: reg,
+            regNo: reg,
+            name: sName || reg,
+            department: stuDept || "General",
+            batch: batch || "Unknown",
+            programme: programme || "UG",
+            isUnassigned: true
+          });
+        }
+      });
+    });
+
+    return Array.from(studentMap.values());
+  }, [studentsList, approvedAdmissionsDocs]);
+
+  // Students belonging to currently studying batches configured in AcademicCalendar.jsx (current date range)
+  const currentStudyingStudents = useMemo(() => {
+    if (activeSemesterConfigs.length === 0) return [];
+
+    return allStudents.filter(s => {
+      if (!s.batch) return false;
+      return activeSemesterConfigs.some(cfg => {
+        const cfgBatches = Array.isArray(cfg.batch) ? cfg.batch : (cfg.batch ? [cfg.batch] : []);
+        const batchMatches = cfgBatches.some(b => isBatchMatch(b, s.batch));
+        if (!batchMatches) return false;
+        if (cfg.programme && s.programme) {
+          return isProgMatch(cfg.programme, s.programme);
+        }
+        return true;
+      });
+    });
+  }, [allStudents, activeSemesterConfigs]);
+
+  // Department-wise & batch-wise student strength scoped strictly to active studying batches
   const deptBatchStrength = useMemo(() => {
-    if (activeBatches.size === 0) return {};
-
-    // department -> batch -> { approved, assigned, total }
+    // department -> batch -> { batch, approved: 0, assigned: 0, total: 0 }
     const deptMap = {};
 
     const ensureDept = (dept, batch) => {
@@ -734,70 +828,29 @@ export default function PrincipalDashboard() {
       if (!deptMap[dept][batch]) deptMap[dept][batch] = { batch, approved: 0, assigned: 0, total: 0 };
     };
 
-    const parseDocId = (docId) => {
-      // Format: {batch}_{progKey}_{deptKey}[_section]
-      // batch is always YYYY-YYYY format
-      const batchMatch = docId.match(/(\d{4}-\d{4})/);
-      const batch = batchMatch ? batchMatch[1] : '';
-      // dept is last segment (before optional Sec- section suffix)
-      const parts = docId.split('_');
-      let dept = '';
-      if (parts.length > 1) {
-        const lastPart = parts[parts.length - 1];
-        // If last part is a section suffix like Sec-A, use second-to-last
-        if (/^Sec-/i.test(lastPart) && parts.length > 2) {
-          dept = parts[parts.length - 2];
-        } else {
-          dept = lastPart;
-        }
+    currentStudyingStudents.forEach(s => {
+      const dept = s.department || "General";
+      const batch = s.batch || "Unknown";
+      ensureDept(dept, batch);
+
+      if (s.isUnassigned) {
+        deptMap[dept][batch].approved++;
+      } else {
+        deptMap[dept][batch].assigned++;
       }
-      return { batch, dept };
-    };
-
-    // approved_admissions: each doc = {batch}_{progKey}_{deptKey}, data = { [regNo]: name, _order: [...] }
-    approvedAdmissionsDocs.forEach(d => {
-      const { batch, dept } = parseDocId(d.id || '');
-      if (!batch || !dept || !activeBatches.has(batch)) return;
-      ensureDept(dept, batch);
-      // Count student entries (skip meta fields and the synthetic 'id' field)
-      Object.entries(d).forEach(([key, val]) => {
-        if (key.startsWith('_') || key === 'id') return;
-        if (typeof val === 'string' && val.trim()) {
-          deptMap[dept][batch].approved++;
-          deptMap[dept][batch].total++;
-        }
-      });
-    });
-
-    // students collection: each doc = {batch}_{progKey}_{deptKey}[_section], data = { [regNo]: name or {name}, _meta? }
-    studentsList.forEach(d => {
-      const { batch, dept } = parseDocId(d.id || '');
-      if (!batch || !dept || !activeBatches.has(batch)) return;
-      ensureDept(dept, batch);
-      // Count student entries (skip meta fields and the synthetic 'id' field)
-      Object.entries(d).forEach(([key, val]) => {
-        if (key.startsWith('_') || key === 'id') return;
-        const name = typeof val === 'object' && val !== null ? (val.name || '') : val;
-        if (name && typeof name === 'string') {
-          deptMap[dept][batch].assigned++;
-          deptMap[dept][batch].total++;
-        }
-      });
+      deptMap[dept][batch].total++;
     });
 
     return deptMap;
-  }, [activeBatches, approvedAdmissionsDocs, studentsList]);
+  }, [currentStudyingStudents]);
 
+  // Total student strength for currently studying batches in Academic Calendar
   const totalStrength = useMemo(() => {
-    let total = 0;
-    Object.values(deptBatchStrength).forEach(batchMap => {
-      Object.values(batchMap).forEach(b => { total += b.total; });
-    });
-    return total;
-  }, [deptBatchStrength]);
+    return currentStudyingStudents.length;
+  }, [currentStudyingStudents]);
 
   const departmentsWithData = useMemo(() => {
-    return Object.keys(deptBatchStrength).sort();
+    return Object.keys(deptBatchStrength).filter(d => d && d !== "General").sort();
   }, [deptBatchStrength]);
 
   const openViewModal = async (app) => {
@@ -1114,7 +1167,7 @@ export default function PrincipalDashboard() {
       title: "Academics", icon: GraduationCap, color: "rose",
       href: "/academic-calendar",
       stats: [
-        { label: "Students", value: studentCount },
+        { label: "Students", value: totalStrength },
         { label: "Courses", value: "-" },
       ]
     },
@@ -1952,14 +2005,14 @@ export default function PrincipalDashboard() {
                 </div>
                 <div>
                   <h3 className="text-sm font-black text-zinc-800">Student Strength by Department</h3>
-                  <p className="text-[11px] text-zinc-500">{totalStrength.toLocaleString()} total students across {departmentsWithData.length} departments</p>
+                  <p className="text-[11px] text-zinc-500">{totalStrength.toLocaleString()} students currently studying across {departmentsWithData.length} departments (Academic Calendar Active Batches)</p>
                 </div>
               </div>
               <button onClick={() => setStrengthModal({ open: false })} className="p-1.5 rounded-lg hover:bg-zinc-100 transition"><X size={16} className="text-zinc-400" /></button>
             </div>
             <div className="p-5 overflow-y-auto flex-1">
               {departmentsWithData.length === 0 ? (
-                <p className="text-xs text-zinc-400 italic text-center py-12">No student data available for active semesters</p>
+                <p className="text-xs text-zinc-400 italic text-center py-12">No student data available for current semester date ranges</p>
               ) : (
                 <div className="space-y-6">
                   {/* Department selector */}
@@ -1994,7 +2047,7 @@ export default function PrincipalDashboard() {
                     if (selectedStrengthDept === 'All') {
                       // Comparative chart: one bar per department (total)
                       const deptTotals = departmentsWithData.map(dept => {
-                        const total = Object.values(deptBatchStrength[dept]).reduce((s, b) => s + b.total, 0);
+                        const total = Object.values(deptBatchStrength[dept] || {}).reduce((s, b) => s + b.total, 0);
                         return { dept, total };
                       });
                       const maxVal = Math.max(...deptTotals.map(d => d.total), 1);

@@ -42,8 +42,8 @@ export function normalizeDept(str) {
   if (!str) return "";
   return String(str)
     .toLowerCase()
+    .replace(/^\d{2,4}\s*[-:_]\s*/, "") // Remove Anna University department code prefixes (e.g. "104 - ", "401 - ") FIRST
     .replace(/^(department of\s+|dept of\s+|dept\.?\s+of\s+|be\s+|b\.?e\.?\s+|btech\s+|b\.?tech\.?\s+|me\s+|m\.?e\.?\s+|mtech\s+|m\.?tech\.?\s+|ug\s+|pg\s+|b_e_?|b_tech_?|m_e_?|m_tech_?)/gi, "")
-    .replace(/^\d{2,4}\s*[-:_]\s*/, "") // Remove Anna University department code prefixes (e.g. "104 - ")
     .replace(/[^a-z0-9]/g, "");
 }
 
@@ -60,15 +60,57 @@ export function extractAcronym(str) {
   if (!str) return "";
   const cleaned = String(str)
     .toLowerCase()
-    .replace(/^(department of\s+|dept of\s+|be\s+|b\.?e\.?\s+|btech\s+|b\.?tech\.?\s+|me\s+|m\.?e\.?\s+|mtech\s+|m\.?tech\.?\s+|ug\s+|pg\s+|b_e_?|b_tech_?|m_e_?|m_tech_?)/gi, "")
-    .replace(/^\d{2,4}\s*[-:_]\s*/, "");
+    .replace(/^\d{2,4}\s*[-:_]\s*/, "") // Remove Anna University code prefix FIRST
+    .replace(/^(department of\s+|dept of\s+|be\s+|b\.?e\.?\s+|btech\s+|b\.?tech\.?\s+|me\s+|m\.?e\.?\s+|mtech\s+|m\.?tech\.?\s+|ug\s+|pg\s+|b_e_?|b_tech_?|m_e_?|m_tech_?)/gi, "");
 
   const words = cleaned
     .split(/[\s&/_\-]+/)
     .filter(w => !["and", "&", "of", "for", "the", "dept", "department", "in", "to", "studies"].includes(w) && w.length > 0);
 
-  if (words.length <= 1) return "";
+  if (words.length === 0) return "";
+  if (words.length === 1) {
+    const single = words[0];
+    if (single.length >= 2 && single.length <= 5) return single.toLowerCase();
+    return "";
+  }
   return words.map(w => w[0]).join("");
+}
+
+export const ANNA_UNIV_DEPT_CODES = {
+  // UG Programmes
+  "103": "Civil Engineering",
+  "104": "Computer Science and Engineering",
+  "105": "Electrical and Electronics Engineering",
+  "106": "Electronics and Communication Engineering",
+  "114": "Mechanical Engineering",
+  "115": "Robotics and Automation",
+  "121": "Bio Medical Engineering",
+  "205": "Information Technology",
+  "243": "Artificial Intelligence and Data Science",
+  "244": "Computer Science and Business Systems",
+  // PG Programmes
+  "401": "Applied Electronics",
+  "405": "VLSI Design",
+  "408": "Communication Systems",
+  "413": "Computer Science and Engineering",
+  "414": "Manufacturing Engineering",
+  "415": "Power Electronics and Drives",
+  "418": "Structural Engineering",
+  "419": "Thermal Engineering",
+  "420": "Power Systems Engineering",
+  "421": "Embedded System Technologies",
+  "621": "Master of Computer Applications",
+  "631": "Master of Business Administration",
+};
+
+export function getDeptFromRegNo(regNo) {
+  if (!regNo) return null;
+  const clean = String(regNo).replace(/[^0-9]/g, "");
+  if (clean.length === 12) {
+    const code = clean.substring(6, 9);
+    return ANNA_UNIV_DEPT_CODES[code] || registryState.codeToDept[code] || null;
+  }
+  return null;
 }
 
 /**
@@ -140,7 +182,9 @@ export function initDepartmentRegistry() {
       registryState.initialized = true;
       persistRegistry();
     }, (err) => {
-      console.warn("[DepartmentRegistry] department_metadata listener error:", err);
+      if (err?.code !== "permission-denied" && !String(err?.message || "").toLowerCase().includes("permission")) {
+        console.warn("[DepartmentRegistry] department_metadata listener error:", err);
+      }
     });
 
     // 2. Listen to programme_departments (stores list of departments under each programme)
@@ -168,7 +212,9 @@ export function initDepartmentRegistry() {
       });
       persistRegistry();
     }, (err) => {
-      console.warn("[DepartmentRegistry] programme_departments listener error:", err);
+      if (err?.code !== "permission-denied" && !String(err?.message || "").toLowerCase().includes("permission")) {
+        console.warn("[DepartmentRegistry] programme_departments listener error:", err);
+      }
     });
   } catch (err) {
     console.warn("[DepartmentRegistry] Failed to initialize listeners:", err);
@@ -195,7 +241,9 @@ export function extractDeptFromDocId(id) {
   if (/^\d{4}[-_]\d{2,4}$/.test(parts[endIdx - 1])) endIdx--;
 
   let startIdx = 0;
-  if (/^(ug|pg)$/i.test(parts[0])) startIdx++;
+  // Strip leading batch if doc ID starts with batch (e.g. "2023-2027_UG_...")
+  if (/^\d{4}[-_]\d{2,4}$/.test(parts[startIdx]) || /^\d{4}$/.test(parts[startIdx])) startIdx++;
+  if (startIdx < endIdx && /^(ug|pg)$/i.test(parts[startIdx])) startIdx++;
   while (startIdx < endIdx && /^(be|btech|me|mtech|b|m|e|tech)$/i.test(parts[startIdx])) {
     startIdx++;
   }
@@ -260,7 +308,7 @@ export function getDepartmentCode(str) {
  */
 export function isDeptMatch(docDept, targetDept) {
   if (!targetDept) return true;
-  if (!docDept) return true;
+  if (!docDept) return false;
 
   const actualDocDept = String(docDept).includes("_") ? extractDeptFromDocId(docDept) : docDept;
 
@@ -281,27 +329,40 @@ export function isDeptMatch(docDept, targetDept) {
   const code1 = resolveCanonicalDeptFromFirestore(docDept);
   const code2 = resolveCanonicalDeptFromFirestore(targetDept);
 
-  if (code1 && code2) {
-    return code1.toUpperCase() === code2.toUpperCase();
+  if (code1 && code2 && code1.length >= 2 && code2.length >= 2) {
+    if (code1.toUpperCase() === code2.toUpperCase()) return true;
   }
+
+  // 3b. Acronym comparison (e.g. "EEE" matches "Electrical and Electronics Engineering" or "B.E. EEE")
+  const acr1 = extractAcronym(actualDocDept);
+  const acr2 = extractAcronym(targetDept);
+  if (acr1 && acr2 && acr1.toLowerCase() === acr2.toLowerCase()) return true;
 
   // 4. Normalized substring match if long enough
   if (norm1.length >= 6 && norm2.length >= 6) {
     if (norm1.includes(norm2) || norm2.includes(norm1)) return true;
   }
 
-  // 5. Exact core tokens subset comparison (Zero hardcoded branch words)
+  // 5. Exact core tokens comparison with degree/programme prefix filtering
+  const ignoredTokens = new Set([
+    "engineering", "technology", "department", "dept", "bachelor", "master", "science", "studies",
+    "and", "the", "for", "in", "of", "tech", "btech", "mtech", "be", "me", "bsc", "msc", "mca",
+    "mba", "bca", "bba", "bcom", "mcom", "ug", "pg"
+  ]);
+
   const getTokens = (s) => String(s || "")
     .toLowerCase()
     .replace(/[^a-z\s]/g, " ")
     .split(/\s+/)
-    .filter(w => w.length > 2 && !["engineering", "technology", "department", "dept", "bachelor", "master", "science", "studies", "and", "the", "for"].includes(w));
+    .filter(w => w.length > 1 && !ignoredTokens.has(w));
 
   const t1 = getTokens(actualDocDept);
   const t2 = getTokens(targetDept);
   if (t1.length > 0 && t2.length > 0) {
     const commonCount = t1.filter(w => t2.includes(w)).length;
-    return commonCount === t1.length && commonCount === t2.length;
+    if (commonCount > 0 && (commonCount === t1.length || commonCount === t2.length)) {
+      return true;
+    }
   }
 
   return false;

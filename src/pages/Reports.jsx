@@ -236,6 +236,30 @@ const extractStudentMarkTotal = (s) => {
   return { total, absent: isAbsent };
 };
 
+const normClean = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+const isRegMatch = (configReg, targetReg) => {
+  if (!configReg || !targetReg) return true;
+  const sc = sanitizeKey(configReg);
+  const st = sanitizeKey(targetReg);
+  if (sc === st) return true;
+  const nc = normClean(configReg);
+  const nt = normClean(targetReg);
+  if (nc === nt) return true;
+  const yc = nc.match(/\d{4}/)?.[0] || nc.match(/\d{2}/)?.[0];
+  const yt = nt.match(/\d{4}/)?.[0] || nt.match(/\d{2}/)?.[0];
+  if (yc && yt && yc === yt) return true;
+  return nc.includes(nt) || nt.includes(nc);
+};
+
+const isAyMatch = (configAy, targetAy) => {
+  if (!configAy || !targetAy) return true;
+  const nc = normClean(configAy);
+  const nt = normClean(targetAy);
+  if (nc === nt) return true;
+  return nc.includes(nt) || nt.includes(nc);
+};
+
 export default function Reports() {
   const navigate = useNavigate();
   const { departments: PROGRAMME_DEPARTMENTS, durations } = useDepartments();
@@ -258,6 +282,7 @@ export default function Reports() {
   const userCleanupRef = useRef(null);
   const assignCleanupRef = useRef(null);
   const marksFallbackRef = useRef({});
+  const marksCacheRef = useRef({});
 
   // Student List States
   const [students, setStudents] = useState([]);
@@ -334,7 +359,15 @@ export default function Reports() {
     const ciaRef = collection(db, 'cia_configs'); // Firestore collection reference
     const unsubscribe = onSnapshot(ciaRef, (snapshot) => { // Use onSnapshot for real-time updates
       if (!snapshot.empty) {
-        const data = {}; snapshot.forEach(doc => { data[doc.id] = doc.data(); }); // Convert QuerySnapshot to object
+        const data = {};
+        snapshot.forEach(doc => {
+          const d = { id: doc.id, ...doc.data() };
+          data[doc.id] = d;
+          if (d.examName) {
+            data[d.examName] = d;
+            data[d.examName.toLowerCase()] = d;
+          }
+        });
         setCiaConfigs(data);
       }
     }, (error) => {
@@ -458,6 +491,16 @@ export default function Reports() {
   // then falling back to a field query on the `code` field.
   const fetchCourseType = useCallback(async (subject) => {
     if (!subject || !programme || !department) return '';
+
+    // 0. Check syllabusData if available
+    if (syllabusData?.semesters && semester) {
+      const semNum = deriveSemesterNumber(semester);
+      const semSubjects = syllabusData.semesters[semNum] || [];
+      const foundSub = semSubjects.find(s => s && (s.code === subject || s.name === subject || subject.startsWith(s.code)));
+      if (foundSub?.type) return foundSub.type;
+      if (foundSub?.courseType) return foundSub.courseType;
+    }
+
     const progKey = formatProgrammeKey(programme);
     const deptKey = sanitizeKey(department);
     const deptKeyStrict = sanitizeKeyStrict(department);
@@ -505,12 +548,18 @@ export default function Reports() {
           best = data.type || '';
         }
       });
-      return best;
+      if (best) return best;
     } catch (e) {
       console.error("Course type query failed:", e);
-      return '';
     }
-  }, [programme, department, batch, getRegulationForBatch]);
+
+    // Default heuristic from subject name/code
+    const sStr = String(subject || '').toLowerCase();
+    if (sStr.includes('lab') || sStr.includes('practical') || sStr.includes('laboratory')) {
+      return 'Practical';
+    }
+    return 'Theory';
+  }, [programme, department, batch, semester, syllabusData, getRegulationForBatch]);
 
   // Fetch course type for selected internal subject
   useEffect(() => {
@@ -618,12 +667,44 @@ export default function Reports() {
   }, [module, selectedInternalExam, programme, department, batch, academicYear, semester, ciaConfigs, internalSubject, section, examMaxFor]);
 
   const getExamCategory = (config) => {
-    if (config.isAssignment) return "Activity";
-    if (config.isProject) return "Project";
-    if (config.isPractical) return "Practical";
-    if (config.isUniversity) return "ESE";
-    if (config.isIndirectAssessment) return "Indirect Assessment";
+    if (!config) return "Written Test";
+    if (config.isAssignment || config.isActivity || /assignment|activity/i.test(config.examName || '')) return "Activity";
+    if (config.isProject || /project/i.test(config.examName || '')) return "Project";
+    if (config.isPractical || /practical|lab/i.test(config.examName || '')) return "Practical";
+    if (config.isUniversity || /end\s*sem|ese|university/i.test(config.examName || '')) return "ESE";
+    if (config.isIndirectAssessment || /survey|indirect/i.test(config.examName || '')) return "Indirect Assessment";
     return "Written Test";
+  };
+
+  const computeCategorySubtotal = (col, studentExams) => {
+    if (!col || !col.exams || col.exams.length === 0) return 0;
+    if (col.hasExamWeights) {
+      let sum = 0;
+      col.exams.forEach(ex => {
+        const e = studentExams?.[ex.id];
+        if (e && !e.absent) {
+          sum += ((e.pct || 0) * (ex.examWeightage / 100));
+        }
+      });
+      return Math.round(sum * 100) / 100;
+    }
+
+    const pcts = col.exams.map(ex => {
+      const e = studentExams?.[ex.id];
+      if (!e || e.absent) return 0;
+      return e.pct || 0;
+    });
+
+    if (col.bestCount && col.bestCount > 0) {
+      const sorted = [...pcts].sort((a, b) => b - a);
+      const topN = sorted.slice(0, col.bestCount);
+      const avg = topN.length > 0 ? (topN.reduce((a, b) => a + b, 0) / topN.length) : 0;
+      return Math.round(avg * 100) / 100;
+    }
+
+    const count = col.exams.length || 1;
+    const avg = pcts.reduce((a, b) => a + b, 0) / count;
+    return Math.round(avg * 100) / 100;
   };
 
   // Fetch overall data across all exams for the subject's course type
@@ -647,6 +728,12 @@ export default function Reports() {
       setLoadingOverall(true);
       try {
         const allCiaMap = Object.fromEntries(Object.entries(ciaConfigs || {}).map(([id, c]) => [id, { id, ...c }]));
+        const seenDocIds = new Set();
+        const primaryConfigs = Object.values(ciaConfigs || {}).filter(c => {
+          if (!c || !c.id || seenDocIds.has(c.id)) return false;
+          seenDocIds.add(c.id);
+          return true;
+        });
 
         const ayKeyStrict = sanitizeKeyStrict(academicYear);
         const ayKey = sanitizeKey(academicYear);
@@ -671,25 +758,81 @@ export default function Reports() {
         catEntries.forEach(([catName, catCfg]) => {
           if (catCfg.consider_for_internal === false) return;
           const catWeight = Number(catCfg.weightage) || 0;
+          const bestCount = Number(catCfg.best_count) || null;
           const examWeights = catCfg.exam_weightage || {};
-          const examIds = Object.keys(examWeights).filter(eid => allCiaMap[eid]);
-          if (examIds.length === 0) return;
+          const examMarks = catCfg.exam_marks || {};
 
-          const colExams = examIds.map(eid => {
-            const ciaConf = allCiaMap[eid];
-            const ew = Number(examWeights[eid]) || 0;
+          // Find candidate exams for this category from explicit configs + dynamic discovery
+          const explicitIds = new Set([
+            ...Object.keys(examWeights),
+            ...Object.keys(examMarks)
+          ]);
+
+          const dynamicExams = primaryConfigs.filter(c => {
+            if (regulation && c.regulation && sanitizeKey(c.regulation) !== regKey && sanitizeKeyStrict(c.regulation) !== regKeyStrict) return false;
+            if (courseType && Array.isArray(c.courseTypes) && c.courseTypes.length > 0) {
+              const ctMatch = c.courseTypes.some(t => String(t).trim().toLowerCase() === String(courseType).trim().toLowerCase());
+              if (!ctMatch) return false;
+            }
+            const cAY = String(c.academicYear || '').trim();
+            const selAY = String(academicYear || '').trim();
+            if (cAY && selAY && sanitizeKey(cAY) !== sanitizeKey(selAY)) return false;
+            return getExamCategory(c).toLowerCase() === catName.toLowerCase();
+          });
+
+          const candidates = [];
+          explicitIds.forEach(eid => {
+            const c = allCiaMap[eid] || primaryConfigs.find(pc => pc.id === eid || pc.examName === eid);
+            if (c) candidates.push(c);
+          });
+          dynamicExams.forEach(c => candidates.push(c));
+
+          // Deduplicate by normalized name
+          const uniqueExamMap = new Map();
+          candidates.forEach(c => {
+            const normKey = String(c.examName || c.id || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (!normKey) return;
+            if (!uniqueExamMap.has(normKey)) {
+              uniqueExamMap.set(normKey, c);
+            }
+          });
+          const uniqueExams = Array.from(uniqueExamMap.values());
+          if (uniqueExams.length === 0) return;
+
+          uniqueExams.sort((a, b) => {
+            const nameA = String(a.examName || a.id || '');
+            const nameB = String(b.examName || b.id || '');
+            return nameA.localeCompare(nameB, undefined, { numeric: true, sensitivity: 'base' });
+          });
+
+          const colExams = uniqueExams.map(ciaConf => {
+            const eid = ciaConf.id;
+            const examName = ciaConf.examName || eid;
+            const ew = Number(examWeights[eid] ?? examWeights[examName]) || 0;
+            const configuredMax = examMarks[eid] ?? examMarks[examName];
+            const maxMark = configuredMax != null && configuredMax !== ''
+              ? Number(configuredMax)
+              : examMaxFor(eid, examMaxFor(examName, ciaConf.totalMarks || 100));
             allExamIds.push(eid);
             return {
               id: eid,
-              examName: ciaConf?.examName || eid,
-              totalMarks: examMaxFor(eid, examMaxFor(ciaConf?.examName, ciaConf?.totalMarks || 100)),
+              examName,
+              totalMarks: maxMark,
               category: catName,
               catWeight,
               examWeightage: ew,
               hasExamWeights: ew > 0
             };
           });
-          columns.push({ category: catName, catWeight, exams: colExams });
+
+          const hasExamWeights = colExams.some(e => e.hasExamWeights && e.examWeightage > 0);
+          columns.push({
+            category: catName,
+            catWeight,
+            bestCount,
+            hasExamWeights,
+            exams: colExams
+          });
         });
 
         // Fetch all marks docs for this subject and group by _meta fields
@@ -734,12 +877,13 @@ export default function Reports() {
         columns.forEach(col => {
           col.exams.forEach(exCol => {
             const ciaConf = allCiaMap[exCol.id];
-            const examName = ciaConf?.examName || '';
+            const examName = ciaConf?.examName || exCol.examName || '';
             const matched = 
               marksByExam[exCol.id] ||
               marksByExam[sanitizeKey(exCol.id)] ||
               marksByExam[examName] ||
               marksByExam[sanitizeKey(examName)] ||
+              marksByExam[String(examName).toLowerCase()] ||
               {};
             marksMap[exCol.id] = matched;
           });
@@ -760,12 +904,12 @@ export default function Reports() {
                 const found = stRef.find(s => s.reg === reg);
                 studentData[reg] = { name: found?.name || reg, exams: {} };
               }
-              const pct = (scored / exCol.totalMarks) * 100;
+              const pct = exCol.totalMarks > 0 ? (scored / exCol.totalMarks) * 100 : 0;
               let weightedPct = 0;
-              if (exCol.hasExamWeights && exCol.examWeightage > 0) {
+              if (col.hasExamWeights && exCol.examWeightage > 0) {
                 weightedPct = pct * (exCol.examWeightage / 100);
-              } else {
-                const catCount = columns.find(c => c.category === exCol.category)?.exams.length || 1;
+              } else if (!col.bestCount || col.bestCount <= 0) {
+                const catCount = col.exams.length || 1;
                 weightedPct = pct / catCount;
               }
               studentData[reg].exams[exCol.id] = { scored, maxMarks: exCol.totalMarks, pct: Math.round(pct * 100) / 100, weightedPct: Math.round(weightedPct * 100) / 100, absent };
@@ -893,7 +1037,7 @@ export default function Reports() {
   };
 
   const [removeStudentModal, setRemoveStudentModal] = useState({ show: false, index: null, reason: '', confirmReg: '' });
-  const [consolidationData, setConsolidationData] = useState(null);
+  const setConsolidationData = () => {};
   const [loadingConsolidation, setLoadingConsolidation] = useState(false);
   const [consolidationChildren, setConsolidationChildren] = useState([]); // [{ key, data, isUniversity, label }]
   const [consolidationView, setConsolidationView] = useState('latest'); // 'latest' | 'overall' | 'final' | examKey
@@ -905,22 +1049,168 @@ export default function Reports() {
   const expectedExams = useMemo(() => {
     if (!programme || !department) return [];
     const progKey = formatProgrammeKey(programme);
-    return Object.entries(ciaConfigs || {}).map(([id, val]) => ({ id, ...val })).filter(c =>
-      (!c.program || formatProgrammeKey(c.program) === progKey) &&
-      (!c.department || c.department === department)
-    );
-  }, [ciaConfigs, programme, department]);
+    const currentReg = batch ? getRegulationForBatch(progKey, batch) : '';
 
-  // Expected exams limited to the subject's course type (via cia_configs.courseTypes field)
+    // Only iterate distinct CIA config documents, ignoring lookup alias keys (examName, lowercase)
+    const seenDocIds = new Set();
+    const rawList = [];
+    Object.values(ciaConfigs || {}).forEach(c => {
+      const docId = c?.id;
+      if (docId && !seenDocIds.has(docId)) {
+        seenDocIds.add(docId);
+        rawList.push(c);
+      }
+    });
+
+    return rawList.filter(c => {
+      if (c.program && formatProgrammeKey(c.program) !== progKey) return false;
+      if (c.department && c.department !== department && c.department !== 'Overall') return false;
+      if (currentReg && c.regulation && !isRegMatch(c.regulation, currentReg)) return false;
+      if (academicYear && c.academicYear && !isAyMatch(c.academicYear, academicYear)) return false;
+      return true;
+    });
+  }, [ciaConfigs, programme, department, batch, academicYear, getRegulationForBatch]);
+
+  //Authoritative current subject code
+  const currentSubjectCode = module === "internal" ? internalSubject : (extraSubject || selectedSubject);
+
+  // Dynamic Course Type & Category resolver based on the currently selected subject
+  const activeSubjectCourseType = useMemo(() => {
+    if (!currentSubjectCode) return "";
+
+    // 1. Direct state if already fetched
+    const directType = module === "internal" ? internalSubjectCourseType : extraSubjectCourseType;
+    if (directType) return directType;
+
+    // 2. Look up in syllabusData
+    if (syllabusData?.semesters && semester) {
+      const semNum = deriveSemesterNumber(semester);
+      const semSubjects = syllabusData.semesters[semNum] || [];
+      const foundSub = semSubjects.find(s => s && (s.code === currentSubjectCode || s.name === currentSubjectCode || currentSubjectCode.startsWith(s.code)));
+      const sType = foundSub?.type || foundSub?.category || foundSub?.courseType || foundSub?.subjectType;
+      if (sType) return sType;
+    }
+
+    // 3. Fallback heuristic from subject string
+    const sStr = String(currentSubjectCode).toLowerCase();
+    if (/(?:^|[^a-z])(?:lab|laboratory|practical|practicum|studio|drawing)(?:$|[^a-z])/i.test(sStr)) {
+      return 'Practical';
+    }
+    if (/(?:^|[^a-z])(?:project|dissertation|thesis)(?:$|[^a-z])/i.test(sStr)) {
+      return 'Project';
+    }
+    return 'Theory';
+  }, [currentSubjectCode, module, internalSubjectCourseType, extraSubjectCourseType, syllabusData, semester]);
+
+  // Expected exams limited to the subject's regulation, academic year, and course type (via Curriculum weightage & cia_configs)
   const consolidationExpectedExams = useMemo(() => {
     const subject = module === 'internal' ? internalSubject : extraSubject;
-    const courseType = module === 'internal' ? internalSubjectCourseType : extraSubjectCourseType;
-    if (!subject || !courseType || !programme || !department) return expectedExams;
-    return expectedExams.filter(ex => {
-      const ct = ex.courseTypes || [];
-      return ct.includes(courseType);
+    if (!subject || !programme || !department) return expectedExams;
+
+    const progKey = formatProgrammeKey(programme);
+    const regulation = batch ? getRegulationForBatch(progKey, batch) : '';
+
+    // Robust course type resolution
+    const courseType = activeSubjectCourseType || 'Theory';
+    const normCourseType = courseType.trim().toLowerCase();
+
+    // 1. Try to get configured active exams from course_type_weightage (Curriculum Course Categories & Weightage)
+    const regKeyStrict = sanitizeKeyStrict(regulation);
+    const regKey = sanitizeKey(regulation);
+    const ayKeyStrict = sanitizeKeyStrict(academicYear);
+    const ayKey = sanitizeKey(academicYear);
+
+    const regAyKeyStrict = `${regKeyStrict}_${ayKeyStrict}`;
+    const regAyKey = `${regKey}_${ayKey}`;
+
+    let weightageDoc = courseWeightageData[regAyKeyStrict] || courseWeightageData[regAyKey] || courseWeightageData[regKeyStrict] || courseWeightageData[regKey];
+    if (!weightageDoc && courseWeightageData) {
+      for (const [docId, val] of Object.entries(courseWeightageData)) {
+        if (!val || typeof val !== 'object') continue;
+        if (isRegMatch(docId, regulation)) {
+          if (academicYear && isAyMatch(docId, academicYear)) {
+            weightageDoc = val;
+            break;
+          }
+          if (!weightageDoc) weightageDoc = val;
+        }
+      }
+    }
+    weightageDoc = weightageDoc || {};
+
+    const ctKey = Object.keys(weightageDoc).find(k => k.trim().toLowerCase() === normCourseType);
+    const ctWeightage = ctKey ? weightageDoc[ctKey] : {};
+    const catConfig = ctWeightage?._category_config || {};
+
+    const activeCatEntries = Object.entries(catConfig).filter(([, cConf]) => cConf && cConf.consider_for_internal !== false);
+
+    const allCiaMap = Object.fromEntries(Object.entries(ciaConfigs || {}).map(([id, c]) => [id, { id, ...c }]));
+
+    let candidateExams = [];
+
+    if (activeCatEntries.length > 0) {
+      // Collect configured exam IDs from Curriculum weightage
+      const seenExamKeys = new Set();
+      activeCatEntries.forEach(([, catCfg]) => {
+        const examIds = [
+          ...Object.keys(catCfg.exam_weightage || {}),
+          ...Object.keys(catCfg.exam_marks || {})
+        ];
+        examIds.forEach(eid => {
+          if (seenExamKeys.has(eid)) return;
+          seenExamKeys.add(eid);
+          const ciaConf = allCiaMap[eid];
+          const cand = ciaConf ? { id: eid, ...ciaConf } : (expectedExams.find(ex => normClean(ex.id) === normClean(eid) || normClean(ex.examName) === normClean(eid)) || { id: eid, examName: eid });
+
+          // STRICT FILTER: Practical exams NEVER belong to Theory courses, and Theory exams NEVER belong to Practical courses
+          const isExamPractical = cand.isPractical || /practical|lab|observation|record/i.test(cand.examName || cand.id || '');
+          if (normCourseType === 'theory' && isExamPractical) return;
+          if (normCourseType === 'practical' && !isExamPractical && !cand.isUniversity && !cand.isIndirectAssessment) return;
+
+          candidateExams.push(cand);
+        });
+      });
+
+      // If university exam (End Semester Exam) is configured/present
+      const uniPct = Number(weightageDoc._percentages?.[ctKey || courseType] ?? mappingPercentageSplit?.university ?? 0);
+      const eseExams = expectedExams.filter(ex => ex.isUniversity || /end\s*sem|ese|university/i.test(ex.examName || ''));
+      if (eseExams.length > 0 && (uniPct > 0 || mappingPercentageSplit?.university > 0 || !catConfig)) {
+        eseExams.forEach(ese => {
+          const isExamPractical = ese.isPractical || /practical|lab|observation|record/i.test(ese.examName || ese.id || '');
+          if (normCourseType === 'theory' && isExamPractical) return;
+          if (!candidateExams.some(c => normClean(c.examName || c.id) === normClean(ese.examName || ese.id))) {
+            candidateExams.push(ese);
+          }
+        });
+      }
+    } else {
+      // Fallback: filter expectedExams strictly by course type
+      candidateExams = expectedExams.filter(ex => {
+        const isExamPractical = ex.isPractical || /practical|lab|observation|record/i.test(ex.examName || ex.id || '');
+        if (normCourseType === 'theory' && isExamPractical) return false;
+        if (normCourseType === 'practical' && !isExamPractical && !ex.isUniversity && !ex.isIndirectAssessment) return false;
+
+        const ct = (ex.courseTypes || []).map(t => String(t).trim().toLowerCase());
+        if (ct.length > 0) {
+          return ct.includes(normCourseType);
+        }
+        return true;
+      });
+    }
+
+    // Strictly deduplicate candidateExams by normalized exam name
+    const uniqueMap = new Map();
+    candidateExams.forEach(ex => {
+      const name = ex.examName || ex.id;
+      const key = normClean(name);
+      if (!key) return;
+      if (!uniqueMap.has(key)) {
+        uniqueMap.set(key, ex);
+      }
     });
-  }, [expectedExams, internalSubject, extraSubject, internalSubjectCourseType, extraSubjectCourseType, programme, department, module]);
+
+    return Array.from(uniqueMap.values());
+  }, [expectedExams, internalSubject, extraSubject, activeSubjectCourseType, programme, department, batch, academicYear, courseWeightageData, ciaConfigs, mappingPercentageSplit, getRegulationForBatch, module]);
 
   const filteredInternalExams = useMemo(() => {
     if (!programme || !department) return [];
@@ -948,9 +1238,11 @@ export default function Reports() {
     if (exams.length > 0) {
       const uniqueMap = new Map();
       exams.forEach(ex => {
-        const key = ex.id || ex.examName;
-        if (!uniqueMap.has(key)) {
-          uniqueMap.set(key, ex);
+        const name = ex.examName || ex.id;
+        const normKey = String(name || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (!normKey) return;
+        if (!uniqueMap.has(normKey)) {
+          uniqueMap.set(normKey, ex);
         }
       });
       const uniqueExams = Array.from(uniqueMap.values()).map(ex => ({
@@ -975,8 +1267,8 @@ export default function Reports() {
     if (!subject || !programme || !batch || !syllabusData) return null;
     const semNum = deriveSemesterNumber(semester);
     const subjects = syllabusData?.semesters?.[semNum] || [];
-    const subInfo = subjects.find(s => s && s.code === subject);
-    const courseType = module === 'internal' ? internalSubjectCourseType : extraSubjectCourseType;
+    const subInfo = subjects.find(s => s && (s.code === subject || s.name === subject || subject.startsWith(s.code)));
+    const courseType = (module === 'internal' ? internalSubjectCourseType : extraSubjectCourseType) || subInfo?.type || subInfo?.courseType || (/lab|practical/i.test(subject) ? 'Practical' : 'Theory');
     if (!courseType) return null;
     const progKey = formatProgrammeKey(programme);
     const regulation = getRegulationForBatch(progKey, batch);
@@ -989,10 +1281,10 @@ export default function Reports() {
     const regAyKey = `${regKey}_${ayKey}`;
 
     const weightageDoc = courseWeightageData[regAyKeyStrict] || courseWeightageData[regAyKey] || courseWeightageData[regKeyStrict] || courseWeightageData[regKey] || {};
-    const ctConfig = weightageDoc[courseType] || {};
+    const ctConfig = weightageDoc[courseType] || weightageDoc[Object.keys(weightageDoc).find(k => k.trim().toLowerCase() === courseType.trim().toLowerCase())] || {};
     const passPct = ctConfig._type_pass_mark;
     return passPct != null && passPct !== '' ? Number(passPct) : null;
-  }, [module, internalSubject, extraSubject, programme, batch, semester, syllabusData, internalSubjectCourseType, extraSubjectCourseType, courseWeightageData, getRegulationForBatch]);
+  }, [module, internalSubject, extraSubject, programme, batch, semester, syllabusData, internalSubjectCourseType, extraSubjectCourseType, courseWeightageData, getRegulationForBatch, academicYear]);
 
   const allExamsCompleted = useMemo(() => {
     if (consolidationExpectedExams.length === 0) return false;
@@ -1002,12 +1294,25 @@ export default function Reports() {
     if (mandatoryExams.length === 0) return false;
 
     return mandatoryExams.every(examConfig => {
+      const exName = normClean(examConfig.examName || '');
+      const exId = normClean(examConfig.id || '');
+
       return consolidationChildren.some(child => {
-        const matchesExam = child.label === examConfig.examName ||
+        const cLabel = normClean(child.label || '');
+        const cKey = normClean(child.key || '');
+        const cMetaExam = normClean(child.data?._meta?.exam || '');
+        const cMetaExamName = normClean(child.data?._meta?.exam_name || '');
+        const cMetaQp = normClean(child.data?._meta?.qpaper_name || '');
+
+        const matchesExam = (
+          (exName && (cLabel === exName || cMetaExam === exName || cMetaExamName === exName || cMetaQp === exName)) ||
+          (exId && (cKey === exId || cLabel === exId || cMetaExam === exId || cMetaExamName === exId || cMetaQp === exId)) ||
+          child.label === examConfig.examName ||
           child.key === examConfig.id ||
           child.data?._meta?.exam === examConfig.id ||
           child.data?._meta?.qpaper_name === examConfig.id ||
-          child.data?._meta?.exam === examConfig.examName;
+          child.data?._meta?.exam === examConfig.examName
+        );
         const hasMarks = child.data?.students && Object.keys(child.data.students).length > 0;
         return matchesExam && hasMarks;
       });
@@ -1017,18 +1322,43 @@ export default function Reports() {
   const missingMandatoryExams = useMemo(() => {
     if (!consolidationExpectedExams.length) return [];
     const mandatoryExams = consolidationExpectedExams.filter(ex => !ex.isIndirectAssessment);
-    return mandatoryExams.filter(examConfig => {
+    const missing = mandatoryExams.filter(examConfig => {
+      const exName = normClean(examConfig.examName || '');
+      const exId = normClean(examConfig.id || '');
+
       const isPresentAndEntered = consolidationChildren.some(child => {
-        const matchesExam = child.label === examConfig.examName ||
+        const cLabel = normClean(child.label || '');
+        const cKey = normClean(child.key || '');
+        const cMetaExam = normClean(child.data?._meta?.exam || '');
+        const cMetaExamName = normClean(child.data?._meta?.exam_name || '');
+        const cMetaQp = normClean(child.data?._meta?.qpaper_name || '');
+
+        const matchesExam = (
+          (exName && (cLabel === exName || cMetaExam === exName || cMetaExamName === exName || cMetaQp === exName)) ||
+          (exId && (cKey === exId || cLabel === exId || cMetaExam === exId || cMetaExamName === exId || cMetaQp === exId)) ||
+          child.label === examConfig.examName ||
           child.key === examConfig.id ||
           child.data?._meta?.exam === examConfig.id ||
           child.data?._meta?.qpaper_name === examConfig.id ||
-          child.data?._meta?.exam === examConfig.examName;
+          child.data?._meta?.exam === examConfig.examName
+        );
         const hasMarks = child.data?.students && Object.keys(child.data.students).length > 0;
         return matchesExam && hasMarks;
       });
       return !isPresentAndEntered;
     });
+
+    // Strictly deduplicate by normalized exam name
+    const seen = new Set();
+    const uniqueMissing = [];
+    missing.forEach(ex => {
+      const name = ex.examName || ex.id;
+      const key = normClean(name);
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      uniqueMissing.push(ex);
+    });
+    return uniqueMissing;
   }, [consolidationExpectedExams, consolidationChildren]);
 
   const getAcademicYears = () => {
@@ -1487,14 +1817,12 @@ export default function Reports() {
     // Keyed by coAttainmentDocId so later listener re-fires keep including them.
     const buildChildren = () => {
       let children = [];
-      const fbCached = marksFallbackRef.current[coAttainmentDocId];
-      if (Array.isArray(fbCached)) children.push(...fbCached);
 
-      // Add subcollection exam docs (new format from MarkEntry)
+      // Add subcollection exam docs (primary format from MarkEntry)
       examDocs.forEach(eDoc => {
         const eData = eDoc.data();
         const m = eData._meta || {};
-        let label = m.exam || m.qpaper_name || eDoc.id;
+        let label = m.exam_name || m.exam || m.qpaper_name || eDoc.id;
         if (m.exam && ciaConfigs[m.exam]?.examName) label = ciaConfigs[m.exam].examName;
         else if (m.qpaper_name && ciaConfigs[m.qpaper_name]?.examName) label = ciaConfigs[m.qpaper_name].examName;
 
@@ -1507,8 +1835,20 @@ export default function Reports() {
         );
         const isIndirect = !!(
           m.isIndirectAssessment ||
-          (m.qpaper_name && ciaConfigs[m.qpaper_name]?.isIndirectAssessment) ||
-          (m.exam && ciaConfigs[m.exam]?.isIndirectAssessment)
+          m.is_indirect ||
+          m.isIndirect ||
+          (m.qpaper_name && (ciaConfigs[m.qpaper_name]?.isIndirectAssessment || ciaConfigs[m.qpaper_name]?.isIndirect)) ||
+          (m.exam && (ciaConfigs[m.exam]?.isIndirectAssessment || ciaConfigs[m.exam]?.isIndirect)) ||
+          (m.exam_name && (ciaConfigs[m.exam_name]?.isIndirectAssessment || ciaConfigs[m.exam_name]?.isIndirect)) ||
+          /indirect|survey|exit|ces/i.test(String(label || m.exam || m.exam_name || eDoc.id || '')) ||
+          Object.values(ciaConfigs || {}).some(cfg => 
+            (cfg?.isIndirectAssessment || cfg?.isIndirect) && (
+              cfg?.examName === m.exam ||
+              cfg?.examName === m.exam_name ||
+              cfg?.examName === label ||
+              (cfg?.examName && String(label || m.exam || '').toLowerCase().includes(String(cfg.examName).toLowerCase()))
+            )
+          )
         );
         children.push({ key: eDoc.id, data: eData, isUniversity, isIndirect, label });
       });
@@ -1516,7 +1856,7 @@ export default function Reports() {
       // Add legacy root doc data if exists
       if (rootData?.co_max_marks || rootData?.students) {
         const m = rootData._meta || {};
-        let label = m.exam || 'Legacy';
+        let label = m.exam || m.exam_name || 'Legacy';
         const isUniversity = !!(
           m.is_university ||
           (m.qpaper_name && ciaConfigs[m.qpaper_name] && (ciaConfigs[m.qpaper_name].is_university || ciaConfigs[m.qpaper_name].isUniversity)) ||
@@ -1526,10 +1866,37 @@ export default function Reports() {
         );
         const isIndirect = !!(
           m.isIndirectAssessment ||
-          (m.qpaper_name && ciaConfigs[m.qpaper_name]?.isIndirectAssessment) ||
-          (m.exam && ciaConfigs[m.exam]?.isIndirectAssessment)
+          m.is_indirect ||
+          m.isIndirect ||
+          (m.qpaper_name && (ciaConfigs[m.qpaper_name]?.isIndirectAssessment || ciaConfigs[m.qpaper_name]?.isIndirect)) ||
+          (m.exam && (ciaConfigs[m.exam]?.isIndirectAssessment || ciaConfigs[m.exam]?.isIndirect)) ||
+          (m.exam_name && (ciaConfigs[m.exam_name]?.isIndirectAssessment || ciaConfigs[m.exam_name]?.isIndirect)) ||
+          /indirect|survey|exit|ces/i.test(String(label || m.exam || m.exam_name || '')) ||
+          Object.values(ciaConfigs || {}).some(cfg => 
+            (cfg?.isIndirectAssessment || cfg?.isIndirect) && (
+              cfg?.examName === m.exam ||
+              cfg?.examName === m.exam_name ||
+              cfg?.examName === label ||
+              (cfg?.examName && String(label || m.exam || '').toLowerCase().includes(String(cfg.examName).toLowerCase()))
+            )
+          )
         );
         children.push({ key: '_legacy', data: rootData, isUniversity, isIndirect, label });
+      }
+
+      // Add fallback children from marks collection ONLY for exams not already present
+      const fbCached = marksFallbackRef.current[coAttainmentDocId];
+      if (Array.isArray(fbCached)) {
+        const existingNormLabels = new Set(
+          children.map(c => String(c.label || '').toLowerCase().replace(/[^a-z0-9]/g, ''))
+        );
+        fbCached.forEach(fbChild => {
+          const norm = String(fbChild.label || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (!existingNormLabels.has(norm)) {
+            existingNormLabels.add(norm);
+            children.push(fbChild);
+          }
+        });
       }
 
       if (children.length === 0) {
@@ -1549,23 +1916,72 @@ export default function Reports() {
         return;
       }
 
-      // sort by updated_at/saved_at desc
+      // Deduplicate children strictly by normalized label so no duplicate exam ever appears
+      const seenLabels = new Set();
+      const uniqueChildren = [];
       children.sort((a, b) => {
         const ta = new Date(a.data._meta?.updated_at || a.data._meta?.saved_at || 0).getTime();
         const tb = new Date(b.data._meta?.updated_at || b.data._meta?.saved_at || 0).getTime();
         return tb - ta;
       });
 
-      setConsolidationChildren(children);
+      children.forEach(c => {
+        const norm = String(c.label || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (!norm) return;
+        if (seenLabels.has(norm)) return;
+        seenLabels.add(norm);
+        uniqueChildren.push(c);
+      });
+
+      // Natural alphanumeric sort: Assignment 1, Assignment 2, IA 1, IA 2
+      uniqueChildren.sort((a, b) => {
+        return String(a.label || '').localeCompare(String(b.label || ''), undefined, { numeric: true, sensitivity: 'base' });
+      });
+
+      // Enrich children with matching marks doc data (grade, gradePoint, gpa, overall, total, entry_mode)
+      uniqueChildren.forEach(child => {
+        const normChild = String(child.label || child.key || child.data?._meta?.exam || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const matchedMark = marksCacheRef.current[normChild] || Object.values(marksCacheRef.current).find(m => {
+          const mNorm = String(m._meta?.exam || m._meta?.exam_name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+          return mNorm && (mNorm === normChild || normChild.includes(mNorm) || mNorm.includes(normChild));
+        });
+
+        if (matchedMark) {
+          if (!child.data._meta) child.data._meta = {};
+          if (!child.data._meta.entry_mode && (matchedMark._meta?.entry_mode || matchedMark._meta?.mark_type)) {
+            child.data._meta.entry_mode = matchedMark._meta?.entry_mode || matchedMark._meta?.mark_type;
+          }
+          if (!child.data._meta.mark_type && matchedMark._meta?.mark_type) {
+            child.data._meta.mark_type = matchedMark._meta.mark_type;
+          }
+          const mStuds = matchedMark.students || {};
+          if (child.data.students) {
+            Object.entries(child.data.students).forEach(([reg, sEntry]) => {
+              const ms = mStuds[reg];
+              if (ms) {
+                if (sEntry.grade === undefined && ms.grade !== undefined) sEntry.grade = ms.grade;
+                if (sEntry.gradePoint === undefined && (ms.gradePoint !== undefined || ms.gpa !== undefined)) sEntry.gradePoint = ms.gradePoint ?? ms.gpa;
+                if (sEntry.gpa === undefined && (ms.gpa !== undefined || ms.gradePoint !== undefined)) sEntry.gpa = ms.gpa ?? ms.gradePoint;
+                if (sEntry.overall === undefined && ms.overall !== undefined) sEntry.overall = ms.overall;
+                if (sEntry.total === undefined && ms.total !== undefined) sEntry.total = ms.total;
+                if (ms.absent) sEntry.absent = true;
+              }
+            });
+          }
+        }
+      });
+
+      setConsolidationChildren(uniqueChildren);
 
       // Default: if current consolidationView is 'latest' or not set, pick latest INTERNAL child if available
-      if (!consolidationView || consolidationView === 'latest') {
-        const latestInternal = children.find(c => !c.isUniversity) || children[0];
-        if (latestInternal) {
-          setConsolidationData({ studentTotals: latestInternal.data.students || {}, maxMarks: latestInternal.data.co_max_marks || {} });
-          setConsolidationView(latestInternal.key);
+      setConsolidationView(prevView => {
+        if (prevView === 'final') return 'final';
+        if (prevView && prevView !== 'latest' && uniqueChildren.some(c => c.key === prevView)) {
+          return prevView;
         }
-      }
+        const latestInternal = uniqueChildren.find(c => !c.isUniversity) || uniqueChildren[0];
+        return latestInternal ? latestInternal.key : '';
+      });
       setLoadingConsolidation(false);
     };
 
@@ -1706,9 +2122,25 @@ export default function Reports() {
           );
           const isIndirect = !!(
             m.isIndirectAssessment ||
-            (m.qpaper_name && ciaConfigs[m.qpaper_name]?.isIndirectAssessment) ||
-            (m.exam && ciaConfigs[m.exam]?.isIndirectAssessment)
+            m.is_indirect ||
+            m.isIndirect ||
+            (m.qpaper_name && (ciaConfigs[m.qpaper_name]?.isIndirectAssessment || ciaConfigs[m.qpaper_name]?.isIndirect)) ||
+            (m.exam && (ciaConfigs[m.exam]?.isIndirectAssessment || ciaConfigs[m.exam]?.isIndirect)) ||
+            (m.exam_name && (ciaConfigs[m.exam_name]?.isIndirectAssessment || ciaConfigs[m.exam_name]?.isIndirect)) ||
+            /indirect|survey|exit|ces/i.test(String(display || m.exam || m.exam_name || '')) ||
+            Object.values(ciaConfigs || {}).some(cfg => 
+              (cfg?.isIndirectAssessment || cfg?.isIndirect) && (
+                cfg?.examName === m.exam ||
+                cfg?.examName === m.exam_name ||
+                cfg?.examName === display ||
+                (cfg?.examName && String(display || m.exam || '').toLowerCase().includes(String(cfg.examName).toLowerCase()))
+              )
+            )
           );
+
+          if (isIndirect) {
+            ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].forEach(co => { coMax[co] = 3; });
+          }
           out.push({
             key: `marks_${sanitizeKey(display)}`,
             data: { _meta: { ...m, exam: display, exam_name: display }, students: g.students, co_max_marks: coMax },
@@ -1720,6 +2152,25 @@ export default function Reports() {
       }
       return out;
     };
+
+    // Pre-fetch marks documents for this subject to enrich consolidation children (Grade, GPA, Overall mark)
+    getDocs(collection(db, 'marks')).then(snap => {
+      const marksCache = {};
+      snap.forEach(d => {
+        const docMeta = extractMarksDocMeta(d);
+        if (!matchesMarksSelection(docMeta, { programme, department, batch, academicYear, semester, subject: extraSubject, section })) return;
+        const dData = d.data() || {};
+        const rawExam = docMeta.exam || '';
+        const rawName = docMeta.examName || '';
+        if (rawExam) marksCache[String(rawExam).toLowerCase().replace(/[^a-z0-9]/g, '')] = dData;
+        if (rawName) marksCache[String(rawName).toLowerCase().replace(/[^a-z0-9]/g, '')] = dData;
+        marksCache[String(d.id).toLowerCase().replace(/[^a-z0-9]/g, '')] = dData;
+      });
+      marksCacheRef.current = marksCache;
+      buildChildren();
+    }).catch(e => {
+      console.warn("Could not pre-fetch marks cache:", e);
+    });
 
     // Listen to root doc (legacy format)
     const unsubRoot = onSnapshot(doc(db, 'co_attainment', coAttainmentDocId), (snapshot) => {
@@ -1741,194 +2192,339 @@ export default function Reports() {
       unsubRoot();
       unsubExams();
     };
-  }, [module, programme, department, batch, academicYear, semester, extraSubject, students, ciaConfigs, consolidationView, section]);
+  }, [module, programme, department, batch, academicYear, semester, extraSubject, students, ciaConfigs, section]);
 
-  // Fetch mapping_summary for final attainment computation
+  // Fetch mapping_summary for final attainment computation (Cutoff, Thresholds, and Splits)
   useEffect(() => {
+    let cancelled = false;
+    let unsubListener = null;
+
     const fetchMappingData = async () => {
-      if (!((module === 'consolidation' || module === 'log-report') && programme && batch && department && academicYear && semester && extraSubject)) return;
+      if (!((module === 'consolidation' || module === 'log-report') && programme && batch && department && academicYear && semester && extraSubject)) {
+        setMappingCutoff("");
+        setMappingThresholds([]);
+        return;
+      }
+
       const progKey = formatProgrammeKey(programme);
-      const mappingDocId = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(getRegulationForBatch(progKey, batch))}_${sanitizeKey(extraSubject)}_${sanitizeKey(academicYear)}_${sanitizeKey(semester)}`;
-      try {
-        const snap = await getDoc(doc(db, 'mapping_summary', mappingDocId)); // Firestore doc reference
-        if (snap.exists()) {
-          const data = snap.data(); // Use .data() for Firestore documents
-          if (data.percentageSplit) {
-            setMappingPercentageSplit({ internal: Number(data.percentageSplit.internal || 100), university: Number(data.percentageSplit.university || 0) });
-          } else {
-            setMappingPercentageSplit({ internal: 100, university: 0 });
+      const reg = batch ? getRegulationForBatch(progKey, batch) : '';
+      const subCode = extraSubject ? String(extraSubject).split(' - ')[0].trim() : '';
+      const semNum = deriveSemesterNumber(semester);
+
+      const regVariants = Array.from(new Set([
+        reg,
+        'AU - ' + reg,
+        'AU - R2021',
+        'AU - R2025',
+        'R2021',
+        'R2025',
+        '2021',
+        '2025'
+      ].filter(Boolean)));
+
+      const semVariants = Array.from(new Set([
+        semester,
+        semNum ? String(semNum) : null,
+        semNum ? `${semNum}th Semester` : null
+      ].filter(Boolean)));
+
+      const secVariants = Array.from(new Set([
+        section ? sanitizeKey(section) : null,
+        section,
+        ''
+      ].filter(v => v !== null && v !== undefined)));
+
+      const subVariants = Array.from(new Set([
+        subCode,
+        extraSubject
+      ].filter(Boolean)));
+
+      // Generate ordered candidate doc IDs
+      const candidateDocIds = [];
+      for (const sec of secVariants) {
+        const secSuffix = sec ? `_${sanitizeKey(sec)}` : '';
+        for (const sub of subVariants) {
+          const sKey = sanitizeKey(sub);
+          for (const r of regVariants) {
+            const rKey = sanitizeKey(r);
+            for (const sem of semVariants) {
+              const semKey = sanitizeKey(sem);
+              candidateDocIds.push(`${sanitizeKey(batch)}_${progKey}_${rKey}_${sKey}_${sanitizeKey(academicYear)}_${semKey}${secSuffix}`);
+              candidateDocIds.push(`${sanitizeKey(batch)}_${progKey}_${rKey}_${sKey}_${sanitizeKey(academicYear)}${secSuffix}`);
+            }
           }
-          if (data.directIndirectSplit) {
-            setMappingDirectIndirectSplit({ direct: Number(data.directIndirectSplit.direct || 100), indirect: Number(data.directIndirectSplit.indirect || 0) });
-          } else {
-            setMappingDirectIndirectSplit({ direct: 100, indirect: 0 });
-          }
-          setMappingCutoff(data.cutoff !== undefined ? data.cutoff : "");
-          setMappingThresholds(data.thresholds || []);
+        }
+      }
+
+      const uniqueCandidates = Array.from(new Set(candidateDocIds));
+
+      const applyMapping = (data, docId) => {
+        if (!data) return false;
+        const hasThresholds = Array.isArray(data.thresholds) && data.thresholds.length > 0;
+        const hasCutoff = data.cutoff !== undefined && data.cutoff !== "" && data.cutoff !== null;
+        if (!hasThresholds && !hasCutoff && !data.summary) return false;
+
+        if (data.percentageSplit) {
+          setMappingPercentageSplit({ internal: Number(data.percentageSplit.internal || 100), university: Number(data.percentageSplit.university || 0) });
         } else {
+          setMappingPercentageSplit({ internal: 100, university: 0 });
+        }
+        if (data.directIndirectSplit) {
+          setMappingDirectIndirectSplit({ direct: Number(data.directIndirectSplit.direct || 100), indirect: Number(data.directIndirectSplit.indirect || 0) });
+        } else {
+          setMappingDirectIndirectSplit({ direct: 100, indirect: 0 });
+        }
+        setMappingCutoff(hasCutoff ? Number(data.cutoff) : 50);
+        setMappingThresholds(hasThresholds ? data.thresholds : [
+          { min: 71, max: 100, level: 3 },
+          { min: 61, max: 70, level: 2 },
+          { min: 51, max: 60, level: 1 },
+          { min: 0, max: 50, level: 0 }
+        ]);
+
+        if (docId) {
+          try {
+            unsubListener = onSnapshot(doc(db, 'mapping_summary', docId), (snap) => {
+              if (cancelled || !snap.exists()) return;
+              const live = snap.data();
+              if (live.cutoff !== undefined && live.cutoff !== "") setMappingCutoff(Number(live.cutoff));
+              if (Array.isArray(live.thresholds) && live.thresholds.length > 0) setMappingThresholds(live.thresholds);
+              if (live.percentageSplit) setMappingPercentageSplit({ internal: Number(live.percentageSplit.internal || 100), university: Number(live.percentageSplit.university || 0) });
+              if (live.directIndirectSplit) setMappingDirectIndirectSplit({ direct: Number(live.directIndirectSplit.direct || 100), indirect: Number(live.directIndirectSplit.indirect || 0) });
+            });
+          } catch {}
+        }
+        return true;
+      };
+
+      try {
+        // 1. Probe direct candidate IDs
+        for (const cId of uniqueCandidates) {
+          const snap = await getDoc(doc(db, 'mapping_summary', cId));
+          if (snap.exists()) {
+            if (applyMapping(snap.data(), cId)) return;
+          }
+        }
+
+        // 2. Fallback: Scan collection for this subject code/name and regulation
+        const allSnap = await getDocs(collection(db, 'mapping_summary'));
+        if (!allSnap.empty) {
+          const normSub = normClean(subCode);
+          const normAy = normClean(academicYear);
+          const normSec = normClean(section);
+          const normBatch = normClean(batch);
+          const normReg = normClean(reg);
+
+          let bestDoc = null;
+          let bestDocId = null;
+          let bestScore = -1;
+
+          allSnap.forEach(d => {
+            const data = d.data();
+            if (!data) return;
+            const hasThresholds = Array.isArray(data.thresholds) && data.thresholds.length > 0;
+            const hasCutoff = data.cutoff !== undefined && data.cutoff !== "" && data.cutoff !== null;
+            if (!hasThresholds && !hasCutoff && !data.summary) return;
+
+            const idNorm = normClean(d.id);
+            if (!idNorm.includes(normSub)) return; // Must match subject code
+
+            let score = 10;
+            if (normAy && idNorm.includes(normAy)) score += 30;
+            if (normSec && idNorm.includes(normSec)) score += 20;
+            if (normBatch && idNorm.includes(normBatch)) score += 15;
+            if (normReg && isRegMatch(idNorm, normReg)) score += 10;
+            if (hasCutoff) score += 5;
+            if (hasThresholds) score += 5;
+
+            if (score > bestScore) {
+              bestScore = score;
+              bestDoc = data;
+              bestDocId = d.id;
+            }
+          });
+
+          if (bestDoc && applyMapping(bestDoc, bestDocId)) {
+            return;
+          }
+        }
+
+        if (!cancelled) {
           setMappingPercentageSplit({ internal: 100, university: 0 });
           setMappingCutoff("");
           setMappingThresholds([]);
         }
       } catch (err) {
         console.error('Failed to fetch mapping data:', err);
-        setMappingPercentageSplit({ internal: 100, university: 0 });
-        setMappingCutoff("");
-        setMappingThresholds([]);
+        if (!cancelled) {
+          setMappingPercentageSplit({ internal: 100, university: 0 });
+          setMappingCutoff("");
+          setMappingThresholds([]);
+        }
       }
     };
+
     fetchMappingData();
-  }, [module, programme, batch, department, academicYear, semester, extraSubject, getRegulationForBatch]);
+    return () => {
+      cancelled = true;
+      if (unsubListener) unsubListener();
+    };
+  }, [module, programme, batch, department, academicYear, semester, extraSubject, section, getRegulationForBatch]);
 
-  // Compute consolidationData when user changes the selected view or children or mapping split
-  useEffect(() => {
-    if (!consolidationChildren || consolidationChildren.length === 0) return;
+  // Compute consolidationData synchronously when user changes the selected view or children or mapping split
+  const consolidationData = useMemo(() => {
+    if (!consolidationChildren || consolidationChildren.length === 0) return null;
 
-    const computeForView = (view) => {
-      if (view === 'latest' || view === undefined) {
-        const chosen = consolidationChildren.find(c => !c.isUniversity) || consolidationChildren[0];
-        return { studentTotals: chosen.data.students || {}, maxMarks: chosen.data.co_max_marks || {} };
-      }
+    const view = consolidationView;
+    if (view === 'latest' || view === undefined || !view) {
+      const chosen = consolidationChildren.find(c => !c.isUniversity) || consolidationChildren[0];
+      return chosen ? { studentTotals: chosen.data.students || {}, maxMarks: chosen.data.co_max_marks || {} } : null;
+    }
 
-      if (view === 'overall') {
-        // Aggregate across internal children only: average per CO across internal exams
-        const all = consolidationChildren.filter(c => !c.isUniversity);
-        // If there are no internal children, fall back to all children
-        if (all.length === 0) all.push(...consolidationChildren);
-        const studentAcc = {};
-        const coCounts = {};
+    if (view === 'overall') {
+      // Aggregate across internal children only: direct cumulative sum per CO across internal exams
+      const all = consolidationChildren.filter(c => !c.isUniversity);
+      // If there are no internal children, fall back to all children
+      if (all.length === 0) all.push(...consolidationChildren);
+      const studentAcc = {};
 
-        all.forEach(child => {
-          const studs = child.data.students || {};
-          Object.entries(studs).forEach(([reg, sdata]) => {
-            studentAcc[reg] = studentAcc[reg] || { name: sdata.name || '' };
-            Object.entries(sdata).forEach(([k, v]) => {
-              if (/^CO\d+/i.test(k) && typeof v === 'number') {
-                studentAcc[reg][k] = (studentAcc[reg][k] || 0) + v;
-                coCounts[k] = (coCounts[k] || 0) + 1;
-              }
-            });
-          });
-        });
-
-        // Average
-        Object.keys(studentAcc).forEach(reg => {
-          Object.keys(studentAcc[reg]).forEach(k => {
-            if (/^CO\d+/i.test(k)) {
-              const cnt = coCounts[k] || consolidationChildren.length;
-              studentAcc[reg][k] = Math.round((studentAcc[reg][k] || 0) / cnt);
+      all.forEach(child => {
+        const studs = child.data.students || {};
+        Object.entries(studs).forEach(([reg, sdata]) => {
+          studentAcc[reg] = studentAcc[reg] || { name: sdata.name || '' };
+          Object.entries(sdata).forEach(([k, v]) => {
+            if (/^CO\d+/i.test(k) && typeof v === 'number') {
+              studentAcc[reg][k] = (studentAcc[reg][k] || 0) + v;
             }
           });
         });
+      });
 
-        // Average max marks per CO
-        const maxAcc = {};
-        consolidationChildren.forEach(child => {
-          const mm = child.data.co_max_marks || {};
-          Object.entries(mm).forEach(([k, v]) => {
-            maxAcc[k] = (maxAcc[k] || 0) + Number(v || 0);
-          });
+      // Cumulative max marks per CO
+      const maxAcc = {};
+      consolidationChildren.forEach(child => {
+        const mm = child.data.co_max_marks || {};
+        Object.entries(mm).forEach(([k, v]) => {
+          maxAcc[k] = (maxAcc[k] || 0) + Number(v || 0);
         });
-        Object.keys(maxAcc).forEach(k => { maxAcc[k] = Math.round(maxAcc[k] / consolidationChildren.length); });
+      });
+      Object.keys(maxAcc).forEach(k => {
+        let mm = maxAcc[k];
+        if (mm <= 1) {
+          const obsMax = Math.max(0, ...Object.values(studentAcc).map(s => Number(s[k] || 0)));
+          if (obsMax > 0) {
+            if (obsMax <= 20.5) mm = 20;
+            else if (obsMax <= 25) mm = 25;
+            else if (obsMax <= 50) mm = 50;
+            else if (obsMax <= 100) mm = 100;
+            else mm = Math.ceil(obsMax);
+          }
+        }
+        maxAcc[k] = mm;
+      });
 
-        return { studentTotals: studentAcc, maxMarks: maxAcc };
-      }
+      return { studentTotals: studentAcc, maxMarks: maxAcc };
+    }
 
-      if (view === 'final') {
-        const internalChildren = consolidationChildren.filter(c => !c.isUniversity && !c.isIndirect);
-        const uniChild = consolidationChildren.find(c => c.isUniversity);
+    if (view === 'final') {
+      const internalChildren = consolidationChildren.filter(c => !c.isUniversity && !c.isIndirect);
+      const uniChild = consolidationChildren.find(c => c.isUniversity);
 
-        if (internalChildren.length === 0 && !uniChild) return null;
+      if (internalChildren.length === 0 && !uniChild) return null;
 
-        const split = mappingPercentageSplit || { internal: 100, university: 0 };
-        const pctI = (split.internal || 100) / 100;
-        const pctU = (split.university || 0) / 100;
+      const split = mappingPercentageSplit || { internal: 100, university: 0 };
+      const pctI = (split.internal || 100) / 100;
+      const pctU = (split.university || 0) / 100;
 
-        // Compute aggregate internal attainment per student
-        const avgInternal = {};
-        const avgIMax = {};
-        const childCount = internalChildren.length;
+      // Compute direct cumulative internal marks and cumulative max marks per student
+      const totalInternal = {};
+      const totalIMax = {};
+      const childCount = internalChildren.length;
 
-        if (childCount > 0) {
-          internalChildren.forEach(child => {
-            Object.entries(child.data.students || {}).forEach(([reg, sdata]) => {
-              if (!avgInternal[reg]) avgInternal[reg] = { name: sdata.name || '' };
-              Object.entries(sdata).forEach(([k, v]) => {
-                if (/^CO\d+/i.test(k) && typeof v === 'number') {
-                  avgInternal[reg][k] = (avgInternal[reg][k] || 0) + v;
-                }
-              });
-            });
-            Object.entries(child.data.co_max_marks || {}).forEach(([k, v]) => {
-              avgIMax[k] = (avgIMax[k] || 0) + Number(v || 0);
-            });
-          });
-
-          // Average the internal scores
-          Object.keys(avgInternal).forEach(reg => {
-            Object.keys(avgInternal[reg]).forEach(k => {
-              if (/^CO\d+/i.test(k)) {
-                avgInternal[reg][k] = Math.round(avgInternal[reg][k] / childCount);
+      if (childCount > 0) {
+        internalChildren.forEach(child => {
+          Object.entries(child.data.students || {}).forEach(([reg, sdata]) => {
+            if (!totalInternal[reg]) totalInternal[reg] = { name: sdata.name || '' };
+            Object.entries(sdata).forEach(([k, v]) => {
+              if (/^CO\d+/i.test(k) && typeof v === 'number') {
+                totalInternal[reg][k] = (totalInternal[reg][k] || 0) + v;
               }
             });
           });
-          Object.keys(avgIMax).forEach(k => { avgIMax[k] = Math.round(avgIMax[k] / childCount); });
-        }
-
-        const studentRegs = new Set([
-          ...Object.keys(avgInternal),
-          ...Object.keys(uniChild?.data.students || {})
-        ]);
-        const result = {};
-        const uMax = uniChild?.data.co_max_marks || {};
-
-        studentRegs.forEach(reg => {
-          const iData = avgInternal[reg] || {};
-          const uData = uniChild?.data.students?.[reg] || {};
-          const entry = { name: iData.name || uData.name || '' };
-
-          const coKeys = Array.from(new Set([
-            ...Object.keys(iData).filter(k => /^CO\d+/i.test(k)),
-            ...Object.keys(uData).filter(k => /^CO\d+/i.test(k))
-          ]));
-
-          coKeys.forEach(k => {
-            const iv = Number(iData[k] || 0);
-            const uv = Number(uData[k] || 0);
-
-            const im = Number(avgIMax[k] || 0);
-            const um = Number(uMax[k] || 0);
-
-            const iv_pct = im > 0 ? (iv / im) * 100 : 0;
-            const uv_pct = um > 0 ? (uv / um) * 100 : 0;
-
-            const finalPct = Math.round((iv_pct * pctI) + (uv_pct * pctU));
-            entry[k] = finalPct;
+          Object.entries(child.data.co_max_marks || {}).forEach(([k, v]) => {
+            totalIMax[k] = (totalIMax[k] || 0) + Number(v || 0);
           });
-          result[reg] = entry;
         });
-
-        const maxMarks = {};
-        const allCoKeys = Array.from(new Set([...Object.keys(avgIMax), ...Object.keys(uMax)]));
-        allCoKeys.forEach(k => { maxMarks[k] = 100; });
-
-        return { studentTotals: result, maxMarks };
       }
 
-      // view is examKey
-      const pick = consolidationChildren.find(c => c.key === view);
-      if (pick) return { studentTotals: pick.data.students || {}, maxMarks: pick.data.co_max_marks || {} };
-      return null;
-    };
+      const studentRegs = new Set([
+        ...Object.keys(totalInternal),
+        ...Object.keys(uniChild?.data.students || {})
+      ]);
+      const result = {};
+      const uMax = uniChild?.data.co_max_marks || {};
 
-    const computed = computeForView(consolidationView);
-    if (computed && JSON.stringify(computed) !== JSON.stringify(consolidationData)) {
-      // Wrap in setTimeout to avoid synchronous setState in effect warning/error
-      setTimeout(() => {
-        setConsolidationData(computed);
-      }, 0);
+      studentRegs.forEach(reg => {
+        const iData = totalInternal[reg] || {};
+        const uData = uniChild?.data.students?.[reg] || {};
+        const entry = { name: iData.name || uData.name || '' };
+
+        const coKeys = Array.from(new Set([
+          ...Object.keys(iData).filter(k => /^CO\d+/i.test(k)),
+          ...Object.keys(uData).filter(k => /^CO\d+/i.test(k))
+        ]));
+
+        coKeys.forEach(k => {
+          const iv = Number(iData[k] || 0);
+          const uv = Number(uData[k] || 0);
+
+          let im = Number(totalIMax[k] || 0);
+          let um = Number(uMax[k] || 0);
+
+          // Safeguard: if im is missing, 0, or <= 1, or student mark exceeds im, derive true max marks
+          const observedIMax = Math.max(0, ...Object.values(totalInternal).map(s => Number(s[k] || 0)));
+          if (im <= 1 || (observedIMax > 0 && im < observedIMax)) {
+            if (observedIMax <= 20.5) im = 20;
+            else if (observedIMax <= 25) im = 25;
+            else if (observedIMax <= 50) im = 50;
+            else if (observedIMax <= 100) im = 100;
+            else im = Math.ceil(observedIMax);
+          }
+
+          const observedUMax = Math.max(0, ...Object.values(uniChild?.data.students || {}).map(s => Number(s[k] || 0)));
+          if (um <= 1 || (observedUMax > 0 && um < observedUMax)) {
+            if (observedUMax <= 50) um = 50;
+            else if (observedUMax <= 100) um = 100;
+            else um = Math.ceil(observedUMax);
+          }
+
+          // Direct division: (Total Scored / Total Max Marks) * 100 without premature rounding distortion
+          const iv_pct = im > 0 ? (iv / im) * 100 : 0;
+          const uv_pct = um > 0 ? (uv / um) * 100 : 0;
+
+          const finalPct = Math.round((iv_pct * pctI) + (uv_pct * pctU));
+          entry[k] = Math.min(100, Math.max(0, finalPct));
+        });
+        result[reg] = entry;
+      });
+
+      const maxMarks = {};
+      const allCoKeys = Array.from(new Set([...Object.keys(totalIMax), ...Object.keys(uMax)]));
+      allCoKeys.forEach(k => { maxMarks[k] = 100; });
+
+      return { studentTotals: result, maxMarks };
     }
-  }, [consolidationChildren, consolidationView, mappingPercentageSplit, mappingDirectIndirectSplit, consolidationData]);
+
+    // view is examKey
+    const pick = consolidationChildren.find(c => c.key === view);
+    if (pick) return { studentTotals: pick.data.students || {}, maxMarks: pick.data.co_max_marks || {} };
+
+    // Fallback: pick first internal or first child
+    const fallback = consolidationChildren.find(c => !c.isUniversity) || consolidationChildren[0];
+    if (fallback) return { studentTotals: fallback.data.students || {}, maxMarks: fallback.data.co_max_marks || {} };
+
+    return null;
+  }, [consolidationChildren, consolidationView, mappingPercentageSplit, mappingDirectIndirectSplit]);
 
   const attainmentSummary = useMemo(() => {
     if (!consolidationData || !mappingCutoff || !mappingThresholds.length) return null;
@@ -1999,29 +2595,34 @@ export default function Reports() {
       // Direct Attainment Level (from summary)
       const directLevel = attainmentSummary[co]?.attainmentLevel || 0;
 
-      // Indirect Attainment Mean
-      let indirectTotalVal = 0;
-      let totalIndirectSubmissions = 0;
+      // Indirect Attainment Mean: Deduplicate per student so each candidate is counted exactly once
+      const studentIndirectScores = {};
 
       indirectChildren.forEach(child => {
         const studs = child.data.students || {};
         const maxMarksMap = child.data.co_max_marks || {};
         const mm = Number(maxMarksMap[co] || 3);
 
-        Object.values(studs).forEach(s => {
-          if (s[co] !== undefined && s[co] !== null) {
-            // Note: We use the raw score divided by max marks * 3 if they aren't already on 3-point scale
-            // But usually users enter 3,2,1 for surveys. 
-            // If they enter 0-100, we should normalize to 3.
-            const raw = Number(s[co]);
-            const normalized = mm > 0 ? (raw / mm) * 3 : 0;
-            indirectTotalVal += normalized;
-            totalIndirectSubmissions++;
+        Object.entries(studs).forEach(([regKey, s]) => {
+          if (s?.absent) return;
+          const rawVal = s?.[co] ?? s?.[co.toLowerCase()] ?? s?.[co.toUpperCase()];
+          if (rawVal !== undefined && rawVal !== null && rawVal !== '') {
+            const raw = Number(rawVal);
+            if (!isNaN(raw)) {
+              const normalized = mm > 0 ? Math.min(3, (raw / mm) * 3) : Math.min(3, raw);
+              // If student exists in multiple indirect snapshots, take the highest/latest score
+              if (studentIndirectScores[regKey] === undefined || normalized > studentIndirectScores[regKey]) {
+                studentIndirectScores[regKey] = normalized;
+              }
+            }
           }
         });
       });
 
-      const indirectMean = totalIndirectSubmissions > 0 ? (indirectTotalVal / totalIndirectSubmissions) : 0;
+      const indirectScores = Object.values(studentIndirectScores);
+      const indirectMean = indirectScores.length > 0 
+        ? (indirectScores.reduce((sum, v) => sum + v, 0) / indirectScores.length) 
+        : 0;
 
       // Result = (DirectLevel * %Direct) + (IndirectMean * %Indirect)
       const finalLevel = (directLevel * pctDirectTotal) + (indirectMean * pctIndirectTotal);
@@ -2043,6 +2644,45 @@ export default function Reports() {
     return consolidationChildren.find(c => c.key === consolidationView) || null;
   }, [consolidationChildren, consolidationView]);
 
+  const isEseOverall = useMemo(() => {
+    if (!selectedConsolidationChild || consolidationView === 'final' || consolidationView === 'overall') return false;
+
+    const isUni = !!(
+      selectedConsolidationChild.isUniversity ||
+      selectedConsolidationChild.data?._meta?.is_university ||
+      selectedConsolidationChild.data?._meta?.isUniversity ||
+      String(selectedConsolidationChild.label || '').toLowerCase().includes('end sem') ||
+      String(selectedConsolidationChild.label || '').toLowerCase().includes('ese') ||
+      String(selectedConsolidationChild.key || '').toLowerCase().includes('ese') ||
+      String(selectedConsolidationChild.data?._meta?.exam || '').toLowerCase().includes('end sem') ||
+      String(selectedConsolidationChild.data?._meta?.exam || '').toLowerCase().includes('ese')
+    );
+    if (!isUni) return false;
+
+    const entryMode = selectedConsolidationChild.data?._meta?.entry_mode || selectedConsolidationChild.data?._meta?.mark_type;
+    if (entryMode === 'CO Wise') return false;
+    if (entryMode === 'Overall') return true;
+
+    // Check student records
+    const studs = selectedConsolidationChild.data?.students || {};
+    const studList = Object.values(studs);
+    if (studList.length > 0) {
+      const hasOverallFields = studList.some(s => s && (
+        (s.grade !== undefined && s.grade !== null && s.grade !== '') ||
+        (s.gradePoint !== undefined && s.gradePoint !== null && s.gradePoint !== '') ||
+        (s.gpa !== undefined && s.gpa !== null && s.gpa !== '') ||
+        (s.overall !== undefined && s.overall !== null && s.overall !== '')
+      ));
+      if (hasOverallFields) return true;
+
+      const maxMarks = selectedConsolidationChild.data?.co_max_marks || {};
+      const coVals = Object.keys(maxMarks).filter(k => /^CO\d+/i.test(k)).map(k => Number(maxMarks[k]));
+      if (coVals.length > 0 && coVals.every(v => v === 3)) return true;
+    }
+
+    return false;
+  }, [selectedConsolidationChild, consolidationView]);
+
   const selectedInternalAssessment = useMemo(() => {
     if (module !== "consolidation") return null;
     if (!selectedConsolidationChild) return null;
@@ -2060,7 +2700,22 @@ export default function Reports() {
     return d.toLocaleDateString("en-GB");
   }, [selectedInternalAssessment]);
 
+  const consolidationCoKeys = useMemo(() => {
+    if (configuredCoKeys.length > 0) return configuredCoKeys;
+    if (consolidationData?.maxMarks) {
+      return Object.keys(consolidationData.maxMarks)
+        .filter(k => /^CO\d+/i.test(k))
+        .sort((a, b) => {
+          const na = Number(a.replace(/[^0-9]/g, '')) || 0;
+          const nb = Number(b.replace(/[^0-9]/g, '')) || 0;
+          return na - nb;
+        });
+    }
+    return [];
+  }, [configuredCoKeys, consolidationData]);
+
   const indirectCoAverages = useMemo(() => {
+    if (isEseOverall) return null;
     const isIndirectView = !!selectedConsolidationChild?.isIndirect;
     if (!isIndirectView || !consolidationData?.studentTotals) return null;
 
@@ -2080,21 +2735,7 @@ export default function Reports() {
     });
 
     return { totalStudents, averages };
-  }, [selectedConsolidationChild, consolidationData, students]);
-
-  const consolidationCoKeys = useMemo(() => {
-    if (configuredCoKeys.length > 0) return configuredCoKeys;
-    if (consolidationData?.maxMarks) {
-      return Object.keys(consolidationData.maxMarks)
-        .filter(k => /^CO\d+/i.test(k))
-        .sort((a, b) => {
-          const na = Number(a.replace(/[^0-9]/g, '')) || 0;
-          const nb = Number(b.replace(/[^0-9]/g, '')) || 0;
-          return na - nb;
-        });
-    }
-    return [];
-  }, [configuredCoKeys, consolidationData]);
+  }, [selectedConsolidationChild, consolidationData, students, consolidationCoKeys, isEseOverall]);
 
   const logAnalysisResults = useMemo(() => {
     if (!consolidationData || !students.length) return null;
@@ -2172,6 +2813,49 @@ export default function Reports() {
   // Download consolidation as CSV (Excel can open CSV)
   const downloadConsolidationCSV = () => {
     if (!consolidationData) return;
+
+    if (isEseOverall) {
+      const rows = [];
+      const header = ['S.No'];
+      if (showAdmNoCol) header.push('Admission Number');
+      header.push('Register Number', 'Name', 'Grade', 'GPA', 'Mark');
+      rows.push(header);
+
+      const studentRegs = students && students.length ? students.map(s => s.reg) : Object.keys(consolidationData.studentTotals || {});
+      const studentMap = students && students.length ? Object.fromEntries(students.map(s => [s.reg, s])) : {};
+
+      studentRegs.forEach((reg, idx) => {
+        const sdata = consolidationData.studentTotals?.[reg] || {};
+        const student = studentMap[reg] || {};
+        const row = [idx + 1];
+        if (showAdmNoCol) row.push(student.admNo || '');
+        row.push(student.regNo || student.reg || reg);
+        row.push(student.name || sdata.name || '');
+        row.push(sdata.grade || (sdata.absent ? 'AB' : '-'));
+        row.push(sdata.gradePoint !== undefined && sdata.gradePoint !== null && sdata.gradePoint !== '' ? sdata.gradePoint : (sdata.gpa !== undefined && sdata.gpa !== null && sdata.gpa !== '' ? sdata.gpa : (sdata.absent ? '0' : '-')));
+        row.push(sdata.overall !== undefined && sdata.overall !== null && sdata.overall !== '' ? sdata.overall : (sdata.total !== undefined && sdata.total !== null && sdata.total !== '' ? sdata.total : (sdata.absent ? '0' : '-')));
+        rows.push(row);
+      });
+
+      const csvContent = rows.map(r => r.map(cell => {
+        if (cell === null || cell === undefined) return '';
+        if (typeof cell === 'string') return `"${cell.replace(/"/g, '""')}"`;
+        return cell;
+      }).join(',')).join('\n');
+
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const filename = `ESE_Overall_${extraSubject || 'subject'}.csv`.replace(/\s+/g, '_');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      return;
+    }
+
     // Determine CO keys (sorted)
     const coKeys = Object.keys(consolidationData.maxMarks || {}).sort((a, b) => {
       const na = Number(a.replace(/[^0-9]/g, '')) || 0;
@@ -2394,7 +3078,7 @@ export default function Reports() {
       col.exams.forEach(ex => {
         headers[0].push(ex.examName);
       });
-      headers[0].push(`${col.category}\nSubtotal`);
+      headers[0].push(col.bestCount ? `${col.category}\nSubtotal (Best ${col.bestCount})` : `${col.category}\nSubtotal`);
     });
     headers[0].push('Overall %');
     headers[0].push('Round Off');
@@ -2407,26 +3091,23 @@ export default function Reports() {
         const row = [String(idx + 1), reg, sData.name || reg];
         let overallTotal = 0;
         overallExamColumns.forEach(col => {
-          let catSum = 0;
+          const catTotal = computeCategorySubtotal(col, sData.exams);
           col.exams.forEach(ex => {
             const eData = sData.exams?.[ex.id];
-            const wp = eData?.weightedPct ?? 0;
-            catSum += wp;
             if (eData) {
               if (eData.absent) {
                 row.push({ content: 'AB', styles: { textColor: [220, 38, 38], fontStyle: 'bold' } });
               } else {
                 const lines = [`${eData.scored}/${eData.maxMarks}`, `(${eData.pct}%)`];
-                if (ex.examWeightage > 0) lines.push(`W:${eData.weightedPct}%`);
+                if (col.hasExamWeights && ex.examWeightage > 0) lines.push(`W:${eData.weightedPct}%`);
                 row.push({ content: lines.join('\n'), styles: { fontSize: 6.5 } });
               }
             } else {
               row.push({ content: '0', styles: { textColor: [220, 38, 38], fontStyle: 'bold' } });
             }
           });
-          const catTotal = Math.round(catSum * 100) / 100;
           row.push({ content: `${catTotal}%`, styles: { fontStyle: 'bold', fontSize: 7 } });
-          overallTotal += catSum * (col.catWeight / 100);
+          overallTotal += catTotal * (col.catWeight / 100);
         });
         const finalValue = overallInternalPct > 0
           ? Math.round(overallTotal * overallInternalPct) / 100
@@ -2660,7 +3341,7 @@ export default function Reports() {
         }
       `}</style>
       {/* Main Content */}
-      <div className="p-4 sm:p-6 md:p-10 max-w-[1440px] mx-auto">
+      <div className="p-4 sm:p-6 md:p-8 w-full max-w-[1720px] 2xl:max-w-[1800px] mx-auto">
         {/* Selection Card */}
         <div className="bg-white rounded-3xl shadow-xl p-4 sm:p-6 md:p-8 mb-6 sm:mb-10 border border-white/20">
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 sm:gap-6 md:gap-8">
@@ -2885,13 +3566,23 @@ export default function Reports() {
             {/* Subject (Consolidation only) */}
             {(module === "consolidation" || module === "log-report") && (
               <div className="space-y-2">
-                <label className="text-sm font-bold text-zinc-600 ml-1">Select Subject</label>
+                <label className="text-sm font-bold text-zinc-600 ml-1 flex items-center justify-between">
+                  <span className="flex items-center gap-2">
+                    <span>Select Subject</span>
+                    {extraSubject && activeSubjectCourseType && (
+                      <span className="px-2.5 py-0.5 bg-indigo-50 text-[#120c7a] text-[10px] font-black rounded-full border border-indigo-200 uppercase tracking-wider shadow-xs animate-in fade-in duration-200">
+                        {activeSubjectCourseType}
+                      </span>
+                    )}
+                  </span>
+                </label>
                 <div className="relative">
                   <select
                     disabled={!semester}
                     value={extraSubject}
                     onChange={(e) => {
                       setExtraSubject(e.target.value);
+                      setConsolidationView('latest');
                       if (e.target.value) setLoadingConsolidation(true);
                     }}
                     className="w-full appearance-none bg-[#f0f0fa] border border-zinc-200 rounded-xl px-4 py-3 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium disabled:opacity-50"
@@ -2942,7 +3633,16 @@ export default function Reports() {
             {/* Subject (Internal only) */}
             {module === "internal" && (
               <div className="space-y-2">
-                <label className="text-sm font-bold text-zinc-600 ml-1">Select Subject</label>
+                <label className="text-sm font-bold text-zinc-600 ml-1 flex items-center justify-between">
+                  <span className="flex items-center gap-2">
+                    <span>Select Subject</span>
+                    {internalSubject && activeSubjectCourseType && (
+                      <span className="px-2.5 py-0.5 bg-indigo-50 text-[#120c7a] text-[10px] font-black rounded-full border border-indigo-200 uppercase tracking-wider shadow-xs animate-in fade-in duration-200">
+                        {activeSubjectCourseType}
+                      </span>
+                    )}
+                  </span>
+                </label>
                 <div className="flex gap-2">
                   <div className="relative flex-1">
                     <select
@@ -2964,9 +3664,9 @@ export default function Reports() {
                     </select>
                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" size={18} />
                   </div>
-                  {internalSubject && internalSubjectCourseType && (
-                    <span className="shrink-0 self-stretch flex items-center px-3 py-1 bg-indigo-50 border border-indigo-200 rounded-xl text-xs font-bold text-indigo-700 whitespace-nowrap">
-                      {internalSubjectCourseType}
+                  {internalSubject && activeSubjectCourseType && (
+                    <span className="shrink-0 self-stretch flex items-center px-3 py-1 bg-indigo-50 border border-indigo-200 rounded-xl text-xs font-bold text-[#120c7a] whitespace-nowrap">
+                      {activeSubjectCourseType}
                     </span>
                   )}
                 </div>
@@ -3000,7 +3700,16 @@ export default function Reports() {
             {/* Subject (Question Paper only) */}
             {module === "question-paper-generator" && (
               <div className="space-y-2">
-                <label className="text-sm font-bold text-zinc-600 ml-1">Select Subject</label>
+                <label className="text-sm font-bold text-zinc-600 ml-1 flex items-center justify-between">
+                  <span className="flex items-center gap-2">
+                    <span>Select Subject</span>
+                    {selectedSubject && activeSubjectCourseType && (
+                      <span className="px-2.5 py-0.5 bg-indigo-50 text-[#120c7a] text-[10px] font-black rounded-full border border-indigo-200 uppercase tracking-wider shadow-xs animate-in fade-in duration-200">
+                        {activeSubjectCourseType}
+                      </span>
+                    )}
+                  </span>
+                </label>
                 <div className="relative">
                   <select
                     disabled={!semester}
@@ -3174,7 +3883,7 @@ export default function Reports() {
                         {overallExamColumns.map(col => (
                           <th key={col.category} colSpan={col.exams.length + 1} className="text-center p-1.5 sm:p-2 text-[10px] font-bold uppercase tracking-wider border-b border-r border-zinc-200 bg-slate-100/50 whitespace-nowrap"
                             style={{ color: col.category === 'Written Test' ? '#2563eb' : col.category === 'Activity' ? '#ea580c' : col.category === 'Practical' ? '#0891b2' : col.category === 'Project' ? '#d97706' : '#7c3aed' }}>
-                            {col.category} {col.catWeight > 0 ? `(Wt: ${col.catWeight}%)` : ''}
+                            {col.category} {col.catWeight > 0 ? `(WT: ${col.catWeight}%)` : ''}{col.bestCount ? ` — Best of ${col.bestCount}` : ''}
                           </th>
                         ))}
                         <th className="text-center p-1.5 sm:p-2 text-[10px] font-bold uppercase tracking-wider border-b border-zinc-200 bg-emerald-50 whitespace-nowrap text-emerald-700" rowSpan={2}>
@@ -3190,12 +3899,13 @@ export default function Reports() {
                             <th key={ex.id} className="text-center p-1.5 sm:p-2 text-[9px] font-bold text-zinc-500 border-b border-zinc-200 whitespace-nowrap">
                               <div className="truncate max-w-[100px]">{ex.examName}</div>
                               <div className="text-[8px] text-zinc-400 font-normal">Max: {ex.totalMarks}</div>
-                              {ex.examWeightage != null && <div className="text-[8px] text-blue-500">Wt: {ex.examWeightage}%</div>}
+                              {col.hasExamWeights && ex.examWeightage != null && ex.examWeightage > 0 && <div className="text-[8px] text-blue-500">Wt: {ex.examWeightage}%</div>}
                             </th>
                           )),
                           <th key={`cat-${col.category}`} className="text-center p-1.5 sm:p-2 text-[9px] font-bold border-b border-zinc-200 whitespace-nowrap" style={{ color: col.category === 'Written Test' ? '#2563eb' : col.category === 'Activity' ? '#ea580c' : col.category === 'Practical' ? '#0891b2' : col.category === 'Project' ? '#d97706' : '#7c3aed' }}>
                             <div>{col.category}</div>
                             <div>Subtotal</div>
+                            {col.bestCount ? <div className="text-[8px] text-amber-600 font-semibold">(Best {col.bestCount})</div> : null}
                           </th>
                         ])}
                       </tr>
@@ -3207,13 +3917,9 @@ export default function Reports() {
                           let overallTotal = 0;
                           const catTotals = {};
                           overallExamColumns.forEach(col => {
-                            let catSum = 0;
-                            col.exams.forEach(ex => {
-                              const exam = sData.exams?.[ex.id];
-                              if (exam) catSum += exam.weightedPct || 0;
-                            });
-                            catTotals[col.category] = Math.round(catSum * 100) / 100;
-                            overallTotal += catSum * (col.catWeight / 100);
+                            const catTotal = computeCategorySubtotal(col, sData.exams);
+                            catTotals[col.category] = catTotal;
+                            overallTotal += catTotal * (col.catWeight / 100);
                           });
                           return (
                           <tr key={reg} className="hover:bg-blue-50/30 transition-colors">
@@ -3231,7 +3937,7 @@ export default function Reports() {
                                         <div className="flex flex-row items-center justify-center gap-1 whitespace-nowrap">
                                           <span className="text-[11px] sm:text-xs font-bold text-zinc-700">{exam.scored}/{exam.maxMarks}</span>
                                           <span className="text-[9px] sm:text-[10px] text-blue-600 font-semibold">({exam.pct}%)</span>
-                                          {ex.examWeightage != null && ex.examWeightage > 0 && (
+                                          {col.hasExamWeights && ex.examWeightage != null && ex.examWeightage > 0 && (
                                             <span className="text-[8px] sm:text-[9px] text-emerald-600 font-medium">W:{exam.weightedPct}%</span>
                                           )}
                                         </div>
@@ -3641,34 +4347,43 @@ export default function Reports() {
         {(module === "consolidation" || module === "log-report") && programme && department && batch && semester && extraSubject && (
           <div className="space-y-6">
             {/* CO Max Marks Summary */}
-            <div className="bg-white rounded-3xl shadow-xl p-6 border border-zinc-100 animate-in fade-in slide-in-from-bottom-4 duration-500">
-              <div className="flex items-center gap-2 mb-4">
-                <div className="w-2 h-6 bg-blue-500 rounded-full" />
-                <h4 className="text-sm font-bold text-zinc-600 uppercase tracking-wider">CO Max Marks</h4>
+            {!isEseOverall && (
+              <div className="bg-white rounded-3xl shadow-xl p-6 sm:p-8 border border-zinc-100 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <div className="flex items-center gap-2 mb-5">
+                  <div className="w-2.5 h-6 bg-blue-600 rounded-full" />
+                  <h4 className="text-sm font-bold text-zinc-700 uppercase tracking-wider">CO Max Marks</h4>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4 sm:gap-6">
+                  {consolidationCoKeys.map(co => (
+                    <div key={co} className="bg-blue-50/50 rounded-2xl p-5 sm:p-6 border-2 border-blue-100/70 text-center group hover:bg-blue-50 hover:border-blue-200 transition-all duration-300 shadow-xs">
+                      <p className="text-xs font-black text-blue-500 uppercase tracking-widest mb-1.5 group-hover:text-blue-600">{co}</p>
+                      <p className="text-3xl sm:text-4xl font-black text-[#120c7a]">
+                        {loadingConsolidation ? "..." : (consolidationData?.maxMarks?.[co] || 0)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
               </div>
-              <div className="grid grid-cols-[repeat(auto-fit,minmax(130px,1fr))] gap-4">
-                {consolidationCoKeys.map(co => (
-                  <div key={co} className="bg-blue-50/50 rounded-2xl p-4 border border-blue-100/50 text-center group hover:bg-blue-50 transition-all duration-300">
-                    <p className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mb-1 group-hover:text-blue-500">{co}</p>
-                    <p className="text-2xl font-black text-blue-600">
-                      {loadingConsolidation ? "..." : (consolidationData?.maxMarks?.[co] || 0)}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
+            )}
 
             {/* Student Marks Table */}
             <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-zinc-100 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-150">
-              <div className="bg-zinc-50 px-8 py-4 border-b border-zinc-100 flex justify-between items-center">
+              <div className="bg-zinc-50 px-8 py-5 border-b border-zinc-100 flex justify-between items-center">
                 <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center text-blue-600">
-                    <Users size={18} />
+                  <div className="w-9 h-9 bg-blue-100 rounded-xl flex items-center justify-center text-blue-600">
+                    <Users size={20} />
                   </div>
-                  <h3 className="font-bold text-zinc-800 tracking-tight">Student-wise CO Marks</h3>
-                  <span className="text-[10px] bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full font-bold uppercase tracking-widest">
+                  <h3 className="font-bold text-zinc-800 tracking-tight text-base">
+                    {isEseOverall ? "End Semester Exam Marks (Overall)" : "Student-wise CO Marks"}
+                  </h3>
+                  <span className="text-xs bg-blue-100 text-[#120c7a] px-3 py-1 rounded-full font-bold uppercase tracking-wider">
                     {extraSubject}
                   </span>
+                  {activeSubjectCourseType && (
+                    <span className="text-[10px] bg-indigo-50 text-[#120c7a] px-2.5 py-1 rounded-full font-black border border-indigo-200 uppercase tracking-widest shadow-xs">
+                      {activeSubjectCourseType}
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   {selectedInternalAssessment && (
@@ -3702,41 +4417,131 @@ export default function Reports() {
                       <tr className="bg-zinc-100/50">
                         <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-zinc-500 uppercase tracking-wider w-16 text-center">s.no</th>
                         {showAdmNoCol && <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-zinc-500 uppercase tracking-wider text-left">Admission number</th>}
-                        <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-zinc-500 uppercase tracking-wider text-left">name</th>
-                        {showRegNoCol && <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-zinc-500 uppercase tracking-wider text-left">Register No</th>}
-                        {consolidationCoKeys.map(co => (
-                          <th key={co} className="border border-zinc-200 px-4 py-3 text-xs font-bold text-blue-600 uppercase tracking-wider text-center">{co}</th>
-                        ))}
-                        <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-emerald-600 uppercase tracking-wider text-center bg-emerald-50/50">total</th>
+                        {isEseOverall ? (
+                          <>
+                            <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-zinc-500 uppercase tracking-wider text-left">Register Number</th>
+                            <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-zinc-500 uppercase tracking-wider text-left">Student Name</th>
+                            <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-blue-600 uppercase tracking-wider text-center">Grade</th>
+                            <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-blue-600 uppercase tracking-wider text-center">GPA</th>
+                            <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-blue-600 uppercase tracking-wider text-center">Mark</th>
+                          </>
+                        ) : (
+                          <>
+                            <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-zinc-500 uppercase tracking-wider text-left">name</th>
+                            {showRegNoCol && <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-zinc-500 uppercase tracking-wider text-left">Register No</th>}
+                            {consolidationCoKeys.map(co => (
+                              <th key={co} className="border border-zinc-200 px-4 py-3 text-xs font-bold text-blue-600 uppercase tracking-wider text-center">{co}</th>
+                            ))}
+                          </>
+                        )}
                       </tr>
                     </thead>
                     <tbody>
                       {students.map((student, idx) => {
                         const totals = consolidationData.studentTotals[student.reg] || {};
+                        const cutoffPct = (mappingCutoff !== "" && mappingCutoff !== null && mappingCutoff !== undefined)
+                          ? Number(mappingCutoff)
+                          : (passMarkPct != null ? Number(passMarkPct) : 50);
+
+                        if (isEseOverall) {
+                          const grade = totals.grade || (totals.absent ? "AB" : "-");
+                          const gpa = totals.gradePoint !== undefined && totals.gradePoint !== null && totals.gradePoint !== ""
+                            ? totals.gradePoint
+                            : (totals.gpa !== undefined && totals.gpa !== null && totals.gpa !== "" ? totals.gpa : (totals.absent ? "0" : "-"));
+                          const mark = totals.overall !== undefined && totals.overall !== null && totals.overall !== ""
+                            ? totals.overall
+                            : (totals.total !== undefined && totals.total !== null && totals.total !== "" ? totals.total : (totals.absent ? "0" : "-"));
+                          const isFail = grade === 'U' || grade === 'RA' || grade === 'AB' || (typeof mark === 'number' && mark < cutoffPct);
+
+                          return (
+                            <tr key={student.reg} className="hover:bg-blue-50/30 transition-colors group">
+                              <td className="border border-zinc-100 px-4 py-3 text-center text-sm text-zinc-500 font-medium">{idx + 1}</td>
+                              {showAdmNoCol && <td className="border border-zinc-100 px-4 py-3 text-sm font-mono text-zinc-600">{student.admNo || '-'}</td>}
+                              <td className="border border-zinc-100 px-4 py-3 text-sm font-mono text-zinc-600 font-semibold">{student.regNo || student.reg}</td>
+                              <td className="border border-zinc-100 px-4 py-3 text-sm text-zinc-700 font-medium">{student.name}</td>
+                              <td className="border border-zinc-100 px-4 py-3 text-center text-sm font-bold">
+                                <span className={`inline-block px-3 py-1 rounded-lg text-xs font-black tracking-wider ${
+                                  grade === 'O' ? 'bg-emerald-100 text-emerald-800' :
+                                  String(grade).startsWith('A') ? 'bg-blue-100 text-blue-800' :
+                                  String(grade).startsWith('B') ? 'bg-cyan-100 text-cyan-800' :
+                                  String(grade).startsWith('C') ? 'bg-amber-100 text-amber-800' :
+                                  isFail ? 'bg-red-100 text-red-700 font-black' :
+                                  'bg-zinc-100 text-zinc-700'
+                                }`}>
+                                  {grade}
+                                </span>
+                              </td>
+                              <td className="border border-zinc-100 px-4 py-3 text-center text-sm font-bold text-blue-600">
+                                {gpa}
+                              </td>
+                              <td className={`border border-zinc-100 px-4 py-3 text-center text-sm font-black ${
+                                isFail ? 'text-red-600 bg-red-50/70 font-black' : 'text-[#120c7a]'
+                              }`}>
+                                {mark}
+                              </td>
+                            </tr>
+                          );
+                        }
+
                         return (
                           <tr key={student.reg} className="hover:bg-blue-50/30 transition-colors group">
                             <td className="border border-zinc-100 px-4 py-3 text-center text-sm text-zinc-500 font-medium">{idx + 1}</td>
                             {showAdmNoCol && <td className="border border-zinc-100 px-4 py-3 text-sm font-mono text-zinc-600">{student.admNo}</td>}
                             <td className="border border-zinc-100 px-4 py-3 text-sm text-zinc-700 font-medium">{student.name}</td>
                             {showRegNoCol && <td className="border border-zinc-100 px-4 py-3 text-sm font-mono text-zinc-600">{student.regNo}</td>}
-                            {consolidationCoKeys.map(co => (
-                              <td key={co} className="border border-zinc-100 px-4 py-3 text-center text-sm font-bold text-blue-600/80 group-hover:text-blue-600">{totals[co] || 0}</td>
-                            ))}
-                            {(() => {
-                              const rawTotal = consolidationCoKeys.reduce((s, co) => s + Number(totals[co] || 0), 0);
-                              const maxTotal = consolidationCoKeys.reduce((s, co) => s + Number(consolidationData.maxMarks[co] || 0), 0);
-                              const pct = maxTotal > 0 ? Math.min(100, Math.round((rawTotal / maxTotal) * 100)) : Math.min(100, rawTotal);
-                              const failed = passMarkPct != null && pct < passMarkPct;
+                            {consolidationCoKeys.map(co => {
+                              const rawVal = totals[co] !== undefined && totals[co] !== null && totals[co] !== "" ? Number(totals[co]) : 0;
+                              const coMax = Number(consolidationData?.maxMarks?.[co] || 100);
+                              // Clamp to coMax if rawVal exceeds coMax (safeguard against un-normalized historical saves)
+                              const val = (coMax > 1 && consolidationView !== 'final' && rawVal > coMax) ? coMax : rawVal;
+                              const valPct = coMax > 0 ? (val / coMax) * 100 : val;
+                              const isBelowCutoff = valPct < cutoffPct;
+
                               return (
-                                <td title={maxTotal > 0 ? `${rawTotal} / ${maxTotal} (${pct}%)` : `${rawTotal}`} className={`border border-zinc-100 px-4 py-3 text-center text-sm font-bold ${failed ? 'text-red-600 bg-red-50' : 'text-emerald-600/80 group-hover:text-emerald-600 bg-emerald-50/30'}`}>
-                                  {rawTotal}
+                                <td
+                                  key={co}
+                                  className={`border border-zinc-100 px-4 py-3 text-center text-sm font-bold transition-colors ${
+                                    isBelowCutoff
+                                      ? 'text-red-600 bg-red-50/70 font-black'
+                                      : 'text-blue-600/80 group-hover:text-blue-600'
+                                  }`}
+                                  title={isBelowCutoff ? `${val} (Below cutoff: ${cutoffPct}%)` : `${val}`}
+                                >
+                                  {val}
                                 </td>
                               );
-                            })()}
+                            })}
                           </tr>
                         );
                       })}
-                      {indirectCoAverages && (
+                      {isEseOverall && (() => {
+                        let totalMarksSum = 0;
+                        let markCount = 0;
+                        let gpaSum = 0;
+                        let gpaCount = 0;
+                        students.forEach(st => {
+                          const t = consolidationData.studentTotals[st.reg] || {};
+                          if (!t.absent) {
+                            const m = Number(t.overall ?? t.total);
+                            if (!isNaN(m) && m > 0) { totalMarksSum += m; markCount++; }
+                            const g = Number(t.gradePoint ?? t.gpa);
+                            if (!isNaN(g) && g > 0) { gpaSum += g; gpaCount++; }
+                          }
+                        });
+                        const avgGpa = gpaCount > 0 ? (gpaSum / gpaCount).toFixed(2) : '-';
+                        const avgMark = markCount > 0 ? (totalMarksSum / markCount).toFixed(2) : '-';
+                        return (
+                          <tr className="bg-emerald-50/60 border-t-2 border-emerald-200">
+                            <td className="border border-zinc-200 px-4 py-3 text-center text-sm font-bold text-emerald-700" colSpan={1 + (showAdmNoCol ? 1 : 0) + 2}>
+                              Class Average ({students.length} Students)
+                            </td>
+                            <td className="border border-zinc-200 px-4 py-3 text-center text-xs font-bold text-emerald-700">-</td>
+                            <td className="border border-zinc-200 px-4 py-3 text-center text-sm font-black text-emerald-700">{avgGpa}</td>
+                            <td className="border border-zinc-200 px-4 py-3 text-center text-sm font-black text-emerald-700">{avgMark}</td>
+                          </tr>
+                        );
+                      })()}
+                      {!isEseOverall && indirectCoAverages && (
                         <tr className="bg-emerald-50/60 border-t-2 border-emerald-200">
                           <td className="border border-zinc-200 px-4 py-3 text-center text-sm font-bold text-emerald-700" colSpan={1 + (showAdmNoCol ? 1 : 0) + 1 + (showRegNoCol ? 1 : 0)}>
                             CO Average ({indirectCoAverages.totalStudents} Students)
@@ -3744,12 +4549,6 @@ export default function Reports() {
                           {consolidationCoKeys.map(co => (
                             <td key={co} className="border border-zinc-200 px-4 py-3 text-center text-sm font-black text-emerald-700">{indirectCoAverages.averages[co]?.toFixed(2)}</td>
                           ))}
-                            <td className="border border-zinc-200 px-4 py-3 text-center text-sm font-black text-emerald-700 bg-emerald-50/50">
-                              {(() => {
-                                const rawAvg = consolidationCoKeys.reduce((s, co) => s + (indirectCoAverages.averages[co] || 0), 0);
-                                return rawAvg.toFixed(2);
-                              })()}
-                            </td>
                         </tr>
                       )}
                     </tbody>

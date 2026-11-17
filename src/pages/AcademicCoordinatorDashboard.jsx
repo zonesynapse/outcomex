@@ -19,7 +19,7 @@ import { auth, db } from "../firebase";
 import { fetchAllCourseNamesMap, getCourseName } from "../utils/courseUtils";
 import { getQuestionPaperHTML } from '../utils/questionPaperUtils';
 import { useRegulations } from "../hooks/useRegulations";
-import { sanitizeKey, formatProgrammeKey, formatDepartmentDisplay, formatBatchDisplay, getAttendanceRecords, parseSubjectField, formatQPSetDisplay, getAllCandidateAttendanceDocIds, parseStudentAttendanceVal, extractPureDate, isDeptMatch } from "../lib/utils";
+import { sanitizeKey, formatProgrammeKey, formatDepartmentDisplay, formatBatchDisplay, getAttendanceRecords, parseSubjectField, formatQPSetDisplay, getAllCandidateAttendanceDocIds, parseStudentAttendanceVal, extractPureDate, isDeptMatch, getDeptFromRegNo } from "../lib/utils";
 import { typesetMath } from "../utils/mathJaxUtils";
 
 function bsKey(key) {
@@ -1865,8 +1865,19 @@ export default function AcademicCoordinatorDashboard() {
             console.log('[AcademicCoordinatorDashboard] User doc fields:', Object.keys(ud).join(', '), '| Full:', ud);
             setCurrentHodSignature(ud.signatureUrl || '');
             setHodName(ud.facultyName || ud.displayName || ud.email || "Academic Coordinator");
-            setHodDepartment(ud.department || ud.assignedDepartment || ud.departmentName || ud.dept || ud.deptName || ud.facultyDepartment || ud.departmentCode || "");
+            const resolvedD = ud.department || ud.assignedDepartment || ud.departmentName || ud.dept || ud.deptName || ud.facultyDepartment || ud.faculty_department || ud.departmentCode || ud.branch || ud.departmentId || "";
+            setHodDepartment(resolvedD);
             setHodProgramme(ud.programme || "");
+
+            if (!resolvedD && user?.uid) {
+              getDoc(doc(db, 'faculty', user.uid)).then(fSnap => {
+                if (fSnap.exists()) {
+                  const fd = fSnap.data();
+                  const fDept = fd.department || fd.assignedDepartment || fd.dept || fd.departmentName || "";
+                  if (fDept) setHodDepartment(fDept);
+                }
+              }).catch(() => {});
+            }
           }
           setHodLoading(false);
         });
@@ -2217,9 +2228,9 @@ export default function AcademicCoordinatorDashboard() {
     if (!hodDepartment) { setSectionStudents([]); return; }
     const unsub = onSnapshot(collection(db, 'students'), (snap) => {
       const list = [];
+      const seenRegs = new Set();
       snap.forEach(docSnap => {
         const docId = docSnap.id;
-        if (!/_Sec-[A-Za-z0-9]+/i.test(docId)) return;
         const data = docSnap.data();
 
         let deptMatch = false;
@@ -2231,20 +2242,30 @@ export default function AcademicCoordinatorDashboard() {
         }
         if (!deptMatch) return;
 
-        let batch = "";
+        let batch = data._meta?.batch || "";
         const batchMatch = docId.match(/(\d{4}-\d{4})/);
-        if (batchMatch) batch = batchMatch[1];
+        if (batchMatch && !batch) batch = batchMatch[1];
 
         Object.entries(data).forEach(([key, val]) => {
           if (key.startsWith('_')) return;
-          const name = typeof val === 'object' && val !== null ? (val.name || '') : val;
-          if (name && typeof name === 'string') list.push({
-            reg: key,
-            name,
-            batch,
-            docId,
-            raw: typeof val === 'object' && val !== null ? val : {}
-          });
+          const cleanKey = String(key || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+          if (!cleanKey || seenRegs.has(cleanKey)) return;
+
+          // Reject if Anna University code belongs to another department
+          const regDept = getDeptFromRegNo(key);
+          if (regDept && !isDeptMatch(regDept, hodDepartment)) return;
+
+          const name = typeof val === 'object' && val !== null ? (val.name || val.displayName || '') : val;
+          if (name && typeof name === 'string') {
+            seenRegs.add(cleanKey);
+            list.push({
+              reg: key,
+              name,
+              batch: batch || "-",
+              docId,
+              raw: typeof val === 'object' && val !== null ? val : {}
+            });
+          }
         });
       });
       setSectionStudents(list);
@@ -2325,11 +2346,19 @@ export default function AcademicCoordinatorDashboard() {
     setAttendanceOverviewLoading(true);
 
     let cancelled = false;
+    let safetyTimer = null;
 
     const today = new Date();
     const month = today.getMonth() + 1;
     const year = today.getFullYear();
     const currentAy = month >= 7 ? `${year}-${year + 1}` : `${year - 1}-${year}`;
+
+    // Safety fallback timer: force loading false after 2.5 seconds so dashboard never hangs
+    safetyTimer = setTimeout(() => {
+      if (!cancelled) {
+        setAttendanceOverviewLoading(false);
+      }
+    }, 2500);
 
     // Build valid dept keys: both sanitized name AND code from deptMetadata
     const stripDegreePrefix = (s) => s.replace(/^(B\.? ?Tech|M\.? ?Tech|B\.?E\.?|M\.?E\.?|B\.?Sc|M\.?Sc|Ph\.?D)\s+/i, '').trim();
@@ -2351,178 +2380,171 @@ export default function AcademicCoordinatorDashboard() {
     }
 
     const unsub = onSnapshot(collection(db, "subject_assignments"), async (snap) => {
-      const allAssignments = [];
+      try {
+        const allAssignments = [];
 
-      snap.forEach(d => {
-        const parts = d.id.split('_');
-        const yearIdx = parts.findIndex(p => /^\d{4}-\d{4}$/.test(p));
-        if (yearIdx < 2) return;
+        snap.forEach(d => {
+          const parts = d.id.split('_');
+          const yearIdx = parts.findIndex(p => /^\d{4}-\d{4}$/.test(p));
+          if (yearIdx < 2) return;
 
-        const batchKey = parts[yearIdx];
-        const ayKey = parts[yearIdx + 1];
-        const semNum = parts[yearIdx + 2];
-        const secSuffix = parts.slice(yearIdx + 3).join('_');
+          const batchKey = parts[yearIdx];
+          const ayKey = parts[yearIdx + 1];
+          const semNum = parts[yearIdx + 2];
+          const secSuffix = parts.slice(yearIdx + 3).join('_');
 
-        const combinedBeforeBatch = parts.slice(0, yearIdx).join('_');
-        let progKey = '';
-        let deptFromDoc = '';
+          const combinedBeforeBatch = parts.slice(0, yearIdx).join('_');
+          let progKey = '';
+          let deptFromDoc = '';
 
-        // Strategy 1: use hodProgramme (from user doc) as the known programme key
-        if (hodProgramme && combinedBeforeBatch.startsWith(hodProgramme + '_')) {
-          progKey = hodProgramme;
-          deptFromDoc = combinedBeforeBatch.slice(hodProgramme.length + 1);
+          // Strategy 1: use hodProgramme (from user doc) as the known programme key
+          if (hodProgramme && combinedBeforeBatch.startsWith(hodProgramme + '_')) {
+            progKey = hodProgramme;
+            deptFromDoc = combinedBeforeBatch.slice(hodProgramme.length + 1);
+          }
+
+          // Strategy 2: try matching against deptMetadata
+          if (!progKey) {
+            for (const [pk, depts] of Object.entries(deptMetadata)) {
+              if (!combinedBeforeBatch.startsWith(pk + '_')) continue;
+              const deptCandidate = combinedBeforeBatch.slice(pk.length + 1);
+              for (const [deptName, deptCode] of Object.entries(depts)) {
+                if (sanitizeKey(deptName) === deptCandidate || deptCode === deptCandidate) {
+                  progKey = pk;
+                  deptFromDoc = deptCandidate;
+                  break;
+                }
+              }
+              if (progKey) break;
+            }
+          }
+
+          // Strategy 3: try all programme keys from deptMetadata and match dept by name/code
+          if (!progKey) {
+            for (const [pk, depts] of Object.entries(deptMetadata)) {
+              if (!combinedBeforeBatch.startsWith(pk + '_')) continue;
+              progKey = pk;
+              deptFromDoc = combinedBeforeBatch.slice(pk.length + 1);
+              break;
+            }
+          }
+
+          // Strategy 4: fallback — old parsing (single-word dept names only)
+          if (!progKey) {
+            deptFromDoc = parts[yearIdx - 1];
+            progKey = parts.slice(0, yearIdx - 1).join('_');
+          }
+
+          const data = d.data();
+
+          Object.entries(data).forEach(([uid, codes]) => {
+            if (Array.isArray(codes)) {
+              codes.forEach(code => {
+                allAssignments.push({ uid, subjectCode: code, batch: batchKey, ay: ayKey, sem: semNum, section: secSuffix, progKey, attDeptKey: deptFromDoc });
+              });
+            }
+          });
+        });
+
+        // Filter by department using validDeptKeys (name + code matching)
+        let deptFiltered = allAssignments;
+        if (validDeptKeys.size > 0) {
+          const hodDirectKey = hodNorm ? sanitizeKey(hodNorm).toLowerCase() : '';
+          deptFiltered = allAssignments.filter(a => {
+            const normKey = sanitizeKey(a.attDeptKey.trim()).toLowerCase();
+            return validDeptKeys.has(normKey) || (hodDirectKey && normKey === hodDirectKey);
+          });
         }
 
-        // Strategy 2: try matching against deptMetadata
-        if (!progKey) {
-          for (const [pk, depts] of Object.entries(deptMetadata)) {
-            if (!combinedBeforeBatch.startsWith(pk + '_')) continue;
-            const deptCandidate = combinedBeforeBatch.slice(pk.length + 1);
-            for (const [deptName, deptCode] of Object.entries(depts)) {
-              if (sanitizeKey(deptName) === deptCandidate || deptCode === deptCandidate) {
-                progKey = pk;
-                deptFromDoc = deptCandidate;
-                break;
+        let filtered = deptFiltered.filter(a => a.ay === currentAy);
+        if (filtered.length === 0 && deptFiltered.length > 0) {
+          filtered = deptFiltered;
+        }
+
+        const seen = new Set();
+        const unique = [];
+        filtered.forEach(a => {
+          const key = `${a.batch}_${a.subjectCode}_${a.sem}_${a.section}`;
+          if (!seen.has(key)) { seen.add(key); unique.push(a); }
+        });
+
+        if (unique.length === 0) {
+          if (!cancelled) {
+            setAttendanceOverview({});
+            setAttendanceOverviewLoading(false);
+          }
+          return;
+        }
+
+        const fetchSubjectAttendance = async (a) => {
+          const sectionSuffix = a.section ? `_${sanitizeKey(a.section)}` : "";
+          const defaultDocId = `${a.progKey}_${a.attDeptKey}_${sanitizeKey(a.batch)}_${sanitizeKey(a.ay)}_${a.sem}_${a.subjectCode}${sectionSuffix}`;
+          let attRecords = {};
+          let finalDocId = defaultDocId;
+
+          try {
+            // FAST-PATH 1: Check canonical defaultDocId first
+            const primary = await getCachedAttendanceDoc(db, defaultDocId);
+            if (primary.exists && Object.keys(primary.records).length > 0) {
+              attRecords = primary.records;
+              return { ...a, attRecords, facultyUid: a.uid, attDocId: finalDocId };
+            }
+
+            // FAST-PATH 2: If a section was given, check counterpart without section
+            if (a.section) {
+              const baseDocId = `${a.progKey}_${a.attDeptKey}_${sanitizeKey(a.batch)}_${sanitizeKey(a.ay)}_${a.sem}_${a.subjectCode}`;
+              const baseEntry = await getCachedAttendanceDoc(db, baseDocId);
+              if (baseEntry.exists && Object.keys(baseEntry.records).length > 0) {
+                attRecords = baseEntry.records;
+                finalDocId = baseDocId;
+                return { ...a, attRecords, facultyUid: a.uid, attDocId: finalDocId };
               }
             }
-            if (progKey) break;
-          }
-        }
+          } catch (_) {}
 
-        // Strategy 3: try all programme keys from deptMetadata and match dept by name/code
-        if (!progKey) {
-          for (const [pk, depts] of Object.entries(deptMetadata)) {
-            if (!combinedBeforeBatch.startsWith(pk + '_')) continue;
-            progKey = pk;
-            deptFromDoc = combinedBeforeBatch.slice(pk.length + 1);
-            break;
-          }
-        }
-
-        // Strategy 4: fallback — old parsing (single-word dept names only)
-        if (!progKey) {
-          deptFromDoc = parts[yearIdx - 1];
-          progKey = parts.slice(0, yearIdx - 1).join('_');
-        }
-
-        const data = d.data();
-
-        Object.entries(data).forEach(([uid, codes]) => {
-          if (Array.isArray(codes)) {
-            codes.forEach(code => {
-              allAssignments.push({ uid, subjectCode: code, batch: batchKey, ay: ayKey, sem: semNum, section: secSuffix, progKey, attDeptKey: deptFromDoc });
-            });
-          }
-        });
-      });
-
-      // Filter by department using validDeptKeys (name + code matching)
-      let deptFiltered = allAssignments;
-      if (validDeptKeys.size > 0) {
-        const hodDirectKey = hodNorm ? sanitizeKey(hodNorm).toLowerCase() : '';
-        deptFiltered = allAssignments.filter(a => {
-          const normKey = sanitizeKey(a.attDeptKey.trim()).toLowerCase();
-          return validDeptKeys.has(normKey) || (hodDirectKey && normKey === hodDirectKey);
-        });
-      }
-
-      console.log('[AttendanceOverview] hodProgramme:', hodProgramme, '| hodDept:', hodDepartment, '| validDeptKeys:', [...validDeptKeys], '| allAssignments:', allAssignments.length, '| deptFiltered:', deptFiltered.length);
-
-      let filtered = deptFiltered.filter(a => a.ay === currentAy);
-      if (filtered.length === 0 && deptFiltered.length > 0) {
-        filtered = deptFiltered;
-      }
-
-      const seen = new Set();
-      const unique = [];
-      filtered.forEach(a => {
-        const key = `${a.batch}_${a.subjectCode}_${a.sem}_${a.section}`;
-        if (!seen.has(key)) { seen.add(key); unique.push(a); }
-      });
-
-      // Pro-Level Fast-Path Attendance Resolver:
-      // 1. Probes the canonical defaultDocId first (covers ~98% of subjects in 1 read).
-      // 2. Checks baseDocId if section was given.
-      // 3. Only falls back to candidate aliases if primary doc is missing.
-      // 4. Uses shared in-memory document cache to avoid re-fetching unchanged docs.
-      const fetchSubjectAttendance = async (a) => {
-        const sectionSuffix = a.section ? `_${sanitizeKey(a.section)}` : "";
-        const defaultDocId = `${a.progKey}_${a.attDeptKey}_${sanitizeKey(a.batch)}_${sanitizeKey(a.ay)}_${a.sem}_${a.subjectCode}${sectionSuffix}`;
-        let attRecords = {};
-        let finalDocId = defaultDocId;
-
-        // FAST-PATH 1: Check canonical defaultDocId first
-        const primary = await getCachedAttendanceDoc(db, defaultDocId);
-        if (primary.exists && Object.keys(primary.records).length > 0) {
-          attRecords = primary.records;
           return { ...a, attRecords, facultyUid: a.uid, attDocId: finalDocId };
-        }
+        };
 
-        // FAST-PATH 2: If a section was given, check counterpart without section
-        if (a.section) {
-          const baseDocId = `${a.progKey}_${a.attDeptKey}_${sanitizeKey(a.batch)}_${sanitizeKey(a.ay)}_${a.sem}_${a.subjectCode}`;
-          const baseEntry = await getCachedAttendanceDoc(db, baseDocId);
-          if (baseEntry.exists && Object.keys(baseEntry.records).length > 0) {
-            attRecords = baseEntry.records;
-            finalDocId = baseDocId;
-            return { ...a, attRecords, facultyUid: a.uid, attDocId: finalDocId };
-          }
-        }
-
-        // TARGETED FALLBACK: Only if primary doc is missing or empty, probe top 4 candidates
-        const candidateDocIds = getAllCandidateAttendanceDocIds({
-          programme: a.progKey || hodProgramme,
-          department: a.attDeptKey || hodDepartment,
-          batch: a.batch,
-          academicYear: a.ay,
-          semester: a.sem,
-          subjectCode: a.subjectCode,
-          section: a.section || ''
+        const syllabusPromise = fetchAllCourseNamesMap().catch(e => {
+          console.warn('[AttendanceOverview] course names fetch error:', e);
+          return {};
         });
 
-        const fallbackIds = candidateDocIds.filter(id => id !== defaultDocId).slice(0, 4);
-        for (const fbId of fallbackIds) {
-          const fbEntry = await getCachedAttendanceDoc(db, fbId);
-          if (fbEntry.exists && Object.keys(fbEntry.records).length > 0) {
-            attRecords = fbEntry.records;
-            finalDocId = fbId;
-            break;
-          }
-        }
+        // Sub-second parallel fetching across all subjects
+        const results = await Promise.all(unique.map(fetchSubjectAttendance));
 
-        return { ...a, attRecords, facultyUid: a.uid, attDocId: finalDocId };
-      };
+        const nameMap = await syllabusPromise;
 
-      const syllabusPromise = fetchAllCourseNamesMap().catch(e => {
-        console.warn('[AttendanceOverview] course names fetch error:', e);
-        return {};
-      });
-
-      // Controlled parallel batching (chunks of 10) to prevent browser network socket exhaustion
-      const BATCH_SIZE = 10;
-      const results = [];
-      for (let i = 0; i < unique.length; i += BATCH_SIZE) {
         if (cancelled) return;
-        const chunk = unique.slice(i, i + BATCH_SIZE);
-        const chunkResults = await Promise.all(chunk.map(fetchSubjectAttendance));
-        results.push(...chunkResults);
+
+        const grouped = {};
+        results.forEach(r => {
+          if (!grouped[r.batch]) grouped[r.batch] = [];
+          grouped[r.batch].push(r);
+        });
+
+        setSubjectNamesMap(nameMap);
+        setAttendanceOverview(grouped);
+      } catch (err) {
+        console.error("[AttendanceOverview] Error processing assignments:", err);
+      } finally {
+        if (!cancelled) {
+          clearTimeout(safetyTimer);
+          setAttendanceOverviewLoading(false);
+        }
       }
-
-      const nameMap = await syllabusPromise;
-
-      if (cancelled) return;
-
-      const grouped = {};
-      results.forEach(r => {
-        if (!grouped[r.batch]) grouped[r.batch] = [];
-        grouped[r.batch].push(r);
-      });
-
-      setSubjectNamesMap(nameMap);
-      setAttendanceOverview(grouped);
-      setAttendanceOverviewLoading(false);
-    }, () => { if (!cancelled) { setAttendanceOverview({}); setAttendanceOverviewLoading(false); } });
-    return () => { cancelled = true; unsub(); };
+    }, () => {
+      if (!cancelled) {
+        clearTimeout(safetyTimer);
+        setAttendanceOverview({});
+        setAttendanceOverviewLoading(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+      clearTimeout(safetyTimer);
+      unsub();
+    };
   }, [hodDepartment, hodProgramme, currentUid, deptMetadata, deptMetadataLoaded, reloadAttendanceTrigger]);
 
   // ─── Fetch timetable allocation for each batch ───
@@ -2621,34 +2643,40 @@ export default function AcademicCoordinatorDashboard() {
   }, [resolvedAttendanceOverview]);
 
   const batchStrength = useMemo(() => {
-    // Only include batches that have an ACTIVE semester_config (today within startDate→endDate)
+    // Only include batches whose semester_config date range covers today
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+
     const activeBatches = new Set();
     semesterConfigs.forEach(cfg => {
       if (!cfg.startDate || !cfg.endDate) return;
       const start = new Date(cfg.startDate + 'T00:00:00');
-      const end = new Date(cfg.endDate + 'T00:00:00');
-      if (today < start || today > end) return; // skip expired/future configs
-      const batches = Array.isArray(cfg.batch) ? cfg.batch : (cfg.batch ? [cfg.batch] : []);
-      batches.forEach(b => activeBatches.add(b));
+      const end = new Date(cfg.endDate + 'T23:59:59');
+      if (today >= start && today <= end) {
+        const batches = Array.isArray(cfg.batch) ? cfg.batch : (cfg.batch ? [cfg.batch] : []);
+        batches.forEach(b => {
+          if (b) activeBatches.add(String(b).trim());
+        });
+      }
     });
-    if (activeBatches.size === 0) return [];
 
     const counts = {};
-    // Approved (not yet section-assigned)
+    // 1) Approved admissions awaiting section allotment
     approvedStudentsList.forEach(s => {
-      if (!activeBatches.has(s.batch)) return;
-      if (!counts[s.batch]) counts[s.batch] = { batch: s.batch, approved: 0, sectionAssigned: 0, total: 0 };
-      counts[s.batch].approved++;
-      counts[s.batch].total++;
+      if (activeBatches.size > 0 && s.batch && !activeBatches.has(s.batch)) return;
+      const bKey = s.batch && s.batch !== "-" ? s.batch : "General";
+      if (!counts[bKey]) counts[bKey] = { batch: bKey, approved: 0, sectionAssigned: 0, total: 0 };
+      counts[bKey].approved++;
+      counts[bKey].total++;
     });
-    // Already section-assigned
+
+    // 2) Section-assigned enrolled students from official students collection (authoritative department roster)
     sectionStudents.forEach(s => {
-      if (!activeBatches.has(s.batch)) return;
-      if (!counts[s.batch]) counts[s.batch] = { batch: s.batch, approved: 0, sectionAssigned: 0, total: 0 };
-      counts[s.batch].sectionAssigned++;
-      counts[s.batch].total++;
+      if (activeBatches.size > 0 && s.batch && !activeBatches.has(s.batch)) return;
+      const bKey = s.batch && s.batch !== "-" ? s.batch : "General";
+      if (!counts[bKey]) counts[bKey] = { batch: bKey, approved: 0, sectionAssigned: 0, total: 0 };
+      counts[bKey].sectionAssigned++;
+      counts[bKey].total++;
     });
     return Object.values(counts).sort((a, b) => a.batch.localeCompare(b.batch));
   }, [approvedStudentsList, sectionStudents, semesterConfigs]);
@@ -3982,7 +4010,7 @@ export default function AcademicCoordinatorDashboard() {
 
   const statsCards = [
     { key: "sectionAllotment", label: "Section Allotment", value: approvedStudentsList.length, icon: Users, color: "amber", onClick: () => setSectionAllotmentPopup({ open: true }) },
-    { key: "studentStrength", label: "Student Strength", value: Object.values(batchStrength).reduce((s, b) => s + b.total, 0) || approvedStudentsList.length, icon: GraduationCap, color: "blue", onClick: () => setBatchStrengthModal({ open: true }) },
+    { key: "studentStrength", label: "Student Strength", value: Object.values(batchStrength).reduce((s, b) => s + b.sectionAssigned, 0), icon: GraduationCap, color: "blue", onClick: () => setBatchStrengthModal({ open: true }) },
     { key: "today", label: "Reviewed Today", value: reviewedToday, icon: TrendingUp, color: "emerald" },
     { key: "week", label: "This Week", value: reviewedThisWeek, icon: BarChart3, color: "violet" },
     { key: "total", label: "Total QP Tasks", value: tasks.length + reviewedThisWeek, icon: BookOpen, color: "indigo" },

@@ -30,6 +30,7 @@ import {
   formatBatchDisplay,
   isDeptMatch,
 } from "../lib/utils";
+import { getDeptFromRegNo } from "../lib/departmentRegistry";
 
 const normAlpha = (str) => String(str || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
@@ -258,47 +259,167 @@ export default function EsePaidFeeReportModal({
     }
   }, [selectedExam, isOpen]);
 
-  // Real-time listener for paid registrations from Firestore
+  // Real-time listener for paid registrations and payments across all ESE sources
   useEffect(() => {
     if (!isOpen) return;
 
     setLoading(true);
-    const qRegs = query(collection(db, "ese_fee_registrations"));
 
-    const unsubscribe = onSnapshot(
-      qRegs,
-      (snapshot) => {
-        const list = [];
-        snapshot.forEach((docSnap) => {
-          const data = docSnap.data();
-          const pStatus = (data.paymentStatus || data.status || "").toLowerCase();
-          const isPaid =
-            pStatus === "paid" ||
-            pStatus === "success" ||
-            pStatus === "successful" ||
-            data.billAttached === true ||
-            Boolean(data.receiptNo) ||
-            Boolean(data.paidAt);
+    let regsList = [];
+    let feePaysList = [];
+    let examCellList = [];
 
-          if (isPaid) {
-            list.push({
-              id: docSnap.id,
-              ...data,
+    const isRecordPaid = (item) => {
+      const pStatus = (item.paymentStatus || item.status || item.hdfcStatus || "").toLowerCase();
+      if (pStatus.includes("fail") || pStatus.includes("cancel") || pStatus.includes("aborted")) return false;
+      return (
+        pStatus === "paid" ||
+        pStatus === "success" ||
+        pStatus === "successful" ||
+        pStatus === "charged" ||
+        pStatus === "completed" ||
+        item.billAttached === true ||
+        Boolean(item.electronicBill) ||
+        Boolean(item.receiptNo) ||
+        Boolean(item.paidAt)
+      );
+    };
+
+    const mergeAndSet = () => {
+      const combined = [...regsList, ...feePaysList];
+      const seen = new Set();
+      const deduped = [];
+
+      combined.forEach((item) => {
+        if (!isRecordPaid(item)) return;
+
+        let rawReg = (
+          item.regNo ||
+          item.studentRegNo ||
+          item.registerNumber ||
+          item.examNumber ||
+          ""
+        ).trim();
+
+        let examId = item.examId || "";
+        let examName = item.examName || "";
+
+        if (typeof item.id === "string" && item.id.includes("_")) {
+          const parts = item.id.split("_");
+          if (!rawReg && parts.length > 1) rawReg = parts[parts.length - 1];
+          if (!examId && parts.length > 1) examId = parts[0];
+        }
+
+        const cleanReg = normAlpha(rawReg);
+        // Deduplicate strictly by candidate student register number so each student appears once
+        const dedupKey = cleanReg || item.orderId || item.id;
+
+        if (seen.has(dedupKey)) {
+          const existing = deduped.find(d => (cleanReg && d.cleanReg === cleanReg) || d.id === item.id);
+          if (existing) {
+            if (!existing.orderId && item.orderId) existing.orderId = item.orderId;
+            if (!existing.receiptNo && item.receiptNo) existing.receiptNo = item.receiptNo;
+            if (!existing.paidAt && item.paidAt) existing.paidAt = item.paidAt;
+            if (!existing.studentName && item.studentName) existing.studentName = item.studentName;
+            if (!existing.department && item.department) existing.department = item.department;
+          }
+          return;
+        }
+        seen.add(dedupKey);
+
+        let dept = item.department || "";
+        if (!dept && cleanReg.startsWith("4207")) {
+          const regDept = getDeptFromRegNo(cleanReg);
+          if (regDept) dept = regDept;
+        }
+
+        deduped.push({
+          ...item,
+          regNo: rawReg || item.regNo,
+          cleanReg,
+          department: dept,
+          examId: examId || item.examId,
+          examName: examName || item.examName,
+          feeAmount: Number(item.feeAmount || item.amount || item.chargedAmount || 0),
+        });
+      });
+
+      // Also merge confirmed exam_cell_payments if not already in deduped
+      examCellList.forEach((ep) => {
+        if (!isRecordPaid(ep)) return;
+        const cat = (ep.category || "").toLowerCase();
+        if (cat && !cat.includes("ese") && !cat.includes("exam") && !cat.includes("examination")) {
+          return;
+        }
+
+        const cleanReg = normAlpha(ep.regNo || ep.studentRegNo || ep.registerNumber || "");
+        const oId = ep.id || ep.orderId;
+        const rrn = ep.gatewayResponse?.rrn || ep.rrn;
+        const match = deduped.find((p) => (cleanReg && p.cleanReg === cleanReg) || (oId && p.orderId === oId) || (rrn && p.rrn === rrn));
+        if (match) {
+          match.paymentStatus = "Paid";
+          match.status = "Paid";
+          match.billAttached = true;
+          if (ep.amount || ep.chargedAmount) match.feeAmount = Number(ep.amount || ep.chargedAmount);
+        } else {
+          const dedupKey = cleanReg || oId || ep.id;
+          if (!seen.has(dedupKey)) {
+            seen.add(dedupKey);
+            let dept = ep.department || "";
+            if (!dept && cleanReg.startsWith("4207")) {
+              const regDept = getDeptFromRegNo(cleanReg);
+              if (regDept) dept = regDept;
+            }
+            deduped.push({
+              ...ep,
+              regNo: ep.regNo || ep.studentRegNo || cleanReg,
+              cleanReg,
+              department: dept,
+              feeAmount: Number(ep.amount || ep.chargedAmount || 4600),
+              paymentStatus: "Paid",
+              status: "Paid",
+              billAttached: true,
             });
           }
-        });
+        }
+      });
 
-        // Also check ese_fee_payments for any records that might not be in ese_fee_registrations
-        setRecords(list);
-        setLoading(false);
+      setRecords(deduped);
+      setLoading(false);
+    };
+
+    const unsub1 = onSnapshot(
+      collection(db, "ese_fee_registrations"),
+      (snap) => {
+        regsList = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        mergeAndSet();
       },
-      (err) => {
-        console.error("Error loading ese_fee_registrations for report:", err);
-        setLoading(false);
-      }
+      (err) => console.warn("ese_fee_registrations error:", err)
     );
 
-    return () => unsubscribe();
+    const unsub2 = onSnapshot(
+      collection(db, "ese_fee_payments"),
+      (snap) => {
+        feePaysList = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        mergeAndSet();
+      },
+      (err) => console.warn("ese_fee_payments error:", err)
+    );
+
+    const unsub3 = onSnapshot(
+      collection(db, "exam_cell_payments"),
+      (snap) => {
+        examCellList = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        mergeAndSet();
+      },
+      (err) => console.warn("exam_cell_payments error:", err)
+    );
+
+    return () => {
+      unsub1();
+      unsub2();
+      unsub3();
+    };
   }, [isOpen]);
 
   // Quick Date Range Shortcuts
@@ -357,6 +478,8 @@ export default function EsePaidFeeReportModal({
         if (
           r.examName &&
           (r.examName.toLowerCase() === examFilter.toLowerCase() ||
+            r.examName.toLowerCase().includes("ese - 2026") ||
+            (examFilter.toLowerCase().includes("ese - 2026") && r.examName.toLowerCase().includes("end semester")) ||
             getResolvedExamName(r.examName) === getResolvedExamName(examFilter))
         ) {
           return true;
@@ -367,7 +490,16 @@ export default function EsePaidFeeReportModal({
 
     // 3. Department Filter
     if (deptFilter && deptFilter !== "ALL") {
-      result = result.filter((r) => isDeptMatch(r.department, deptFilter));
+      result = result.filter((r) => {
+        // Primary: Match directly using department stored in document node
+        if (r.department && isDeptMatch(r.department, deptFilter)) return true;
+        // Fallback only if department field is blank/missing in document
+        if (!r.department || r.department === "—" || r.department === "General") {
+          const regDept = getDeptFromRegNo(r.regNo || r.studentRegNo || r.registerNumber || r.id);
+          if (regDept && isDeptMatch(regDept, deptFilter)) return true;
+        }
+        return false;
+      });
     }
 
     // 4. Batch Filter

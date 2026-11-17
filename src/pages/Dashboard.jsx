@@ -83,7 +83,15 @@ export default function Dashboard() {
     const ciaRef = collection(db, 'cia_configs'); // Firestore collection reference
     const unsubscribe = onSnapshot(ciaRef, (snapshot) => { // Use onSnapshot for real-time updates
       if (!snapshot.empty) { 
-        const data = {}; snapshot.forEach(doc => { data[doc.id] = doc.data(); }); // Convert QuerySnapshot to object
+        const data = {};
+        snapshot.forEach(doc => {
+          const d = { id: doc.id, ...doc.data() };
+          data[doc.id] = d;
+          if (d.examName) {
+            data[d.examName] = d;
+            data[d.examName.toLowerCase()] = d;
+          }
+        });
         setCiaConfigs(data);
       }
     }, (error) => {
@@ -208,7 +216,18 @@ export default function Dashboard() {
     if (!programme || !department || !batch || !academicYear || !semester) return [];
     const semNum = String(deriveSemesterNumber(semester));
     const progKey = formatProgrammeKey(programme);
-    return Object.entries(ciaConfigs || {}).map(([id, val]) => ({id, ...val})).filter(c => 
+
+    const seenDocIds = new Set();
+    const rawList = [];
+    Object.values(ciaConfigs || {}).forEach(c => {
+      const docId = c?.id;
+      if (docId && !seenDocIds.has(docId)) {
+        seenDocIds.add(docId);
+        rawList.push(c);
+      }
+    });
+
+    return rawList.filter(c => 
       formatProgrammeKey(c.program) === progKey && 
       c.department === department && 
       c.batch === batch && 
@@ -823,8 +842,11 @@ export default function Dashboard() {
         );
         const isIndirect = !!(
           m.isIndirectAssessment ||
-          (m.qpaper_name && ciaConfigs[m.qpaper_name]?.isIndirectAssessment) ||
-          (m.exam && ciaConfigs[m.exam]?.isIndirectAssessment)
+          m.is_indirect ||
+          m.isIndirect ||
+          (m.qpaper_name && (ciaConfigs[m.qpaper_name]?.isIndirectAssessment || ciaConfigs[m.qpaper_name]?.isIndirect)) ||
+          (m.exam && (ciaConfigs[m.exam]?.isIndirectAssessment || ciaConfigs[m.exam]?.isIndirect)) ||
+          /indirect|survey|exit|ces/i.test(String(label || m.exam || m.exam_name || eDoc.id || ''))
         );
         children.push({ key: eDoc.id, data: eData, isUniversity, isIndirect, label });
       });
@@ -842,8 +864,11 @@ export default function Dashboard() {
         );
         const isIndirect = !!(
           m.isIndirectAssessment ||
-          (m.qpaper_name && ciaConfigs[m.qpaper_name]?.isIndirectAssessment) ||
-          (m.exam && ciaConfigs[m.exam]?.isIndirectAssessment)
+          m.is_indirect ||
+          m.isIndirect ||
+          (m.qpaper_name && (ciaConfigs[m.qpaper_name]?.isIndirectAssessment || ciaConfigs[m.qpaper_name]?.isIndirect)) ||
+          (m.exam && (ciaConfigs[m.exam]?.isIndirectAssessment || ciaConfigs[m.exam]?.isIndirect)) ||
+          /indirect|survey|exit|ces/i.test(String(label || m.exam || m.exam_name || ''))
         );
         children.push({ key: '_legacy', data: rootData, isUniversity, isIndirect, label });
       }
@@ -865,13 +890,14 @@ export default function Dashboard() {
       setConsolidationChildren(children);
 
       // Default: if current consolidationView is 'latest' or not set, pick latest INTERNAL child if available
-      if (!consolidationView || consolidationView === 'latest') {
-        const latestInternal = children.find(c => !c.isUniversity) || children[0];
-        if (latestInternal) {
-          setConsolidationData({ studentTotals: latestInternal.data.students || {}, maxMarks: latestInternal.data.co_max_marks || { CO1: 0, CO2: 0, CO3: 0, CO4: 0, CO5: 0 } });
-          setConsolidationView(latestInternal.key);
+      setConsolidationView(prevView => {
+        if (prevView === 'final') return 'final';
+        if (prevView && prevView !== 'latest' && children.some(c => c.key === prevView)) {
+          return prevView;
         }
-      }
+        const latestInternal = children.find(c => !c.isUniversity) || children[0];
+        return latestInternal ? latestInternal.key : '';
+      });
       setLoadingConsolidation(false);
     };
 
@@ -895,7 +921,7 @@ export default function Dashboard() {
       unsubRoot();
       unsubExams();
     };
-  }, [module, programme, department, batch, academicYear, semester, extraSubject, students, ciaConfigs, consolidationView, section]);
+  }, [module, programme, department, batch, academicYear, semester, extraSubject, students, ciaConfigs, section]);
 
   // Fetch mapping_summary for final attainment computation
   useEffect(() => {
@@ -945,12 +971,11 @@ export default function Dashboard() {
       }
 
       if (view === 'overall') {
-        // Aggregate across internal children only: average per CO across internal exams
+        // Aggregate across internal children only: direct cumulative sum per CO across internal exams
         const all = consolidationChildren.filter(c => !c.isUniversity);
         // If there are no internal children, fall back to all children
         if (all.length === 0) all.push(...consolidationChildren);
         const studentAcc = {};
-        const coCounts = {};
 
         all.forEach(child => {
           const studs = child.data.students || {};
@@ -959,23 +984,12 @@ export default function Dashboard() {
             Object.entries(sdata).forEach(([k, v]) => {
               if (/^CO\d+/i.test(k) && typeof v === 'number') {
                 studentAcc[reg][k] = (studentAcc[reg][k] || 0) + v;
-                coCounts[k] = (coCounts[k] || 0) + 1;
               }
             });
           });
         });
 
-        // Average
-        Object.keys(studentAcc).forEach(reg => {
-          Object.keys(studentAcc[reg]).forEach(k => {
-            if (/^CO\d+/i.test(k)) {
-              const cnt = coCounts[k] || consolidationChildren.length;
-              studentAcc[reg][k] = Math.round((studentAcc[reg][k] || 0) / cnt);
-            }
-          });
-        });
-
-        // Average max marks per CO
+        // Cumulative max marks per CO
         const maxAcc = {};
         consolidationChildren.forEach(child => {
           const mm = child.data.co_max_marks || {};
@@ -983,7 +997,20 @@ export default function Dashboard() {
             maxAcc[k] = (maxAcc[k] || 0) + Number(v || 0);
           });
         });
-        Object.keys(maxAcc).forEach(k => { maxAcc[k] = Math.round(maxAcc[k] / consolidationChildren.length); });
+        Object.keys(maxAcc).forEach(k => {
+          let mm = maxAcc[k];
+          if (mm <= 1) {
+            const obsMax = Math.max(0, ...Object.values(studentAcc).map(s => Number(s[k] || 0)));
+            if (obsMax > 0) {
+              if (obsMax <= 20.5) mm = 20;
+              else if (obsMax <= 25) mm = 25;
+              else if (obsMax <= 50) mm = 50;
+              else if (obsMax <= 100) mm = 100;
+              else mm = Math.ceil(obsMax);
+            }
+          }
+          maxAcc[k] = mm;
+        });
 
         return { studentTotals: studentAcc, maxMarks: maxAcc };
       }
@@ -998,46 +1025,36 @@ export default function Dashboard() {
         const pctI = (split.internal || 100) / 100;
         const pctU = (split.university || 0) / 100;
 
-        // Compute aggregate internal attainment per student
-        const avgInternal = {};
-        const avgIMax = {};
+        // Compute direct cumulative internal marks and cumulative max marks per student
+        const totalInternal = {};
+        const totalIMax = {};
         const childCount = internalChildren.length;
 
         if (childCount > 0) {
           internalChildren.forEach(child => {
             Object.entries(child.data.students || {}).forEach(([reg, sdata]) => {
-              if (!avgInternal[reg]) avgInternal[reg] = { name: sdata.name || '' };
+              if (!totalInternal[reg]) totalInternal[reg] = { name: sdata.name || '' };
               Object.entries(sdata).forEach(([k, v]) => {
                 if (/^CO\d+/i.test(k) && typeof v === 'number') {
-                  avgInternal[reg][k] = (avgInternal[reg][k] || 0) + v;
+                  totalInternal[reg][k] = (totalInternal[reg][k] || 0) + v;
                 }
               });
             });
             Object.entries(child.data.co_max_marks || {}).forEach(([k, v]) => {
-              avgIMax[k] = (avgIMax[k] || 0) + Number(v || 0);
+              totalIMax[k] = (totalIMax[k] || 0) + Number(v || 0);
             });
           });
-
-          // Average the internal scores
-          Object.keys(avgInternal).forEach(reg => {
-            Object.keys(avgInternal[reg]).forEach(k => {
-              if (/^CO\d+/i.test(k)) {
-                avgInternal[reg][k] = Math.round(avgInternal[reg][k] / childCount);
-              }
-            });
-          });
-          Object.keys(avgIMax).forEach(k => { avgIMax[k] = Math.round(avgIMax[k] / childCount); });
         }
 
         const studentRegs = new Set([
-          ...Object.keys(avgInternal), 
+          ...Object.keys(totalInternal), 
           ...Object.keys(uniChild?.data.students || {})
         ]);
         const result = {};
         const uMax = uniChild?.data.co_max_marks || {};
 
         studentRegs.forEach(reg => {
-          const iData = avgInternal[reg] || {};
+          const iData = totalInternal[reg] || {};
           const uData = uniChild?.data.students?.[reg] || {};
           const entry = { name: iData.name || uData.name || '' };
           
@@ -1050,20 +1067,38 @@ export default function Dashboard() {
             const iv = Number(iData[k] || 0);
             const uv = Number(uData[k] || 0);
 
-            const im = Number(avgIMax[k] || 0);
-            const um = Number(uMax[k] || 0);
+            let im = Number(totalIMax[k] || 0);
+            let um = Number(uMax[k] || 0);
 
+            // Safeguard: if im is missing, 0, or <= 1, or student mark exceeds im, derive true max marks
+            const observedIMax = Math.max(0, ...Object.values(totalInternal).map(s => Number(s[k] || 0)));
+            if (im <= 1 || (observedIMax > 0 && im < observedIMax)) {
+              if (observedIMax <= 20.5) im = 20;
+              else if (observedIMax <= 25) im = 25;
+              else if (observedIMax <= 50) im = 50;
+              else if (observedIMax <= 100) im = 100;
+              else im = Math.ceil(observedIMax);
+            }
+
+            const observedUMax = Math.max(0, ...Object.values(uniChild?.data.students || {}).map(s => Number(s[k] || 0)));
+            if (um <= 1 || (observedUMax > 0 && um < observedUMax)) {
+              if (observedUMax <= 50) um = 50;
+              else if (observedUMax <= 100) um = 100;
+              else um = Math.ceil(observedUMax);
+            }
+
+            // Direct division: (Total Scored / Total Max Marks) * 100 without premature rounding distortion
             const iv_pct = im > 0 ? (iv / im) * 100 : 0;
             const uv_pct = um > 0 ? (uv / um) * 100 : 0;
 
             const finalPct = Math.round((iv_pct * pctI) + (uv_pct * pctU));
-            entry[k] = finalPct;
+            entry[k] = Math.min(100, Math.max(0, finalPct));
           });
           result[reg] = entry;
         });
 
         const maxMarks = {};
-        const allCoKeys = Array.from(new Set([...Object.keys(avgIMax), ...Object.keys(uMax)]));
+        const allCoKeys = Array.from(new Set([...Object.keys(totalIMax), ...Object.keys(uMax)]));
         allCoKeys.forEach(k => { maxMarks[k] = 100; });
 
         return { studentTotals: result, maxMarks };
@@ -1153,29 +1188,33 @@ export default function Dashboard() {
       // Direct Attainment Level (from summary)
       const directLevel = attainmentSummary[co]?.attainmentLevel || 0;
 
-      // Indirect Attainment Mean
-      let indirectTotalVal = 0;
-      let totalIndirectSubmissions = 0;
+      // Indirect Attainment Mean: Deduplicate per student
+      const studentIndirectScores = {};
       
       indirectChildren.forEach(child => {
         const studs = child.data.students || {};
         const maxMarksMap = child.data.co_max_marks || {};
         const mm = Number(maxMarksMap[co] || 3);
 
-        Object.values(studs).forEach(s => {
-          if (s[co] !== undefined && s[co] !== null) {
-            // Note: We use the raw score divided by max marks * 3 if they aren't already on 3-point scale
-            // But usually users enter 3,2,1 for surveys. 
-            // If they enter 0-100, we should normalize to 3.
-            const raw = Number(s[co]);
-            const normalized = mm > 0 ? (raw / mm) * 3 : 0;
-            indirectTotalVal += normalized;
-            totalIndirectSubmissions++;
+        Object.entries(studs).forEach(([regKey, s]) => {
+          if (s?.absent) return;
+          const rawVal = s?.[co] ?? s?.[co.toLowerCase()] ?? s?.[co.toUpperCase()];
+          if (rawVal !== undefined && rawVal !== null) {
+            const raw = Number(rawVal);
+            if (!isNaN(raw)) {
+              const normalized = mm > 0 ? Math.min(3, (raw / mm) * 3) : Math.min(3, raw);
+              if (studentIndirectScores[regKey] === undefined || normalized > studentIndirectScores[regKey]) {
+                studentIndirectScores[regKey] = normalized;
+              }
+            }
           }
         });
       });
 
-      const indirectMean = totalIndirectSubmissions > 0 ? (indirectTotalVal / totalIndirectSubmissions) : 0;
+      const indirectScores = Object.values(studentIndirectScores);
+      const indirectMean = indirectScores.length > 0 
+        ? (indirectScores.reduce((sum, v) => sum + v, 0) / indirectScores.length) 
+        : 0;
 
       // Result = (DirectLevel * %Direct) + (IndirectMean * %Indirect)
       const finalLevel = (directLevel * pctDirectTotal) + (indirectMean * pctIndirectTotal);
@@ -1197,6 +1236,45 @@ export default function Dashboard() {
     return consolidationChildren.find(c => c.key === consolidationView) || null;
   }, [consolidationChildren, consolidationView]);
 
+  const isEseOverall = useMemo(() => {
+    if (!selectedConsolidationChild || consolidationView === 'final' || consolidationView === 'overall') return false;
+
+    const isUni = !!(
+      selectedConsolidationChild.isUniversity ||
+      selectedConsolidationChild.data?._meta?.is_university ||
+      selectedConsolidationChild.data?._meta?.isUniversity ||
+      String(selectedConsolidationChild.label || '').toLowerCase().includes('end sem') ||
+      String(selectedConsolidationChild.label || '').toLowerCase().includes('ese') ||
+      String(selectedConsolidationChild.key || '').toLowerCase().includes('ese') ||
+      String(selectedConsolidationChild.data?._meta?.exam || '').toLowerCase().includes('end sem') ||
+      String(selectedConsolidationChild.data?._meta?.exam || '').toLowerCase().includes('ese')
+    );
+    if (!isUni) return false;
+
+    const entryMode = selectedConsolidationChild.data?._meta?.entry_mode || selectedConsolidationChild.data?._meta?.mark_type;
+    if (entryMode === 'CO Wise') return false;
+    if (entryMode === 'Overall') return true;
+
+    // Check student records
+    const studs = selectedConsolidationChild.data?.students || {};
+    const studList = Object.values(studs);
+    if (studList.length > 0) {
+      const hasOverallFields = studList.some(s => s && (
+        (s.grade !== undefined && s.grade !== null && s.grade !== '') ||
+        (s.gradePoint !== undefined && s.gradePoint !== null && s.gradePoint !== '') ||
+        (s.gpa !== undefined && s.gpa !== null && s.gpa !== '') ||
+        (s.overall !== undefined && s.overall !== null && s.overall !== '')
+      ));
+      if (hasOverallFields) return true;
+
+      const maxMarks = selectedConsolidationChild.data?.co_max_marks || {};
+      const coVals = Object.keys(maxMarks).filter(k => /^CO\d+/i.test(k)).map(k => Number(maxMarks[k]));
+      if (coVals.length > 0 && coVals.every(v => v === 3)) return true;
+    }
+
+    return false;
+  }, [selectedConsolidationChild, consolidationView]);
+
   const selectedInternalAssessment = useMemo(() => {
     if (module !== "consolidation") return null;
     if (!selectedConsolidationChild) return null;
@@ -1215,6 +1293,7 @@ export default function Dashboard() {
   }, [selectedInternalAssessment]);
 
   const indirectCoAverages = useMemo(() => {
+    if (isEseOverall) return null;
     const isIndirectView = !!selectedConsolidationChild?.isIndirect;
     if (!isIndirectView || !consolidationData?.studentTotals) return null;
 
@@ -1234,7 +1313,7 @@ export default function Dashboard() {
     });
 
     return { totalStudents, averages };
-  }, [selectedConsolidationChild, consolidationData, students]);
+  }, [selectedConsolidationChild, consolidationData, students, isEseOverall]);
 
   const logAnalysisResults = useMemo(() => {
     if (!consolidationData || !students.length) return null;
@@ -1312,6 +1391,46 @@ export default function Dashboard() {
   // Download consolidation as CSV (Excel can open CSV)
   const downloadConsolidationCSV = () => {
     if (!consolidationData) return;
+
+    if (isEseOverall) {
+      const rows = [];
+      const header = ['S.No', 'Register Number', 'Name', 'Grade', 'GPA', 'Mark'];
+      rows.push(header);
+
+      const studentRegs = students && students.length ? students.map(s => s.reg) : Object.keys(consolidationData.studentTotals || {});
+
+      studentRegs.forEach((reg, idx) => {
+        const sdata = consolidationData.studentTotals?.[reg] || {};
+        const row = [
+          idx + 1,
+          reg || '',
+          sdata.name || '',
+          sdata.grade || (sdata.absent ? 'AB' : '-'),
+          sdata.gradePoint !== undefined && sdata.gradePoint !== null && sdata.gradePoint !== '' ? sdata.gradePoint : (sdata.gpa !== undefined && sdata.gpa !== null && sdata.gpa !== '' ? sdata.gpa : (sdata.absent ? '0' : '-')),
+          sdata.overall !== undefined && sdata.overall !== null && sdata.overall !== '' ? sdata.overall : (sdata.total !== undefined && sdata.total !== null && sdata.total !== '' ? sdata.total : (sdata.absent ? '0' : '-'))
+        ];
+        rows.push(row);
+      });
+
+      const csvContent = rows.map(r => r.map(cell => {
+        if (cell === null || cell === undefined) return '';
+        if (typeof cell === 'string') return `"${cell.replace(/"/g, '""')}"`;
+        return cell;
+      }).join(',')).join('\n');
+
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const filename = `ESE_Overall_${extraSubject || 'subject'}.csv`.replace(/\s+/g, '_');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      return;
+    }
+
     // Determine CO keys (sorted)
     const coKeys = Object.keys(consolidationData.maxMarks || {}).sort((a, b) => {
       const na = Number(a.replace(/[^0-9]/g, '')) || 0;
@@ -2135,22 +2254,24 @@ export default function Dashboard() {
         {(module === "consolidation" || module === "log-report") && programme && department && batch && semester && extraSubject && (
           <div className="space-y-6">
             {/* CO Max Marks Summary */}
-            <div className="bg-white rounded-3xl shadow-xl p-6 border border-zinc-100 animate-in fade-in slide-in-from-bottom-4 duration-500">
-              <div className="flex items-center gap-2 mb-4 ml-1">
-                <div className="w-2 h-6 bg-blue-500 rounded-full" />
-                <h4 className="text-sm font-bold text-zinc-600 uppercase tracking-wider">CO Max Marks</h4>
+            {!isEseOverall && (
+              <div className="bg-white rounded-3xl shadow-xl p-6 border border-zinc-100 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <div className="flex items-center gap-2 mb-4 ml-1">
+                  <div className="w-2 h-6 bg-blue-500 rounded-full" />
+                  <h4 className="text-sm font-bold text-zinc-600 uppercase tracking-wider">CO Max Marks</h4>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
+                  {['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].map(co => (
+                    <div key={co} className="bg-blue-50/50 rounded-2xl p-4 border border-blue-100/50 text-center group hover:bg-blue-50 transition-all duration-300">
+                      <p className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mb-1 group-hover:text-blue-500">{co}</p>
+                      <p className="text-2xl font-black text-blue-600">
+                        {loadingConsolidation ? "..." : (consolidationData?.maxMarks?.[co] || 0)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
-                {['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].map(co => (
-                  <div key={co} className="bg-blue-50/50 rounded-2xl p-4 border border-blue-100/50 text-center group hover:bg-blue-50 transition-all duration-300">
-                    <p className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mb-1 group-hover:text-blue-500">{co}</p>
-                    <p className="text-2xl font-black text-blue-600">
-                      {loadingConsolidation ? "..." : (consolidationData?.maxMarks?.[co] || 0)}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
+            )}
 
             {/* Student Marks Table */}
             <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-zinc-100 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-150">
@@ -2159,7 +2280,9 @@ export default function Dashboard() {
                   <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center text-blue-600">
                     <Users size={18} />
                   </div>
-                  <h3 className="font-bold text-zinc-800 tracking-tight">Student-wise CO Marks</h3>
+                  <h3 className="font-bold text-zinc-800 tracking-tight">
+                    {isEseOverall ? "End Semester Exam Marks (Overall)" : "Student-wise CO Marks"}
+                  </h3>
                   <span className="text-[10px] bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full font-bold uppercase tracking-widest">
                     {extraSubject}
                   </span>
@@ -2197,30 +2320,127 @@ export default function Dashboard() {
                         <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-zinc-500 uppercase tracking-wider w-16 text-center">s.no</th>
                         <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-zinc-500 uppercase tracking-wider text-left">Register number</th>
                         <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-zinc-500 uppercase tracking-wider text-left">name</th>
-                        <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-blue-600 uppercase tracking-wider text-center">co1</th>
-                        <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-blue-600 uppercase tracking-wider text-center">co2</th>
-                        <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-blue-600 uppercase tracking-wider text-center">co3</th>
-                        <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-blue-600 uppercase tracking-wider text-center">co4</th>
-                        <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-blue-600 uppercase tracking-wider text-center">co5</th>
+                        {isEseOverall ? (
+                          <>
+                            <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-blue-600 uppercase tracking-wider text-center">Grade</th>
+                            <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-blue-600 uppercase tracking-wider text-center">GPA</th>
+                            <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-blue-600 uppercase tracking-wider text-center">Mark</th>
+                          </>
+                        ) : (
+                          <>
+                            <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-blue-600 uppercase tracking-wider text-center">co1</th>
+                            <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-blue-600 uppercase tracking-wider text-center">co2</th>
+                            <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-blue-600 uppercase tracking-wider text-center">co3</th>
+                            <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-blue-600 uppercase tracking-wider text-center">co4</th>
+                            <th className="border border-zinc-200 px-4 py-3 text-xs font-bold text-blue-600 uppercase tracking-wider text-center">co5</th>
+                          </>
+                        )}
                       </tr>
                     </thead>
                     <tbody>
                       {students.map((student, idx) => {
                         const totals = consolidationData.studentTotals[student.reg] || {};
+                        const cutoffPct = (mappingCutoff !== "" && mappingCutoff !== null && mappingCutoff !== undefined)
+                          ? Number(mappingCutoff)
+                          : 50;
+
+                        if (isEseOverall) {
+                          const grade = totals.grade || (totals.absent ? "AB" : "-");
+                          const gpa = totals.gradePoint !== undefined && totals.gradePoint !== null && totals.gradePoint !== ""
+                            ? totals.gradePoint
+                            : (totals.gpa !== undefined && totals.gpa !== null && totals.gpa !== "" ? totals.gpa : (totals.absent ? "0" : "-"));
+                          const mark = totals.overall !== undefined && totals.overall !== null && totals.overall !== ""
+                            ? totals.overall
+                            : (totals.total !== undefined && totals.total !== null && totals.total !== "" ? totals.total : (totals.absent ? "0" : "-"));
+                          const isFail = grade === 'U' || grade === 'RA' || grade === 'AB' || (typeof mark === 'number' && mark < cutoffPct);
+
+                          return (
+                            <tr key={student.reg} className="hover:bg-blue-50/30 transition-colors group">
+                              <td className="border border-zinc-100 px-4 py-3 text-center text-sm text-zinc-500 font-medium">{idx + 1}</td>
+                              <td className="border border-zinc-100 px-4 py-3 text-sm font-mono text-zinc-600 font-semibold">{student.reg}</td>
+                              <td className="border border-zinc-100 px-4 py-3 text-sm text-zinc-700 font-medium">{student.name}</td>
+                              <td className="border border-zinc-100 px-4 py-3 text-center text-sm font-bold">
+                                <span className={`inline-block px-3 py-1 rounded-lg text-xs font-black tracking-wider ${
+                                  grade === 'O' ? 'bg-emerald-100 text-emerald-800' :
+                                  String(grade).startsWith('A') ? 'bg-blue-100 text-blue-800' :
+                                  String(grade).startsWith('B') ? 'bg-cyan-100 text-cyan-800' :
+                                  String(grade).startsWith('C') ? 'bg-amber-100 text-amber-800' :
+                                  isFail ? 'bg-red-100 text-red-700 font-black' :
+                                  'bg-zinc-100 text-zinc-700'
+                                }`}>
+                                  {grade}
+                                </span>
+                              </td>
+                              <td className="border border-zinc-100 px-4 py-3 text-center text-sm font-bold text-blue-600">
+                                {gpa}
+                              </td>
+                              <td className={`border border-zinc-100 px-4 py-3 text-center text-sm font-black ${
+                                isFail ? 'text-red-600 bg-red-50/70 font-black' : 'text-[#120c7a]'
+                              }`}>
+                                {mark}
+                              </td>
+                            </tr>
+                          );
+                        }
+
                         return (
                           <tr key={student.reg} className="hover:bg-blue-50/30 transition-colors group">
                             <td className="border border-zinc-100 px-4 py-3 text-center text-sm text-zinc-500 font-medium">{idx + 1}</td>
                             <td className="border border-zinc-100 px-4 py-3 text-sm font-mono text-zinc-600">{student.reg}</td>
                             <td className="border border-zinc-100 px-4 py-3 text-sm text-zinc-700 font-medium">{student.name}</td>
-                            <td className="border border-zinc-100 px-4 py-3 text-center text-sm font-bold text-blue-600/80 group-hover:text-blue-600">{totals.CO1 || 0}</td>
-                            <td className="border border-zinc-100 px-4 py-3 text-center text-sm font-bold text-blue-600/80 group-hover:text-blue-600">{totals.CO2 || 0}</td>
-                            <td className="border border-zinc-100 px-4 py-3 text-center text-sm font-bold text-blue-600/80 group-hover:text-blue-600">{totals.CO3 || 0}</td>
-                            <td className="border border-zinc-100 px-4 py-3 text-center text-sm font-bold text-blue-600/80 group-hover:text-blue-600">{totals.CO4 || 0}</td>
-                            <td className="border border-zinc-100 px-4 py-3 text-center text-sm font-bold text-blue-600/80 group-hover:text-blue-600">{totals.CO5 || 0}</td>
+                            {['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].map(co => {
+                              const rawVal = totals[co] !== undefined && totals[co] !== null && totals[co] !== "" ? Number(totals[co]) : 0;
+                              const coMax = Number(consolidationData?.maxMarks?.[co] || 100);
+                              // Clamp to coMax if rawVal exceeds coMax (safeguard against un-normalized historical saves)
+                              const val = (coMax > 1 && consolidationView !== 'final' && rawVal > coMax) ? coMax : rawVal;
+                              const valPct = coMax > 0 ? (val / coMax) * 100 : val;
+                              const isBelowCutoff = valPct < cutoffPct;
+
+                              return (
+                                <td
+                                  key={co}
+                                  className={`border border-zinc-100 px-4 py-3 text-center text-sm font-bold transition-colors ${
+                                    isBelowCutoff
+                                      ? 'text-red-600 bg-red-50/70 font-black'
+                                      : 'text-blue-600/80 group-hover:text-blue-600'
+                                  }`}
+                                  title={isBelowCutoff ? `${val} (Below cutoff: ${cutoffPct}%)` : `${val}`}
+                                >
+                                  {val}
+                                </td>
+                              );
+                            })}
                           </tr>
                         );
                       })}
-                      {indirectCoAverages && (
+                      {isEseOverall && (() => {
+                        let totalMarksSum = 0;
+                        let markCount = 0;
+                        let gpaSum = 0;
+                        let gpaCount = 0;
+                        students.forEach(st => {
+                          const t = consolidationData.studentTotals[st.reg] || {};
+                          if (!t.absent) {
+                            const m = Number(t.overall ?? t.total);
+                            if (!isNaN(m) && m > 0) { totalMarksSum += m; markCount++; }
+                            const g = Number(t.gradePoint ?? t.gpa);
+                            if (!isNaN(g) && g > 0) { gpaSum += g; gpaCount++; }
+                          }
+                        });
+                        const avgGpa = gpaCount > 0 ? (gpaSum / gpaCount).toFixed(2) : '-';
+                        const avgMark = markCount > 0 ? (totalMarksSum / markCount).toFixed(2) : '-';
+                        return (
+                          <tr className="bg-emerald-50/60 border-t-2 border-emerald-200">
+                            <td className="border border-zinc-200 px-4 py-3 text-center text-sm font-bold text-emerald-700" colSpan={3}>
+                              Class Average ({students.length} Students)
+                            </td>
+                            <td className="border border-zinc-200 px-4 py-3 text-center text-xs font-bold text-emerald-700">-</td>
+                            <td className="border border-zinc-200 px-4 py-3 text-center text-sm font-black text-emerald-700">{avgGpa}</td>
+                            <td className="border border-zinc-200 px-4 py-3 text-center text-sm font-black text-emerald-700">{avgMark}</td>
+                          </tr>
+                        );
+                      })()}
+                      {!isEseOverall && indirectCoAverages && (
                         <tr className="bg-emerald-50/60 border-t-2 border-emerald-200">
                           <td className="border border-zinc-200 px-4 py-3 text-center text-sm font-bold text-emerald-700" colSpan={3}>
                             CO Average ({indirectCoAverages.totalStudents} Students)

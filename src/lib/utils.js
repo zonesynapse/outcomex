@@ -59,6 +59,61 @@ export function formatDepartmentDisplay(dept, prog) {
 }
 
 /**
+ * Dynamically strips degree / programme prefixes from department names without hardcoding specific degrees.
+ * Supports any degree configured in Firestore now or created in the future (e.g. B.Arch, B.Des, B.Sc, M.Sc, Ph.D, etc.)
+ */
+export function stripDegreePrefixDynamic(deptStr, customProgrammes = []) {
+  if (!deptStr) return "";
+  const raw = String(deptStr).trim();
+
+  // 1. Strip Anna University / college code prefix (e.g. "106 - ", "243 : ")
+  const noCode = raw.replace(/^\d{2,4}\s*[-:_]\s*/, "").trim();
+
+  // 2. Check against any known custom programmes from Firestore
+  if (Array.isArray(customProgrammes) && customProgrammes.length > 0) {
+    for (const prog of customProgrammes) {
+      if (!prog) continue;
+      const cleanProg = String(prog).trim();
+      const escaped = cleanProg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const progRegex = new RegExp(`^${escaped}\\s*[-_:]?\\s*`, 'i');
+      if (progRegex.test(noCode)) {
+        const stripped = noCode.replace(progRegex, '').trim();
+        if (stripped) return stripped;
+      }
+    }
+  }
+
+  // 3. Dynamic generic degree prefix stripping:
+  // Matches any leading academic degree token (e.g. "B.E.", "B.Tech.", "B.Tech", "M.E.", "M.Tech.", "B.Sc.", "M.Sc.", "B.Arch", "B.Des", "B.Voc", "MBA", "MCA", "Ph.D.", "Integrated M.Tech", etc.)
+  const dynamicRegex = /^(?:(?:integrated|int\.?)\s+)?(?:[a-z]{1,4}\.?(?:[a-z]{1,4}\.?)?|[a-z]{2,5})\s+/i;
+  const match = noCode.match(dynamicRegex);
+  if (match) {
+    const candidate = noCode.slice(match[0].length).trim();
+    if (candidate) return candidate;
+  }
+
+  return noCode || raw;
+}
+
+/**
+ * Dynamically strips degree prefixes from sanitized keys (e.g. "b_tech_computer_science" -> "computer_science")
+ */
+export function stripSanitizedDegreePrefix(sanitizedKey, customProgrammes = []) {
+  if (!sanitizedKey) return "";
+  let str = String(sanitizedKey).trim();
+  if (Array.isArray(customProgrammes)) {
+    for (const p of customProgrammes) {
+      if (!p) continue;
+      const pSan = sanitizeKey(p).toLowerCase();
+      if (pSan && str.toLowerCase().startsWith(`${pSan}_`)) {
+        return str.slice(pSan.length + 1);
+      }
+    }
+  }
+  return str.replace(/^(?:(?:integrated|int)_)?(?:[a-z0-9]{1,4}_(?:[a-z0-9]{1,4}_)?|[a-z0-9]{2,5}_)/i, '');
+}
+
+/**
  * Dynamic department registry & matching engine backed by Firestore (department_metadata & programme_departments).
  * Purely data-driven with ZERO hardcoding.
  */
@@ -68,7 +123,9 @@ export {
   extractAcronym,
   normalizeDept,
   extractDeptFromDocId,
-  resolveCanonicalDeptFromFirestore
+  resolveCanonicalDeptFromFirestore,
+  getDeptFromRegNo,
+  ANNA_UNIV_DEPT_CODES
 } from "./departmentRegistry";
 
 export function getOrdinal(n) {

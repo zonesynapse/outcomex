@@ -262,37 +262,154 @@ export default function StudentEseFee() {
     );
   }, [activeExam, examData, feeDocDetails]);
 
-  // 5. Listen to Existing Registration & Payment Record for this student
+  // 5. Listen to Existing Registration & Payment Record for this student across all collections
   useEffect(() => {
     if (!currentUser && !studentReg) return;
 
-    const q = query(collection(db, "ese_fee_registrations"));
+    let regDocs = [];
+    let esePayments = [];
+    let examPayments = [];
 
-    const unsubReg = onSnapshot(
-      q,
-      (snapshot) => {
-        let match = null;
-        snapshot.forEach((d) => {
-          const data = d.data();
-          const matches =
-            (currentUser?.uid && data.studentUid === currentUser.uid) ||
-            (studentReg && String(data.regNo || "").trim().toLowerCase() === studentReg.toLowerCase());
+    const recomputeMatch = () => {
+      const cleanReg = studentReg ? String(studentReg).trim().toLowerCase() : "";
+      const currentUid = currentUser?.uid ? String(currentUser.uid).trim().toLowerCase() : "";
+      const currentEmail = currentUser?.email ? String(currentUser.email).trim().toLowerCase() : "";
+      const targetExamId = activeExam?.id || eseSettings.selectedExamId || "";
 
-          if (matches) {
-            const targetExamId = activeExam?.id || eseSettings.selectedExamId;
-            if (targetExamId && data.examId === targetExamId) {
-              match = { id: d.id, ...data };
-            } else if (!match) {
-              match = { id: d.id, ...data };
+      const checkMatch = (data, docId) => {
+        const dReg = String(data.regNo || data.studentRegNo || data.registerNumber || "").trim().toLowerCase();
+        const dUid = String(data.studentUid || data.uid || data.userId || "").trim().toLowerCase();
+        const dEmail = String(data.email || data.studentEmail || "").trim().toLowerCase();
+        const dId = String(docId || "").toLowerCase();
+
+        return (
+          (cleanReg && (dReg === cleanReg || dId.endsWith(cleanReg))) ||
+          (currentUid && (dUid === currentUid || dId === `ese_${currentUid}` || dId.includes(currentUid))) ||
+          (currentEmail && dEmail === currentEmail)
+        );
+      };
+
+      const isDocPaid = (d) => {
+        const stat = (d.paymentStatus || d.status || d.hdfcStatus || "").toLowerCase();
+        return (
+          stat === "paid" ||
+          stat === "success" ||
+          stat === "successful" ||
+          stat === "charged" ||
+          stat === "completed" ||
+          d.billAttached === true ||
+          Boolean(d.receiptNo) ||
+          Boolean(d.paidAt)
+        );
+      };
+
+      const allRecords = [];
+
+      regDocs.forEach((d) => {
+        const data = d.data();
+        if (checkMatch(data, d.id)) {
+          allRecords.push({ id: d.id, source: "ese_fee_registrations", ...data });
+        }
+      });
+
+      esePayments.forEach((d) => {
+        const data = d.data();
+        if (checkMatch(data, d.id)) {
+          allRecords.push({
+            id: d.id,
+            source: "ese_fee_payments",
+            orderId: data.orderId || d.id,
+            ...data,
+          });
+        }
+      });
+
+      examPayments.forEach((d) => {
+        const data = d.data();
+        const st = (data.status || "").toUpperCase();
+        if (st === "SUCCESS" || st === "CHARGED" || st === "PAID") {
+          const cat = (data.category || "").toLowerCase();
+          if (!cat || cat.includes("ese") || cat.includes("exam") || cat.includes("examination")) {
+            if (checkMatch(data, d.id)) {
+              allRecords.push({
+                id: d.id,
+                source: "exam_cell_payments",
+                orderId: data.orderId || d.id,
+                paymentStatus: "Paid",
+                status: "Paid",
+                feeAmount: data.amount || data.chargedAmount || 4600,
+                ...data,
+              });
             }
           }
-        });
-        setExistingReg(match);
+        }
+      });
+
+      if (allRecords.length === 0) {
+        setExistingReg(null);
+        return;
+      }
+
+      // Priority 1: Paid records matching targetExamId
+      let best = allRecords.find((r) => isDocPaid(r) && targetExamId && r.examId === targetExamId);
+      // Priority 2: Any Paid record
+      if (!best) {
+        best = allRecords.find((r) => isDocPaid(r));
+      }
+      // Priority 3: Non-paid record matching targetExamId
+      if (!best) {
+        best = allRecords.find((r) => targetExamId && r.examId === targetExamId);
+      }
+      // Priority 4: Any matching record
+      if (!best) {
+        best = allRecords[0];
+      }
+
+      if (best) {
+        if (isDocPaid(best)) {
+          best.paymentStatus = "Paid";
+          best.status = "Paid";
+          if (!best.receiptNo) {
+            best.receiptNo = `REC-ESE-${best.orderId || best.id}`;
+          }
+        }
+      }
+
+      setExistingReg(best || null);
+    };
+
+    const unsubReg = onSnapshot(
+      collection(db, "ese_fee_registrations"),
+      (snap) => {
+        regDocs = snap.docs;
+        recomputeMatch();
       },
       (err) => console.error("Error reading ese_fee_registrations:", err)
     );
 
-    return () => unsubReg();
+    const unsubEsePay = onSnapshot(
+      collection(db, "ese_fee_payments"),
+      (snap) => {
+        esePayments = snap.docs;
+        recomputeMatch();
+      },
+      (err) => console.error("Error reading ese_fee_payments:", err)
+    );
+
+    const unsubExamCellPay = onSnapshot(
+      collection(db, "exam_cell_payments"),
+      (snap) => {
+        examPayments = snap.docs;
+        recomputeMatch();
+      },
+      (err) => console.error("Error reading exam_cell_payments:", err)
+    );
+
+    return () => {
+      unsubReg();
+      unsubEsePay();
+      unsubExamCellPay();
+    };
   }, [currentUser, studentReg, activeExam?.id, eseSettings.selectedExamId]);
 
   // Window status evaluate
@@ -376,10 +493,18 @@ export default function StudentEseFee() {
         }
 
         if (isSuccess) {
-          const effectiveRegId =
-            targetRegId ||
-            existingReg?.id ||
-            `${activeExam?.id || eseSettings.selectedExamId || "ESE"}_${studentReg || currentUser?.uid}`;
+          let effectiveRegId = targetRegId || existingReg?.id;
+          if (!effectiveRegId && orderId) {
+            try {
+              const snap = await getDocs(query(collection(db, "ese_fee_registrations"), where("orderId", "==", orderId)));
+              if (!snap.empty) {
+                effectiveRegId = snap.docs[0].id;
+              }
+            } catch (_) {}
+          }
+          if (!effectiveRegId) {
+            effectiveRegId = `${activeExam?.id || eseSettings.selectedExamId || "ESE"}_${studentReg || currentUser?.uid}`;
+          }
 
           const receiptNo = `REC-ESE-${orderId}`;
           const paidTimestamp = serverTimestamp();
@@ -419,7 +544,7 @@ export default function StudentEseFee() {
               studentData?.name ||
               currentUser?.email ||
               "Student",
-            department: studentData?.department || "",
+            department: cleanDeptName(studentData?.department || ""),
             batch: studentData?.batch || "",
             section: studentData?.section || "A",
             programme: studentData?.programme || "UG",
@@ -470,16 +595,36 @@ export default function StudentEseFee() {
     ]
   );
 
-  // Handle Redirect Return from Gateway (?order_id=...)
+  // Handle Redirect Return from Gateway (?order_id=...) & Automatic Pending Recovery on Load
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const orderId = params.get("order_id");
     if (orderId) {
       const cleanUrl = window.location.pathname + window.location.hash;
       window.history.replaceState({}, document.title, cleanUrl);
-      verifyPaymentOnReturn(orderId, null, true);
+      let targetRegId = null;
+      try {
+        const stored = JSON.parse(localStorage.getItem("ese_pending_payment") || "{}");
+        if (stored?.orderId === orderId && stored?.regDocId) {
+          targetRegId = stored.regDocId;
+        }
+      } catch (_) {}
+      verifyPaymentOnReturn(orderId, targetRegId, true);
+      return;
     }
-  }, [verifyPaymentOnReturn]);
+
+    // Auto-recovery for students who closed the browser during/after payment
+    const checkPendingOnMount = async () => {
+      try {
+        const stored = JSON.parse(localStorage.getItem("ese_pending_payment") || "{}");
+        if (stored?.orderId && existingReg?.paymentStatus !== "Paid") {
+          console.log("Checking pending payment from localStorage on mount:", stored.orderId);
+          await verifyPaymentOnReturn(stored.orderId, stored.regDocId, false);
+        }
+      } catch (_) {}
+    };
+    checkPendingOnMount();
+  }, [verifyPaymentOnReturn, existingReg?.paymentStatus]);
 
   // Clean Dept Name Helper
   const cleanDeptName = (dept) => {
@@ -843,15 +988,32 @@ export default function StudentEseFee() {
     }
   };
 
-  const isPaid = existingReg?.paymentStatus === "Paid" || existingReg?.status === "Paid";
+  const isPaid = useMemo(() => {
+    if (!existingReg) return false;
+    const stat = (existingReg.paymentStatus || existingReg.status || existingReg.hdfcStatus || "").toLowerCase();
+    return (
+      stat === "paid" ||
+      stat === "success" ||
+      stat === "successful" ||
+      stat === "charged" ||
+      stat === "completed" ||
+      existingReg.billAttached === true ||
+      Boolean(existingReg.receiptNo) ||
+      Boolean(existingReg.paidAt)
+    );
+  }, [existingReg]);
 
   const receiptData = useMemo(() => {
+    const feeVal = allocatedFee || existingReg?.feeAmount || existingReg?.amount || 0;
     return {
       ...existingReg,
-      amount: allocatedFee || existingReg?.feeAmount || 0,
-      examName: resolvedExamName,
-      examSession: resolvedExamSession,
-      academicYear: resolvedAcademicYear,
+      amount: feeVal,
+      feeAmount: feeVal,
+      orderId: existingReg?.orderId || existingReg?.id || "",
+      receiptNo: existingReg?.receiptNo || (existingReg?.orderId ? `REC-ESE-${existingReg.orderId}` : "REC-ESE-PENDING"),
+      examName: existingReg?.examName || resolvedExamName,
+      examSession: existingReg?.examSession || resolvedExamSession,
+      academicYear: existingReg?.academicYear || resolvedAcademicYear,
       studentName:
         studentData?.displayName || studentData?.studentName || studentData?.name || existingReg?.studentName,
       regNo: studentReg || existingReg?.regNo,

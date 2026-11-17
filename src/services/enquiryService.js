@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, getDocs, onSnapshot, setDoc, updateDoc, deleteDoc, query, orderBy, limit, startAfter, where, getCountFromServer } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, onSnapshot, setDoc, updateDoc, deleteDoc, query, orderBy, limit, startAfter, where, getCountFromServer, Timestamp } from "firebase/firestore";
 import { db } from "../firebase";
 
 const ENQUIRY_ROOT = "enquiries";
@@ -327,6 +327,8 @@ export async function addEnquiry(data) {
   if (payload.status === "Approved" || payload.status === "Admitted") {
     syncEnquiryToApprovedAdmissions(payload).catch((err) => console.warn("Admissions sync error:", err));
   }
+  // Sync payments into Fee System (fee_payments & fee_receipts)
+  syncEnquiryPaymentsToFeeSystem(payload).catch((err) => console.warn("Fee payments sync error:", err));
   return enquiryId;
 }
 
@@ -382,11 +384,26 @@ export async function updateEnquiry(enquiryId, updates) {
   if (payload.status === "Approved" || payload.status === "Admitted") {
     syncEnquiryToApprovedAdmissions(payload).catch((err) => console.warn("Admissions sync error:", err));
   }
+  // Sync payments into Fee System (fee_payments & fee_receipts)
+  syncEnquiryPaymentsToFeeSystem(payload).catch((err) => console.warn("Fee payments sync error:", err));
 }
 
 export async function deleteEnquiry(enquiryId) {
   if (!enquiryId) return;
   await deleteDoc(doc(db, ENQUIRY_ROOT, enquiryId));
+  // Clean up synced fee records if any
+  try {
+    for (let i = 0; i < 10; i++) {
+      const payRef = doc(db, "fee_payments", `enq_pay_${enquiryId}_${i}`);
+      const recRef = doc(db, "fee_receipts", `enq_rec_${enquiryId}_${i}`);
+      const [pSnap, rSnap] = await Promise.all([getDoc(payRef), getDoc(recRef)]);
+      if (pSnap.exists()) await deleteDoc(payRef);
+      if (rSnap.exists()) await deleteDoc(recRef);
+      if (!pSnap.exists() && !rSnap.exists()) break;
+    }
+  } catch (err) {
+    console.warn("Error deleting synced enquiry fee records:", err);
+  }
 }
 
 export async function getEnquiryById(enquiryId) {
@@ -515,6 +532,163 @@ export async function syncEnquiryToApprovedAdmissions(enquiryData) {
     return { success: true, docId: studentDocId, regNo };
   } catch (err) {
     console.error("Failed to sync enquiry to approved_admissions:", err);
+    return { success: false, error: err };
+  }
+}
+
+/**
+ * Synchronize payments from Admission Enquiries & Applications directly into
+ * the college Fee System (fee_payments and fee_receipts collections).
+ * This ensures that Application & Admission fee collections reflect immediately
+ * in FeeDashboard.jsx and FeeOperations.jsx Reports and Receipts.
+ */
+export async function syncEnquiryPaymentsToFeeSystem(enquiryData) {
+  if (!enquiryData) return { success: false, reason: "No enquiry data" };
+
+  try {
+    const enquiryId = enquiryData.enquiryId || enquiryData.id;
+    if (!enquiryId) return { success: false, reason: "Missing enquiryId" };
+
+    const rawPayments = Array.isArray(enquiryData.payments) && enquiryData.payments.length > 0
+      ? enquiryData.payments
+      : (enquiryData.feeAmount ? [{
+          feeCategory: enquiryData.feeCategory || "Application Fee",
+          feeAmount: enquiryData.feeAmount,
+          paymentMode: enquiryData.paymentMode || "cash",
+          paymentDate: enquiryData.paymentDate || enquiryData.enquiryDate,
+          upiNumber: enquiryData.upiNumber || ""
+        }] : []);
+
+    const validPayments = rawPayments.filter(p => {
+      const amt = Number(p.feeAmount);
+      return !isNaN(amt) && amt > 0;
+    });
+
+    const studentName = enquiryData.studentName || `${enquiryData.firstName || ""} ${enquiryData.lastName || ""}`.trim() || "Student";
+    const appNo = enquiryData.applicationNo || enquiryId;
+    const department = enquiryData.department || enquiryData.departmentName || "—";
+    const rawProg = enquiryData.programme || "";
+    const isPG = /pg|mba|mca|me|mtech/i.test(rawProg) || /business\s+administration|management/i.test(department);
+    const programme = isPG ? "PG" : "UG";
+
+    // Batch & Academic Year derivation
+    let batch = enquiryData.batch || "";
+    if (!batch || !batch.includes("-")) {
+      const yearMatch = String(enquiryId || appNo || enquiryData.enquiryDate || new Date().getFullYear()).match(/\d{4}/);
+      const startYear = yearMatch ? parseInt(yearMatch[0], 10) : new Date().getFullYear();
+      const duration = isPG ? 2 : 4;
+      batch = `${startYear}-${startYear + duration}`;
+    }
+
+    const curYear = new Date().getFullYear();
+    const curMonth = new Date().getMonth();
+    const defAy = curMonth >= 5 ? `${curYear}-${curYear + 1}` : `${curYear - 1}-${curYear}`;
+    const academicYear = enquiryData.academicYear || defAy;
+
+    // First, clean up any previous excess synced fee records
+    for (let i = validPayments.length; i < 10; i++) {
+      const oldPayRef = doc(db, "fee_payments", `enq_pay_${enquiryId}_${i}`);
+      const oldRecRef = doc(db, "fee_receipts", `enq_rec_${enquiryId}_${i}`);
+      try {
+        const [pSnap, rSnap] = await Promise.all([getDoc(oldPayRef), getDoc(oldRecRef)]);
+        if (pSnap.exists()) await deleteDoc(oldPayRef);
+        if (rSnap.exists()) await deleteDoc(oldRecRef);
+        if (!pSnap.exists() && !rSnap.exists()) break;
+      } catch (_) {}
+    }
+
+    if (validPayments.length === 0) {
+      return { success: true, count: 0 };
+    }
+
+    for (let index = 0; index < validPayments.length; index++) {
+      const p = validPayments[index];
+      const amt = Number(p.feeAmount);
+      const feeHead = p.feeCategory || (enquiryData.status === "Admission" || enquiryData.status === "Approved" ? "Admission Fee" : "Application Fee");
+      const rawMode = String(p.paymentMode || "cash").toLowerCase();
+      const resolvedMode = (rawMode === "cash" || rawMode.includes("hand")) ? "cash"
+        : (rawMode === "pay_online" || rawMode === "upi" || rawMode === "online" || Boolean(p.upiNumber)) ? "upi"
+        : rawMode === "dd" ? "dd"
+        : rawMode === "cheque" ? "cheque"
+        : "cash";
+
+      const pDate = p.paymentDate || enquiryData.enquiryDate || enquiryData.admissionDate || new Date().toISOString().slice(0, 10);
+      const cleanEnqId = String(enquiryId).replace(/[^A-Za-z0-9]/g, '');
+      const receiptNo = p.receiptNo || `REC-APP-${cleanEnqId}-${index + 1}`;
+      const refNo = p.upiNumber || p.refNo || appNo;
+
+      const payDocId = `enq_pay_${enquiryId}_${index}`;
+      const recDocId = `enq_rec_${enquiryId}_${index}`;
+
+      const paymentRecord = {
+        uid: enquiryId,
+        studentId: enquiryId,
+        examNumber: appNo,
+        studentName,
+        programme,
+        department,
+        batch,
+        amount: amt,
+        chargedAmount: amt,
+        status: "SUCCESS",
+        mode: resolvedMode,
+        paymentMode: resolvedMode,
+        feeHead,
+        academicYear,
+        semester: "All",
+        remarks: `Admission Application Payment (${feeHead}) - ${appNo}`,
+        refNo,
+        receiptNo,
+        paymentDate: pDate,
+        createdAt: Timestamp.now(),
+        isApplicationFee: true,
+        source: "admission_enquiry",
+        enquiryId,
+        applicationNo: appNo,
+        accountNo: "76980",
+        accountName: "College Account #76980"
+      };
+
+      const receiptRecord = {
+        uid: enquiryId,
+        studentId: enquiryId,
+        examNumber: appNo,
+        studentName,
+        programme,
+        department,
+        batch,
+        amount: amt,
+        status: "active",
+        mode: resolvedMode,
+        paymentMode: resolvedMode,
+        feeHead,
+        academicYear,
+        remarks: `Admission Application Payment (${feeHead}) - ${appNo}`,
+        refNo,
+        receiptNo,
+        paymentDate: pDate,
+        createdAt: Timestamp.now(),
+        isApplicationFee: true,
+        source: "admission_enquiry",
+        enquiryId,
+        applicationNo: appNo,
+        reprintCount: 0,
+        items: [
+          { head: feeHead, amount: amt }
+        ],
+        accountNo: "76980",
+        accountName: "College Account #76980"
+      };
+
+      await Promise.all([
+        setDoc(doc(db, "fee_payments", payDocId), paymentRecord, { merge: true }),
+        setDoc(doc(db, "fee_receipts", recDocId), receiptRecord, { merge: true })
+      ]);
+    }
+
+    return { success: true, count: validPayments.length };
+  } catch (err) {
+    console.error("Failed to sync enquiry payment to fee system:", err);
     return { success: false, error: err };
   }
 }

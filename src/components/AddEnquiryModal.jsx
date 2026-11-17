@@ -34,7 +34,7 @@ const HOSTELLER_OPTIONS = ["Hosteller", "Day scholar"];
 const YES_NO_OPTIONS = ["YES", "NO"];
 const PAYMENT_MODES = [
   { value: "cash", label: "Hand / Cash" },
-  { value: "pay_online", label: "Pay Online" }
+  { value: "pay_online", label: "UPI / Online (GPay / PhonePe / UTR)" }
 ];
 
 const isValidMobile = (value) => /^\d{10}$/.test(String(value || "").trim());
@@ -498,8 +498,8 @@ export default function AddEnquiryModal({
 
         const finalY = doc.lastAutoTable.finalY || currentY + 10;
         doc.setFontSize(10);
-        const modeText = payment.paymentMode === "pay_online" 
-          ? `Online (UTR: ${payment.upiNumber || "N/A"})` 
+        const modeText = (payment.paymentMode === "pay_online" || payment.paymentMode === "upi")
+          ? `UPI / Online (UTR: ${payment.upiNumber || "N/A"})` 
           : "Cash / Hand";
         doc.text(`Payment Mode: ${modeText}`, 14, finalY + 15);
         
@@ -610,8 +610,8 @@ export default function AddEnquiryModal({
         
         // Collect unique payment modes
         const unqModes = [...new Set(validPayments.map(p => {
-          if (p.paymentMode === "pay_online") {
-            return `Online (UTR: ${p.upiNumber || "N/A"})`;
+          if (p.paymentMode === "pay_online" || p.paymentMode === "upi") {
+            return `UPI / Online (UTR: ${p.upiNumber || "N/A"})`;
           }
           return "Cash / Hand";
         }))];

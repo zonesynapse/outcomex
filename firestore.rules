@@ -13,7 +13,11 @@ service cloud.firestore {
     function isApproved() {
       return isAuthenticated() && (
         isMasterAdmin() || 
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isApproved == true
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isApproved == true ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isApproved == 'true' ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isApproved == 'Approved' ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'Approved' ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.approved == true
       );
     }
 
@@ -52,6 +56,11 @@ service cloud.firestore {
       allow write: if isApproved() && isMasterAdmin();
     }
 
+    match /department_metadata/{progKey} {
+      allow read: if true;
+      allow write: if isApproved();
+    }
+
     match /designations/{designation} {
       allow read: if true;
       allow write: if isApproved();
@@ -87,12 +96,72 @@ service cloud.firestore {
       allow write: if isApproved();
     }
 
+    match /course_type_weightage/{docId} {
+      allow read: if true;
+      allow write: if isApproved();
+    }
+
+    match /cia_configs/{configId} {
+      allow read: if true;
+      allow write: if isApproved();
+    }
+
+    match /batch_sections/{docId} {
+      allow read: if true;
+      allow write: if isApproved();
+    }
+
+    match /subject_assignments/{docId} {
+      allow read: if isAuthenticated() || isApproved();
+      allow write: if isApproved();
+    }
+
+    match /qp_setter_assignments/{docId} {
+      allow read: if true;
+      allow write: if isApproved();
+    }
+
+    match /course_bank/{docId} {
+      allow read: if true;
+      allow write: if isApproved();
+    }
+
+    match /course_outcomes/{docId} {
+      allow read: if true;
+      allow write: if isApproved();
+    }
+
+    match /mapping_summary/{docId} {
+      allow read: if true;
+      allow write: if isApproved();
+    }
+
+    match /po_pso/{docId} {
+      allow read: if true;
+      allow write: if isApproved();
+    }
+
+    match /generated_qps/{docId} {
+      allow read: if isAuthenticated() || isApproved();
+      allow write: if isAuthenticated() || isApproved();
+    }
+
     match /coe_external_setters/{docId} {
       allow read: if true;
       allow write: if isApproved();
     }
 
     match /coe_setter_assignments/{docId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /coe_scrutiny_members/{docId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    match /coe_scrutiny_reports/{docId} {
       allow read: if true;
       allow write: if true;
     }
@@ -142,11 +211,6 @@ service cloud.firestore {
       allow write: if isApproved();
     }
 
-    match /syllabus_data/{syllabusId} {
-      allow read: if isApproved();
-      allow write: if isApproved();
-    }
-
     match /scholarships/{scholarshipId} {
       allow read: if isApproved();
       allow write: if isApproved();
@@ -173,16 +237,29 @@ service cloud.firestore {
       allow write: if isApproved();
     }
 
-    // Fee Payments — students read own records; write only via Cloud Function (Admin SDK)
+    // Fee Payments — students read own records; staff write & manage
     match /fee_payments/{docId} {
-      allow read: if isAuthenticated() && (resource.data.uid == request.auth.uid || isApproved());
-      allow write: if false;
-      allow create: if false;
-      allow delete: if false;
+      allow read: if (isAuthenticated() && resource.data.uid == request.auth.uid) || isApproved();
+      allow write: if isApproved();
+      allow create: if isApproved();
+      allow delete: if isApproved();
     }
-    match /fee_receipts/{docId} { allow read, write: if false; }
-    match /fee_concessions/{docId} { allow read, write: if false; }
-    match /fee_heads/{docId} { allow read, write: if false; }
+    match /fee_receipts/{docId} { 
+      allow read: if (isAuthenticated() && resource.data.uid == request.auth.uid) || isApproved();
+      allow write: if isApproved(); 
+    }
+    match /fee_concessions/{docId} { 
+      allow read: if isApproved() || isAuthenticated();
+      allow write: if isApproved(); 
+    }
+    match /fee_heads/{docId} { 
+      allow read: if isAuthenticated() || isApproved();
+      allow write: if isApproved(); 
+    }
+    match /fee_opening_dues/{docId} {
+      allow read: if isAuthenticated() || isApproved();
+      allow write: if isApproved();
+    }
     match /fee_defaulters_cache/{docId} { allow read, write: if false; }
 
     match /student_index/{docId} {

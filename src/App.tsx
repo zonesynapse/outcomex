@@ -128,6 +128,7 @@ import ResourceApprovals from "./pages/resourceHub/ResourceApprovals";
 import StudentResourceHub from "./pages/student/ResourceHub";
 import CoeDashboard from "./pages/COE/CoeDashboard";
 import ExternalSetterWorkbench from "./pages/COE/ExternalSetterWorkbench";
+import ScrutinyWorkbench from "./pages/COE/ScrutinyWorkbench";
 import TransportBusFleet from "./pages/TransportBusFleet";
 import TransportRoutesStages from "./pages/TransportRoutesStages";
 import TransportConfig from "./pages/TransportConfig";
@@ -177,6 +178,10 @@ export default function App() {
         <Route path="/coe-setter-login/*" element={<ExternalSetterWorkbench />} />
         <Route path="/coe-external-setter" element={<ExternalSetterWorkbench />} />
         <Route path="/coe-external-setter/*" element={<ExternalSetterWorkbench />} />
+        <Route path="/coe-scrutiny-login" element={<ScrutinyWorkbench />} />
+        <Route path="/coe-scrutiny-login/*" element={<ScrutinyWorkbench />} />
+        <Route path="/coe-scrutiny-workbench" element={<ScrutinyWorkbench />} />
+        <Route path="/coe-scrutiny-workbench/*" element={<ScrutinyWorkbench />} />
 
         {/* Protected Routes */}
         <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />

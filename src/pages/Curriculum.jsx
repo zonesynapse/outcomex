@@ -353,11 +353,12 @@ export default function Curriculum() {
   };
 
   const getExamCategory = (config) => {
-    if (config.isAssignment) return "Activity";
-    if (config.isProject) return "Project";
-    if (config.isPractical) return "Practical";
-    if (config.isUniversity) return "ESE";
-    if (config.isIndirectAssessment) return "Indirect Assessment";
+    if (!config) return "Written Test";
+    if (config.isAssignment || config.isActivity || /assignment|activity/i.test(config.examName || '')) return "Activity";
+    if (config.isProject || /project/i.test(config.examName || '')) return "Project";
+    if (config.isPractical || /practical|lab/i.test(config.examName || '')) return "Practical";
+    if (config.isUniversity || /end\s*sem|ese|university/i.test(config.examName || '')) return "ESE";
+    if (config.isIndirectAssessment || /survey|indirect/i.test(config.examName || '')) return "Indirect Assessment";
     return "Written Test";
   };
 

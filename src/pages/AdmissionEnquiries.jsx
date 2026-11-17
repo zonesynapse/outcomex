@@ -6,7 +6,7 @@ import { useDepartments } from "../hooks/useDepartments";
 import DashboardCards from "../components/DashboardCards";
 import EnquiryTable from "../components/EnquiryTable";
 import AddEnquiryModal from "../components/AddEnquiryModal";
-import { addEnquiry, createEmptyEnquiryForm, deleteEnquiry, getEnquiriesPaginated, getEnquiriesCount as getEnquiriesCountService, getEnquiriesStats, updateEnquiry, getEnquiryById, getAllEnquiries, syncEnquiryToApprovedAdmissions } from "../services/enquiryService";
+import { addEnquiry, createEmptyEnquiryForm, deleteEnquiry, getEnquiriesPaginated, getEnquiriesCount as getEnquiriesCountService, getEnquiriesStats, updateEnquiry, getEnquiryById, getAllEnquiries, syncEnquiryToApprovedAdmissions, syncEnquiryPaymentsToFeeSystem } from "../services/enquiryService";
 import { getSeatConfigurationsRealtime } from "../services/seatService";
 
 const STATUS_FILTERS = ["All", "Enquiry", "Application", "Admission", "Approved"];
@@ -80,12 +80,19 @@ export default function AdmissionEnquiries() {
     getEnquiriesStats().then(setStats).catch(() => {});
   }, [refreshTrigger]);
 
-  // Resilient background sync: ensure all admitted students are in approved_admissions
+  // Resilient background sync: ensure all admitted students are in approved_admissions and enquiry payments are synced to fee system
   useEffect(() => {
     getAllEnquiries().then((all) => {
       const admittedList = all.filter((e) => e.status === "Approved" || e.status === "Admitted");
       admittedList.forEach((adm) => {
         syncEnquiryToApprovedAdmissions(adm).catch(() => {});
+      });
+      // Synchronize all existing enquiry/application payments into fee_payments and fee_receipts
+      all.forEach((enq) => {
+        const hasFee = (Array.isArray(enq.payments) && enq.payments.some(p => Number(p.feeAmount) > 0)) || Number(enq.feeAmount) > 0;
+        if (hasFee) {
+          syncEnquiryPaymentsToFeeSystem(enq).catch(() => {});
+        }
       });
     }).catch(() => {});
   }, []);
@@ -233,12 +240,14 @@ export default function AdmissionEnquiries() {
         if (merged.status === "Approved" || merged.status === "Admitted") {
           await syncEnquiryToApprovedAdmissions(merged).catch(() => {});
         }
+        await syncEnquiryPaymentsToFeeSystem(merged).catch(() => {});
         showToast("Enquiry updated successfully");
       } else {
         const newId = await addEnquiry(values);
         if (values.status === "Approved" || values.status === "Admitted") {
           await syncEnquiryToApprovedAdmissions({ ...values, enquiryId: newId }).catch(() => {});
         }
+        await syncEnquiryPaymentsToFeeSystem({ ...values, enquiryId: newId }).catch(() => {});
       }
       closeModal();
       refreshPage();

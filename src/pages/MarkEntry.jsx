@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useLocation } from "react-router-dom";
 import { db, auth } from "../firebase";
-import { doc, collection, setDoc, getDoc, onSnapshot, getDocs, query, where, documentId } from "firebase/firestore";
+import { doc, collection, setDoc, getDoc, onSnapshot, getDocs, query, where, documentId, limit } from "firebase/firestore";
 import {
   ChevronDown,
   Save,
@@ -18,7 +18,7 @@ import Layout from "../components/Layout";
 import { useDepartments } from "../hooks/useDepartments";
 import { useRegulations } from "../hooks/useRegulations";
 import { useBatches } from "../hooks/useBatches";
-import { formatProgDisplay, formatBatchDisplay, formatProgrammeKey, isDeptMatch as canonicalDeptMatch } from "../lib/utils";
+import { formatProgDisplay, formatBatchDisplay, formatProgrammeKey, isDeptMatch as canonicalDeptMatch, stripSanitizedDegreePrefix, stripDegreePrefixDynamic } from "../lib/utils";
 import useUnsavedChanges from "../hooks/useUnsavedChanges";
 import { fetchAllCourseNamesMap } from "../utils/courseUtils";
 
@@ -30,17 +30,6 @@ const sanitizeKeyStrict = (key) => {
   if (!key) return '';
   return String(key).replace(/[.#$[\]/ ]/g, '_');
 };
-
-const DEFAULT_GRADES = [
-  { grade: 'S', gradePoint: 10, mark: 100 },
-  { grade: 'A+', gradePoint: 9, mark: 90 },
-  { grade: 'A', gradePoint: 8, mark: 80 },
-  { grade: 'B+', gradePoint: 7, mark: 70 },
-  { grade: 'B', gradePoint: 6, mark: 60 },
-  { grade: 'C', gradePoint: 5, mark: 50 },
-  { grade: 'D', gradePoint: 4, mark: 40 },
-  { grade: 'F', gradePoint: 0, mark: 0 },
-];
 
 const deriveSemesterNumber = (label) => {
   if (!label) return '';
@@ -121,6 +110,8 @@ const batchStartYear = (b) => {
   return m ? parseInt(m[0], 10) : null;
 };
 
+const yearStartOf = (s) => String(s || '').match(/(19|20)\d{2}/)?.[0] || '';
+
 const getBatchDurationYears = (b) => {
   if (!b) return null;
   const years = String(b).match(/(19|20)\d{2}/g);
@@ -154,16 +145,62 @@ const isExamNameMatch = (a, b) => {
   return na === nb;
 };
 
-const getNormalizedCourseType = (typeStr) => {
-  if (!typeStr) return 'theory';
-  const s = String(typeStr).trim().toLowerCase().replace(/[–—]/g, '-');
-  if (s.includes('lab') && s.includes('theory')) return 'integrated';
-  if (s.includes('cum') || s.includes('integrated') || s.includes('with lab') || s.includes('withlab') || s === 'lit') return 'integrated';
-  if (s.includes('practical') || s.includes('lab') || s.includes('laboratory')) return 'practical';
-  if (s.includes('project')) return 'project';
-  if (s.includes('activity')) return 'activity';
-  return s;
+// Dynamically extract all configured exam tokens from Firestore (cia_configs, generated_qps, availableExams)
+// strictly excluding the current exam, so no exam names are ever hardcoded.
+const getOtherConfiguredExamTokens = (curExam, configs = [], qps = [], available = []) => {
+  if (!curExam) return [];
+  const curClean = sanitizeKey(stripSetSuffix(curExam)).toLowerCase();
+  const curSan = sanitizeKey(curExam).toLowerCase();
+  const rawSet = new Set();
+
+  (configs || []).forEach(c => {
+    [c.examName, c.exam_name, c.exam, c.id].forEach(val => {
+      if (!val || isFirestoreKey(val)) return;
+      rawSet.add(String(val).trim());
+    });
+  });
+
+  (qps || []).forEach(q => {
+    [q.exam_name, q.examName, q.exam, q.qpaper_name, q.qpaperName].forEach(val => {
+      if (!val || isFirestoreKey(val)) return;
+      rawSet.add(String(val).trim());
+    });
+  });
+
+  (available || []).forEach(e => {
+    [e.text, e.value, e.baseName].forEach(val => {
+      if (!val || isFirestoreKey(val)) return;
+      rawSet.add(String(val).trim());
+    });
+  });
+
+  const tokens = new Set();
+  rawSet.forEach(name => {
+    const s = String(name);
+    const b = stripSetSuffix(s);
+    const sSan = sanitizeKey(s).toLowerCase();
+    const bSan = sanitizeKey(b).toLowerCase();
+    const sSanStrict = sanitizeKeyStrict(s).toLowerCase();
+    const bSanStrict = sanitizeKeyStrict(b).toLowerCase();
+
+    [sSan, bSan, sSanStrict, bSanStrict].forEach(tok => {
+      if (tok && tok !== curClean && tok !== curSan) {
+        tokens.add(tok);
+      }
+    });
+  });
+
+  return Array.from(tokens);
 };
+
+const getNormalizedCourseType = (typeStr) => {
+  if (!typeStr) return '';
+  return String(typeStr).trim().toLowerCase().replace(/[–—_ ]/g, '');
+};
+
+// Module-level in-memory caches for instantaneous sub-100ms mark and roster loading
+const studentRosterCache = new Map();
+const marksDocumentCache = new Map();
 
 export default function MarkEntry() {
   const location = useLocation();
@@ -205,6 +242,8 @@ export default function MarkEntry() {
   const [facultyAssignPrefixes, setFacultyAssignPrefixes] = useState([]);
   const [facultyAssignedGroups, setFacultyAssignedGroups] = useState([]);
   const [subjectCourseType, setSubjectCourseType] = useState("");
+  const [subjectCOs, setSubjectCOs] = useState([]);
+  const activeCOs = useMemo(() => Array.isArray(subjectCOs) ? subjectCOs : [], [subjectCOs]);
 
   useEffect(() => {
     if (!auth.currentUser) return;
@@ -243,12 +282,22 @@ export default function MarkEntry() {
               batchTokens.unshift(parts[idx]);
               idx -= 1;
             }
-            // Fallback: if no batch tokens found, scan for any YYYY token
+            // Dynamically resolve progKey by matching against known programmes from PROGRAMME_DEPARTMENTS
             let progKey = parts[0] || "";
             let deptStartIdx = 1;
-            if (parts.length > 1 && ['B', 'M'].includes(parts[0]) && ['E', 'Tech', 'Sc', 'Com'].includes(parts[1])) {
-              progKey = `${parts[0]}_${parts[1]}`;
-              deptStartIdx = 2;
+            const allKnownProgs = Object.keys(PROGRAMME_DEPARTMENTS || {});
+            const twoParts = parts.length > 1 ? `${parts[0]}_${parts[1]}` : "";
+            const matchedProg = allKnownProgs.find(p => formatProgrammeKey(p) === twoParts) ||
+              allKnownProgs.find(p => formatProgrammeKey(p) === parts[0]);
+            if (matchedProg) {
+              progKey = formatProgrammeKey(matchedProg);
+              deptStartIdx = progKey.includes('_') ? 2 : 1;
+            } else if (parts.length > 1 && formatProgrammeKey(`${parts[0]}_${parts[1]}`)) {
+              const cand = formatProgrammeKey(`${parts[0]}_${parts[1]}`);
+              if (cand && cand.length > 2) {
+                progKey = cand;
+                deptStartIdx = 2;
+              }
             }
             const dept = parts.slice(deptStartIdx, Math.max(deptStartIdx, idx + 1)).join('_');
             return { progKey, dept, batch: batchTokens.join('_'), ay, sem, section };
@@ -330,6 +379,8 @@ export default function MarkEntry() {
   const [assignmentConfig, setAssignmentConfig] = useState([]);
   const [qpMeta, setQpMeta] = useState({});
   const [loading, setLoading] = useState(false);
+  const [marksLoading, setMarksLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
 
   const showToastMsg = (message, type = 'success') => {
@@ -359,6 +410,8 @@ export default function MarkEntry() {
   // those docs and the table wrongly shows all zeros.
   const [resolvedMarksDocId, setResolvedMarksDocId] = useState(null);
   const marksResolveCache = useRef({});
+  const courseTypeCacheRef = useRef({});
+  const syllabusCacheRef = useRef({});
 
   // Warn on accidental reload/close while editing marks
   const isMarksDirty = useMemo(() => {
@@ -372,15 +425,16 @@ export default function MarkEntry() {
       return;
     }
 
-    const csvData = students.map(s => ({
-      "Register Number": s.regNo || s.reg,
-      "Name": s.name,
-      "CO1": "",
-      "CO2": "",
-      "CO3": "",
-      "CO4": "",
-      "CO5": ""
-    }));
+    const csvData = students.map(s => {
+      const row = {
+        "Register Number": s.regNo || s.reg,
+        "Name": s.name
+      };
+      activeCOs.forEach(co => {
+        row[co] = "";
+      });
+      return row;
+    });
 
     const csv = Papa.unparse(csvData);
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -403,7 +457,7 @@ export default function MarkEntry() {
 
     const isCOWise = markType === 'CO Wise';
     const header = isCOWise
-      ? ["Register Number", "Student Name", "CO1", "CO2", "CO3", "CO4", "CO5"]
+      ? ["Register Number", "Student Name", ...activeCOs]
       : ["Register Number", "Student Name", "Grade"];
 
     const ws_data = [header];
@@ -413,7 +467,7 @@ export default function MarkEntry() {
         ws_data.push([
           s.regNo || s.reg,
           s.name,
-          "", "", "", "", ""
+          ...activeCOs.map(() => "")
         ]);
       } else {
         ws_data.push([
@@ -495,7 +549,7 @@ export default function MarkEntry() {
         return;
       }
 
-      const activeGrades = gradeConfigs.length > 0 ? gradeConfigs : DEFAULT_GRADES;
+      const activeGrades = gradeConfigs || [];
       const newMarksData = { ...marksData };
       let matchCount = 0;
 
@@ -514,7 +568,7 @@ export default function MarkEntry() {
                 newMarksData[targetReg][coKey] = Number(val);
               }
             });
-            const coSum = ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].reduce((a, co) => a + Number(newMarksData[targetReg][co] || 0), 0);
+            const coSum = activeCOs.reduce((a, co) => a + Number(newMarksData[targetReg][co] || 0), 0);
             newMarksData[targetReg].total = coSum;
           } else {
             const rawGrade = String(row[gradeCol] || '').trim().toUpperCase();
@@ -641,26 +695,22 @@ export default function MarkEntry() {
     });
   };
 
-  // Fetch CIA Configs
+  // Fetch CIA Configs in real-time from Firestore
   useEffect(() => {
-    const fetchConfigs = async () => {
-      try {
-        const configsRef = collection(db, 'cia_configs'); // Firestore collection reference
-        const snapshot = await getDocs(configsRef); // Use getDocs for collection
-        if (!snapshot.empty) {
-          const data = {}; // Convert QuerySnapshot to object
-          snapshot.forEach(doc => { data[doc.id] = doc.data(); });
-          const configsArray = Object.keys(data).map(key => ({
-            id: key,
-            ...data[key]
-          }));
-          setCiaConfigs(configsArray);
-        }
-      } catch (error) {
-        console.error("Error fetching CIA configs:", error);
-      }
-    };
-    fetchConfigs();
+    const configsRef = collection(db, 'cia_configs');
+    const unsub = onSnapshot(configsRef, (snapshot) => {
+      const configsArray = [];
+      snapshot.forEach(doc => {
+        configsArray.push({
+          id: doc.id,
+          ...doc.data()
+        });
+      });
+      setCiaConfigs(configsArray);
+    }, (error) => {
+      console.error("Error fetching CIA configs:", error);
+    });
+    return () => unsub();
   }, []);
 
   useEffect(() => {
@@ -926,6 +976,17 @@ export default function MarkEntry() {
     }
   }, [academicYear, batch, programme, allQPs, facultyAssignedGroups, isBatchMatch]);
 
+  // Stable signature of relevant QP subject codes for the active batch and semester
+  const activeQpCodesKey = useMemo(() => {
+    const needSem = deriveSemesterNumber(semester);
+    return (allQPs || [])
+      .filter(qp => qp && isBatchMatch(qp.batch, batch) && String(deriveSemesterNumber(qp.semester)) === String(needSem))
+      .map(qp => parseSubjectCodeKey(qp.subject || qp.course || qp.subject_code || qp.courseCode))
+      .filter(Boolean)
+      .sort()
+      .join(',');
+  }, [allQPs, batch, semester, isBatchMatch]);
+
   // Subjects: User-handled assigned subjects + active QPs for selected department & semester.
   // Uses canonical department matching and global course map so subjects are never blank.
   useEffect(() => {
@@ -949,10 +1010,7 @@ export default function MarkEntry() {
       };
 
       try {
-        const userRef = doc(db, 'users', currentUser.uid);
-        const userSnap = await getDoc(userRef);
-        const role = userSnap.exists() ? userSnap.data().role : null;
-        const isPrivileged = role === 'Admin' || role === 'HOD' || role === 'Principal';
+        const isPrivileged = userRole === 'Admin' || userRole === 'HOD' || userRole === 'Principal';
 
         const cleanCode = (c) => parseSubjectCodeKey(c);
         let userHandledCodes = [];
@@ -1115,8 +1173,15 @@ export default function MarkEntry() {
             // because the QP document should carry the target department.
             const isMyQp = (Array.isArray(qp.allocated_to) && qp.allocated_to.includes(currentUser.uid)) ||
               (qp.allocated_faculty_id && qp.allocated_faculty_id === currentUser.uid) ||
-              (qp.created_by && qp.created_by === currentUser.uid);
-            if (isMyQp && qpDeptMatch) return true;
+              (qp.created_by && qp.created_by === currentUser.uid) ||
+              (qp.allocatedTo && (
+                qp.allocatedTo.facultyId === currentUser.uid ||
+                qp.allocatedTo.id === currentUser.uid ||
+                (currentUser.email && qp.allocatedTo.facultyEmail === currentUser.email) ||
+                (currentUser.email && qp.allocatedTo.email === currentUser.email)
+              )) ||
+              (currentUser.email && (qp.faculty_email === currentUser.email || qp.creator_email === currentUser.email));
+            if (isMyQp && (qpDeptMatch || !qpHasDept)) return true;
 
             return false;
           })
@@ -1230,22 +1295,52 @@ export default function MarkEntry() {
           uniqueCodes = [...new Set(uniqueCodes)].filter(code => (keepDash && noSpace(code) === dashKey) || stillAssigned || activeKeys.has(noSpace(code)));
         }
 
-        // Fetch course names map from courseUtils (syllabus + courses + course_bank)
-        let courseNamesMap = {};
-        try {
-          courseNamesMap = await fetchAllCourseNamesMap();
-        } catch { /* fallback below */ }
-
-        // Syllabus titles lookup for exact regulation match
-        const regulation = getRegulationForBatch(progKey, batch);
+        // 1. Syllabus titles & course types lookup for exact regulation match (single targeted document, fast & cached)
+        const regulation = getRegulationForBatch ? getRegulationForBatch(progKey, batch) : '';
+        const syllDocId = `${progKey}_${deptKey}_${sanitizeKey(regulation)}`;
         const syllabusMap = {};
-        try {
-          const syllabusSnap = await getDoc(doc(db, 'syllabus_data', `${progKey}_${deptKey}_${sanitizeKey(regulation)}`));
-          const syllabusData = syllabusSnap.data();
-          if (syllabusData?.semesters?.[needSem]) {
-            syllabusData.semesters[needSem].forEach(s => { if (s?.code) syllabusMap[String(s.code).toUpperCase()] = s.name; });
-          }
-        } catch { /* non-critical */ }
+        const syllabusTypeMap = {};
+
+        let syllabusData = syllabusCacheRef.current[syllDocId] || null;
+        if (!syllabusData && regulation) {
+          try {
+            const syllabusSnap = await getDoc(doc(db, 'syllabus_data', syllDocId));
+            if (syllabusSnap.exists()) {
+              syllabusData = syllabusSnap.data();
+              syllabusCacheRef.current[syllDocId] = syllabusData;
+            }
+          } catch { /* non-critical */ }
+        }
+
+        if (syllabusData?.semesters?.[needSem]) {
+          syllabusData.semesters[needSem].forEach(s => {
+            if (s?.code) {
+              const cU = String(s.code).toUpperCase().trim();
+              const cNoSpace = cU.replace(/\s+/g, '');
+              syllabusMap[cU] = s.name || '';
+              syllabusMap[cNoSpace] = s.name || '';
+              const cType = s.category || s.courseType || s.type || s.subjectType || '';
+              if (cType) {
+                syllabusTypeMap[cU] = cType;
+                syllabusTypeMap[cNoSpace] = cType;
+              }
+            }
+          });
+        }
+
+        // 2. Only fetch heavy courseNamesMap if some codes are completely missing titles
+        let courseNamesMap = {};
+        const hasMissingTitles = uniqueCodes.some(code => {
+          const clean = parseSubjectCodeKey(code);
+          const noSpace = clean.replace(/\s+/g, '');
+          return !syllabusMap[clean] && !syllabusMap[noSpace];
+        });
+
+        if (hasMissingTitles) {
+          try {
+            courseNamesMap = await fetchAllCourseNamesMap();
+          } catch { /* fallback */ }
+        }
 
         const mappedSubjects = uniqueCodes
           .map(code => {
@@ -1253,10 +1348,12 @@ export default function MarkEntry() {
             if (!clean) return null;
             // Titles may be keyed with or without the internal space ("CME 340" vs "CME340")
             const noSpace = clean.replace(/\s+/g, '');
-            const title = syllabusMap[clean] || courseNamesMap[clean] || syllabusMap[noSpace] || courseNamesMap[noSpace] || courseNamesMap[clean.toUpperCase()] || courseNamesMap[noSpace.toUpperCase()] || '';
+            const title = syllabusMap[clean] || syllabusMap[noSpace] || courseNamesMap[clean] || courseNamesMap[noSpace] || courseNamesMap[clean.toUpperCase()] || courseNamesMap[noSpace.toUpperCase()] || '';
+            const type = syllabusTypeMap[clean] || syllabusTypeMap[noSpace] || (/lab|practical|studio|drawing/i.test(title || clean) ? 'Practical' : (/project|dissertation/i.test(title || clean) ? 'Project' : 'Theory'));
             return {
               value: clean,
-              text: title ? `${clean} - ${title}` : clean
+              text: title ? `${clean} - ${title}` : clean,
+              type
             };
           })
           .filter(Boolean);
@@ -1271,7 +1368,7 @@ export default function MarkEntry() {
       }
     };
     fetchSubjectNames();
-  }, [batch, academicYear, semester, programme, department, section, getRegulationForBatch, allQPs, facultyAssignedGroups, isBatchMatch, isDeptMatch]);
+  }, [batch, academicYear, semester, programme, department, section, getRegulationForBatch, activeQpCodesKey, userRole, facultyAssignedGroups, isBatchMatch, isDeptMatch]);
 
   // Filter Available Exams based on generated QPs and University Configs.
   // Cross-department Common QPs included (no strict dept equality).
@@ -1308,12 +1405,10 @@ export default function MarkEntry() {
       return na.includes(nb) || nb.includes(na);
     };
 
-    // Determine current effective course type (either explicitly loaded or inferred from subject string)
+    // Determine current effective course type directly from Firestore-loaded state or subjects list
     const effectiveCourseType = subjectCourseType || (() => {
-      const lowerSub = String(subject || '').toLowerCase();
-      if (lowerSub.includes('lab') || lowerSub.includes('practical') || lowerSub.includes('practicum') || lowerSub.includes('studio') || lowerSub.includes('drawing')) return 'Practical';
-      if (lowerSub.includes('project') || lowerSub.includes('dissertation') || lowerSub.includes('thesis')) return 'Project';
-      return 'Theory';
+      const foundInSubs = subjects.find(s => s.value === subject || parseSubjectCodeKey(s.value) === targetSubCode);
+      return foundInSubs?.type || "";
     })();
     const targetNormCourseType = getNormalizedCourseType(effectiveCourseType);
 
@@ -1371,18 +1466,12 @@ export default function MarkEntry() {
         };
         if (!isExamMatchingCourseType(evalConfig)) return false;
 
-        // Strictly keep ONLY papers that are Allocated & Released (or Approved by Exam Cell / HOD)
+        // Strictly keep papers that are Allocated & Released (or Approved by Exam Cell / COE / HOD)
         const statusNorm = String(qp.status || qp.state || '').toLowerCase().trim();
-        const isAllocated = statusNorm === 'allocated & released' ||
-          statusNorm === 'allocated' ||
-          statusNorm === 'approved' ||
-          statusNorm === 'approved by exam cell' ||
-          statusNorm === 'approved_by_coe' ||
-          statusNorm === 'approved_by_hod' ||
-          qp.allocated === true ||
+        const isAllocated = qp.allocated === true ||
           qp.isAllocated === true ||
           Boolean(qp.allocatedTo) ||
-          qp.status === 'Allocated & Released';
+          /allocated|approved/i.test(statusNorm);
 
         return isAllocated;
       })
@@ -1448,7 +1537,7 @@ export default function MarkEntry() {
         return isExamMatchingCourseType(c, targetNormCourseType);
       })
       .map(c => {
-        const cleanName = c.examName || c.id;
+        const cleanName = c.examName || c.exam_name || c.exam || (!isFirestoreKey(c.id) ? c.id : '') || 'Internal Exam';
         return {
           value: cleanName,
           text: cleanName,
@@ -1565,10 +1654,11 @@ export default function MarkEntry() {
     }
   }, [exam, availableExams]);
 
-  // Fetch course type for the selected subject
+  // Fetch course type and COs for the selected subject
   useEffect(() => {
     if (!programme || !department || !batch || !subject) {
       setSubjectCourseType("");
+      setSubjectCOs([]);
       return;
     }
     const fetchCourseType = async () => {
@@ -1578,6 +1668,19 @@ export default function MarkEntry() {
       const rawSubCode = parseSubjectCodeKey(subject) || sanitizeKey(subject);
       const regVal = getRegulationForBatch ? getRegulationForBatch(progKey, batch) : "";
       const regKey = regVal ? sanitizeKey(regVal) : "";
+
+      // 0. Immediate resolution: if already known from subjects list, set type
+      const subFromState = subjects.find(s => s.value === subject || parseSubjectCodeKey(s.value) === rawSubCode);
+      if (subFromState?.type) {
+        setSubjectCourseType(subFromState.type);
+      }
+
+      // Check session memory cache
+      const cacheKey = `${progKey}_${deptKey}_${regKey}_${rawSubCode}`;
+      if (courseTypeCacheRef.current[cacheKey]) {
+        setSubjectCourseType(courseTypeCacheRef.current[cacheKey]);
+        return;
+      }
 
       const candidateKeys = [
         `${progKey}_${deptKey}_${rawSubCode}`,
@@ -1594,25 +1697,72 @@ export default function MarkEntry() {
 
       try {
         let foundType = "";
+        let foundCOs = [];
+
+        const extractCOs = (d) => {
+          if (!d) return [];
+          if (Array.isArray(d.co) && d.co.length > 0) {
+            return d.co.map((c, i) => String(c?.id || c?.code || c?.coNumber || `CO${i + 1}`).trim()).filter(Boolean);
+          }
+          if (typeof d === 'object') {
+            const keys = Object.keys(d)
+              .filter(k => /^co\d+$/i.test(k))
+              .sort((a, b) => (parseInt(a.replace(/\D/g, '')) || 0) - (parseInt(b.replace(/\D/g, '')) || 0));
+            if (keys.length > 0) return keys.map(k => k.toUpperCase());
+          }
+          return [];
+        };
+
         const tryGet = async (key) => {
           try {
             const snap = await getDoc(doc(db, 'courses', key));
-            if (snap.exists()) return snap.data().type || snap.data().category || snap.data().courseType || snap.data().subjectType || "";
+            if (snap.exists()) {
+              const d = snap.data();
+              if (foundCOs.length === 0) foundCOs = extractCOs(d);
+              return d.type || d.category || d.courseType || d.subjectType || "";
+            }
           } catch { }
           return "";
         };
-        // also try lower-case variant (courses keys are case-sensitive sanitized)
-        const lc = (s) => String(s || '').toLowerCase();
-        for (const k of candidateKeys) {
-          foundType = await tryGet(k);
-          if (foundType) break;
-          const low = lc(k);
-          if (low !== k) {
-            foundType = await tryGet(low);
-            if (foundType) break;
+
+        // Parallel evaluation of candidate keys in one single roundtrip
+        const results = await Promise.all(candidateKeys.map(k => tryGet(k)));
+        foundType = results.find(Boolean) || "";
+
+        // Query course_outcomes and course_bank for Course Outcomes if not yet found
+        if (foundCOs.length === 0) {
+          const coCandidateKeys = [
+            `${deptKey}_${regKey}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}`,
+            `${deptKey}_${regKey}_${rawSubCode}_${sanitizeKey(academicYear)}`,
+            `${deptKey}_${regKey}_${sanitizeKey(subject)}`,
+            `${deptKey}_${regKey}_${rawSubCode}`,
+            rawSubCode
+          ];
+          for (const cKey of coCandidateKeys) {
+            if (foundCOs.length > 0) break;
+            try {
+              const cSnap = await getDoc(doc(db, 'course_outcomes', cKey));
+              if (cSnap.exists()) {
+                const cCos = extractCOs(cSnap.data());
+                if (cCos.length > 0) { foundCOs = cCos; break; }
+              }
+            } catch { }
           }
         }
-        // Fallback 1: field query on code (covers any doc key format)
+        if (foundCOs.length === 0) {
+          try {
+            const cbSnap = await getDoc(doc(db, 'course_bank', rawSubCode));
+            if (cbSnap.exists()) {
+              const cbCos = extractCOs(cbSnap.data());
+              if (cbCos.length > 0) foundCOs = cbCos;
+            }
+          } catch { }
+        }
+        if (foundCOs.length > 0) {
+          setSubjectCOs(foundCOs);
+        }
+
+        // Fallback 1: field query on code (covers any doc key format in courses)
         if (!foundType) {
           try {
             const qSnap = await getDocs(query(collection(db, 'courses'), where('code', '==', rawSubCode)));
@@ -1628,16 +1778,17 @@ export default function MarkEntry() {
               const depNorm = normProg(data.department || data.deptKey || "");
               const rNorm = normProg(data.regulation || "");
               let score = 0;
-              // programme match relax: UG <-> B_Tech/B_E considered generic match
-              if (pNorm === progNorm) score += 10;
-              else if ((progNorm === 'ug' && (pNorm === 'b_tech' || pNorm === 'b_e')) || (progNorm === 'pg' && (pNorm === 'm_tech' || pNorm === 'm_e'))) score += 5;
+              if (pNorm === progNorm || (data.programme && formatProgrammeKey(data.programme) === progKey)) score += 10;
               if (depNorm === deptNorm || depNorm === deptStrictNorm) score += 8;
               else if (depNorm === 'overall') score += 4;
               if (regNorm && rNorm === regNorm) score += 6;
               const type = data.type || data.category || data.courseType || data.subjectType || "";
               if (type && score > bestScore) { bestScore = score; best = type; }
-              // if no high score but type exists, keep first as last resort
               if (type && bestScore === -1 && best === "") best = type;
+              if (foundCOs.length === 0) {
+                const qCos = extractCOs(data);
+                if (qCos.length > 0) { foundCOs = qCos; setSubjectCOs(qCos); }
+              }
             });
             if (best) foundType = best;
           } catch { }
@@ -1687,14 +1838,13 @@ export default function MarkEntry() {
 
   // Fetch Question Paper
   useEffect(() => {
-    const fetchQP = async () => {
+    const fetchQP = () => {
       if (!department || !academicYear || !subject || !exam || !semester) {
         setQpParts([]);
         setQpMeta({});
         return;
       }
 
-      setLoading(true);
       try {
         const norm = (s) => String(s || '').trim().toLowerCase().replace(/[–—]/g, '-');
         const needAy = norm(academicYear);
@@ -1776,6 +1926,15 @@ export default function MarkEntry() {
             semester: match.semester,
             co_weightage: match.co_weightage || {}
           });
+
+          if (match.co_weightage && typeof match.co_weightage === 'object') {
+            const qpCos = Object.keys(match.co_weightage)
+              .filter(k => /^co\d+/i.test(k))
+              .sort((a, b) => (parseInt(a.replace(/\D/g, '')) || 0) - (parseInt(b.replace(/\D/g, '')) || 0));
+            if (qpCos.length > 0) {
+              setSubjectCOs(prev => prev.length > 0 ? prev : qpCos);
+            }
+          }
         } else {
           setQpParts([]);
           setAssignmentConfig([]);
@@ -1783,8 +1942,6 @@ export default function MarkEntry() {
         }
       } catch (error) {
         console.error("QP Fetch Error:", error);
-      } finally {
-        setLoading(false);
       }
     };
 
@@ -1842,12 +1999,9 @@ export default function MarkEntry() {
         });
         if (best.length > 0) {
           setGradeConfigs(best);
-        } else {
-          setGradeConfigs(DEFAULT_GRADES);
         }
       } catch (e) {
         console.error('[gradeConfigs] error:', e);
-        setGradeConfigs(DEFAULT_GRADES);
       }
     };
     fetchGradeConfig();
@@ -1858,17 +2012,24 @@ export default function MarkEntry() {
   // so both eras resolve; returns { id, data } of the richest match or null.
   const findMarksDocByMeta = useCallback(async ({ batch, programme, department, subject, exam, academicYear, semester, markType, section, qpName, qpIds }) => {
     try {
-      const prefixes = [...new Set([String(batch || ''), canonicalizeBatch(batch)].filter(Boolean))];
-      if (prefixes.length === 0) return null;
+      let docs = [];
+      const batchYear = yearStartOf(batch);
+      const prefixes = [...new Set([
+        sanitizeKey(batch),
+        batchYear ? `23_batch_${batchYear}` : '',
+        batchYear ? `${batchYear}` : '',
+        canonicalizeBatch ? sanitizeKey(canonicalizeBatch(batch)) : ''
+      ].filter(Boolean))];
+
       const snaps = await Promise.all(
         prefixes.map(pfx => getDocs(query(
           collection(db, 'marks'),
           where(documentId(), '>=', pfx),
-          where(documentId(), '<=', pfx + '\uf8ff')
-        )))
+          where(documentId(), '<=', pfx + '\uf8ff'),
+          limit(30)
+        )).catch(() => ({ forEach: () => { } })))
       );
       const seen = new Set();
-      const docs = [];
       snaps.forEach(s => s.forEach(d => {
         if (!seen.has(d.id)) { seen.add(d.id); docs.push(d); }
       }));
@@ -1877,8 +2038,8 @@ export default function MarkEntry() {
       const targetProgKey = formatProgrammeKey(programme);
       const targetSubCode = parseSubjectCodeKey(subject);
       const targetSemNum = String(deriveSemesterNumber(semester) || '').trim();
-      const ayStartOf = (s) => String(s || '').match(/(19|20)\d{2}/)?.[0] || String(s || '').trim();
-      const targetAyStart = ayStartOf(academicYear);
+      const targetAyStart = yearStartOf(academicYear);
+      const targetBatchStart = yearStartOf(batch);
       // Valid tokens that represent the target exam ONLY
       const validQpPushKeys = (qpIds || []).filter(id => id && isFirestoreKey(id));
       const examTokens = new Set(
@@ -1900,38 +2061,47 @@ export default function MarkEntry() {
       docs.forEach(d => {
         const data = d.data() || {};
         const m = data._meta || {};
-        // Batch gate (fuzzy start-year)
-        if (m.batch && !isBatchMatch(m.batch, batch)) return;
+        const qm = data.qpaper_meta || {};
+        const docId = String(d.id || '');
+        const docIdLower = docId.toLowerCase();
+
+        // Batch gate (fuzzy start-year / isBatchMatch / docId)
+        const docBatch = m.batch || qm.batch || data.batch || '';
+        const docBatchYear = yearStartOf(docBatch || docId);
+        const batchMatches = !batch || !docBatch || isBatchMatch(docBatch, batch) || (docBatchYear && targetBatchStart && docBatchYear === targetBatchStart) || isBatchMatch(docId, batch);
+        if (!batchMatches) return;
+
         // Programme gate
-        if (m.programme && formatProgrammeKey(m.programme) !== targetProgKey) return;
+        const docProg = m.programme || qm.programme || data.programme;
+        if (docProg && targetProgKey && formatProgrammeKey(docProg) !== targetProgKey) return;
+
         // Department gate
-        if (m.department && !isDeptMatch(m.department, department)) return;
+        const docDept = m.department || qm.department || data.department;
+        if (docDept && department && !isDeptMatch(docDept, department)) return;
+
         // Subject gate
-        const metaSub = parseSubjectCodeKey(m.subject || '');
+        const metaSub = parseSubjectCodeKey(m.subject || qm.subject || data.subject || docId || '');
         if (metaSub && targetSubCode && metaSub !== targetSubCode) return;
+
         // Academic year gate
-        if (m.academic_year && targetAyStart && ayStartOf(m.academic_year) !== targetAyStart) return;
+        const docAy = m.academic_year || qm.academic_year || data.academic_year || data.academicYear;
+        if (docAy && targetAyStart && yearStartOf(docAy) !== targetAyStart) return;
+
         // Semester gate
-        const metaSemNum = String(deriveSemesterNumber(m.semester || m.semester_label || '') || '').trim();
+        const metaSemNum = String(deriveSemesterNumber(m.semester || m.semester_label || qm.semester || qm.semester_label || data.semester || '') || '').trim();
         if (metaSemNum && targetSemNum && metaSemNum !== targetSemNum) return;
-        // Section gate: meta.section must match; else doc-ID section marker must
-        // match; docs with no section info anywhere are accepted (pre-section era).
+
+        // Section gate: flexible match ("Sec-A" vs "A" vs "SecA")
         if (section) {
-          const secTrim = String(section).trim();
-          if (m.section && String(m.section).trim() !== secTrim) return;
-          if (!m.section) {
-            const secMarker = String(d.id || '').match(/_Sec-?([A-Za-z]+)\s*$/i);
-            if (secMarker && ('Sec-' + secMarker[1]).toLowerCase() !== secTrim.toLowerCase() && secMarker[0].replace(/^_/, '').toLowerCase() !== secTrim.toLowerCase()) return;
-          }
+          const secTrim = String(section).trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+          const docSec = String(m.section || qm.section || data.section || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (docSec && docSec !== 'all' && docSec !== secTrim && !docSec.includes(secTrim) && !secTrim.includes(docSec)) return;
         }
-        // Mark-type gate
-        if (m.mark_type && markType && String(m.mark_type).trim() !== String(markType).trim()) return;
 
         // STRICT EXAM GATE — Never allow cross-exam contamination (e.g. IA 1 marks leaking into IA 2)
-        const metaExam = String(m.exam || '').trim();
-        const metaExamName = String(m.exam_name || m.examName || '').trim();
-        const metaQpName = String(m.qpaper_meta?.qpaper_name || '').trim();
-        const docId = String(d.id || '');
+        const metaExam = String(m.exam || qm.exam || data.exam || '').trim();
+        const metaExamName = String(m.exam_name || m.examName || qm.exam_name || data.exam_name || '').trim();
+        const metaQpName = String(qm.qpaper_name || m.qpaper_name || '').trim();
 
         // 1. If metaExamName is an explicit, human-readable exam name, it MUST match the target exam!
         if (metaExamName && !isFirestoreKey(metaExamName)) {
@@ -1943,18 +2113,10 @@ export default function MarkEntry() {
           if (!isExamNameMatch(metaExam, exam)) return;
         }
 
-        // 3. If docId explicitly contains a different known exam name in its key structure, REJECT!
-        const curExamSanitized = sanitizeKey(exam).toLowerCase();
-        const curExamClean = sanitizeKey(stripSetSuffix(exam)).toLowerCase();
-        const docIdLower = docId.toLowerCase();
-        const knownOtherExams = ['ia 1', 'ia 2', 'ia 3', 'ia1', 'ia2', 'ia3', 'model', 'model exam', 'assignment 1', 'assignment 2']
-          .filter(ke => {
-            const keSan = sanitizeKey(ke).toLowerCase();
-            return keSan !== curExamClean && keSan !== curExamSanitized;
-          });
-        const hasOtherExamInDocId = knownOtherExams.some(ke => {
-          const keSan = sanitizeKey(ke).toLowerCase();
-          return docIdLower.includes(`_${keSan}_`);
+        // 3. Reject if docId explicitly contains a different configured exam name from Firestore
+        const otherExamTokens = getOtherConfiguredExamTokens(exam, ciaConfigs, allQPs, availableExams);
+        const hasOtherExamInDocId = otherExamTokens.some(keSan => {
+          return docIdLower.includes(`_${keSan}_`) || docIdLower.endsWith(`_${keSan}`);
         });
         if (hasOtherExamInDocId) return;
 
@@ -1966,9 +2128,11 @@ export default function MarkEntry() {
         const matchesTargetExam =
           (metaExamName && isExamNameMatch(metaExamName, exam)) ||
           (metaExam && isExamNameMatch(metaExam, exam)) ||
+          (metaQpName && isExamNameMatch(metaQpName, exam)) ||
           examTokens.has(metaExamLower) ||
           examTokens.has(metaExamNameLower) ||
-          (metaQpName && examTokens.has(metaQpNameLower));
+          examTokens.has(metaQpNameLower) ||
+          docIdLower.includes(norm(stripSetSuffix(exam)));
 
         if (!matchesTargetExam) return;
 
@@ -1984,331 +2148,464 @@ export default function MarkEntry() {
       console.warn('Legacy marks scan error:', e);
       return null;
     }
-  }, [isBatchMatch, isDeptMatch]);
+  }, [canonicalizeBatch, isBatchMatch, isDeptMatch]);
 
-  // Fetch Students and Saved Marks
+  // Fetch Students and Saved Marks (High-Performance Parallel Architecture)
   useEffect(() => {
+    let isCancelled = false;
     const loadData = async () => {
       if (!programme || !department || !batch || !academicYear || !semester || !subject || !exam) {
         setStudents([]);
         setMarksData({});
         setResolvedMarksDocId(null);
+        setLoading(false);
+        setMarksLoading(false);
         return;
       }
 
       setLoading(true);
-      setMarksData({});
+      setMarksLoading(true);
+
       try {
-        // 1. Resilient Student Loading
         const progKey = formatProgrammeKey(programme);
-        const sectionSuffix = section ? `_${sanitizeKey(section)}` : '';
         const deptKey = sanitizeKey(department);
         const deptKeyStrict = sanitizeKeyStrict(department);
-        const batchKey = sanitizeKey(batch);
+        const deptNoDegree = stripSanitizedDegreePrefix(deptKey);
+        const cleanBatch = sanitizeKey(batch);
+        const yKey = sanitizeKey(academicYear);
+        const semNum = deriveSemesterNumber(semester);
+        const rawSubCode = (typeof subject === 'object' ? (subject.code || subject.id) : String(subject).split(' - ')[0]).toUpperCase().trim();
+        const targetSubCode = parseSubjectCodeKey(subject);
+        const subCodeClean = sanitizeKey(rawSubCode);
+        const subSanitized = sanitizeKey(typeof subject === 'object' ? (subject.name || subject.id || '') : subject);
 
-        let studentData = null;
-        let studentDocId = `${batchKey}_${progKey}_${deptKey}${sectionSuffix}`;
+        const effectiveMarkType = markType || (() => {
+          const selectedExam = availableExams.find(e => e.value === exam);
+          if (selectedExam?.isIndirectAssessment) return 'CO Wise';
+          if (selectedExam?.type === 'University') return '';
+          return selectedExam?.type || 'Internal';
+        })();
 
-        const candidateDocIds = [
-          studentDocId,
-          `${batchKey}_${progKey}_${deptKeyStrict}${sectionSuffix}`,
-          `${batchKey}_${progKey}_${deptKey}`,
-          `${batchKey}_${progKey}_${deptKeyStrict}`,
-          `23_batch_2023_27_${progKey}_${deptKey}${sectionSuffix}`,
-          `23_batch_2023_27_${progKey}_${deptKeyStrict}${sectionSuffix}`,
-          `2023_2027_${progKey}_${deptKey}${sectionSuffix}`,
-          `2023_2027_${progKey}_${deptKeyStrict}${sectionSuffix}`
-        ];
+        // --- Task 1: Student Roster & Course Enrolments (Parallel) ---
+        const fetchRosterTask = async () => {
+          const rosterCacheKey = `${cleanBatch}_${progKey}_${deptKey}_${section || ''}_${academicYear || ''}`;
+          if (studentRosterCache.has(rosterCacheKey)) {
+            const cached = studentRosterCache.get(rosterCacheKey);
+            return {
+              studentList: [...cached.studentList],
+              studentDocId: cached.studentDocId,
+              enrolled: cached.enrolled || {}
+            };
+          }
 
-        for (const candidateId of candidateDocIds) {
-          try {
-            const snap = await getDoc(doc(db, 'students', candidateId));
-            if (snap.exists()) {
-              const data = snap.data();
+          const secVariations = [];
+          if (section) {
+            const rawSec = String(section).trim();
+            const cleanSec = sanitizeKey(rawSec);
+            secVariations.push(`_${cleanSec}`);
+            secVariations.push(`_${cleanSec.replace(/-/g, '_')}`);
+            secVariations.push(`_${cleanSec.replace(/_/g, '-')}`);
+            const secLetter = rawSec.replace(/[^a-zA-Z0-9]/g, '');
+            if (secLetter) {
+              secVariations.push(`_${secLetter}`);
+              secVariations.push(`_Sec_${secLetter}`);
+              secVariations.push(`_Sec-${secLetter}`);
+            }
+          }
+          const allSecVariations = [...new Set([...secVariations, ''])];
+
+          const deptCandidates = Array.from(new Set([
+            deptKey,
+            deptKeyStrict,
+            deptNoDegree,
+            department
+          ].filter(Boolean)));
+
+          const batchCandidates = [
+            cleanBatch,
+            batch,
+            cleanBatch.replace(/_Batch_\([^)]+\)/i, '_Batch'),
+            cleanBatch.replace(/_Batch/i, '')
+          ];
+          const yearsMatch = String(batch).match(/(\d{4})\s*[-_]\s*(\d{2,4})/);
+          if (yearsMatch) {
+            const by1 = yearsMatch[1];
+            const rawBy2 = yearsMatch[2];
+            const by2 = rawBy2.length === 2 ? `20${rawBy2}` : rawBy2;
+            const shortBy1 = by1.slice(-2);
+            const shortBy2 = by2.slice(-2);
+            batchCandidates.push(`${by1}-${by2}`);
+            batchCandidates.push(`${by1}_${by2}`);
+            batchCandidates.push(`${by1}-${shortBy2}`);
+            batchCandidates.push(`${by1}_${shortBy2}`);
+            batchCandidates.push(`${shortBy1}_batch_${by1}_${shortBy2}`);
+            batchCandidates.push(`${shortBy1}_batch_${by1}_${by2}`);
+          }
+
+          const topCandidates = [
+            `${cleanBatch}_${progKey}_${deptKey}${section ? `_${sanitizeKey(section)}` : ''}`,
+            `${cleanBatch}_${progKey}_${deptKeyStrict}${section ? `_${sanitizeKey(section)}` : ''}`,
+            `${cleanBatch}_${progKey}_${deptKey}_${section}`,
+            `${cleanBatch}_${progKey}_${deptKeyStrict}_${section}`,
+            `${cleanBatch}_${deptKey}${section ? `_${sanitizeKey(section)}` : ''}`,
+            `${cleanBatch}_${deptKeyStrict}${section ? `_${sanitizeKey(section)}` : ''}`,
+            `${cleanBatch}_${progKey}_${deptKey}`,
+            `${cleanBatch}_${progKey}_${deptKeyStrict}`,
+            `${cleanBatch}_${deptKey}`,
+            `${cleanBatch}_${deptKeyStrict}`
+          ];
+
+          const otherCandidates = [];
+          for (const b of batchCandidates) {
+            for (const d of deptCandidates) {
+              for (const s of allSecVariations) {
+                otherCandidates.push(`${b}_${progKey}_${d}${s}`);
+                otherCandidates.push(`${b}_${d}${s}`);
+              }
+            }
+          }
+          const uniqueCandidates = Array.from(new Set([...topCandidates, ...otherCandidates])).slice(0, 30);
+
+          let studentData = null;
+          let studentDocId = uniqueCandidates[0] || `${cleanBatch}_${progKey}_${deptKey}`;
+
+          // Fast parallel probe for top 10 candidates (~20ms)
+          const primaryProbes = await Promise.allSettled(
+            uniqueCandidates.slice(0, 10).map(cid => getDoc(doc(db, 'students', cid)))
+          );
+          for (let i = 0; i < primaryProbes.length; i++) {
+            const res = primaryProbes[i];
+            if (res.status === 'fulfilled' && res.value && res.value.exists()) {
+              const data = res.value.data();
               if (data && Object.keys(data).filter(k => !k.startsWith('_')).length > 0) {
                 studentData = data;
-                studentDocId = candidateId;
+                studentDocId = res.value.id;
                 break;
               }
             }
-          } catch (e) { }
-        }
-
-        // Broad fallback scan across students collection if studentData is still empty
-        if (!studentData || Object.keys(studentData).filter(k => !k.startsWith('_')).length === 0) {
-          try {
-            const studentsSnap = await getDocs(collection(db, 'students'));
-            const isDeptMatchLocal = isDeptMatch;
-
-            studentsSnap.forEach(d => {
-              const data = d.data();
-              const meta = data?._meta || {};
-              const docDept = meta.department || d.id;
-              const docBatch = meta.batch || d.id;
-
-              if (isBatchMatch(docBatch, batch) && isDeptMatchLocal(docDept, department)) {
-                if (section && meta.section && norm(meta.section) !== norm(section)) return;
-                if (!studentData) studentData = {};
-                Object.entries(data).forEach(([k, v]) => {
-                  if (!k.startsWith('_')) studentData[k] = v;
-                });
-              }
-            });
-          } catch (e) {
-            console.warn("Student fallback scan error:", e);
           }
-        }
 
-        let studentList = [];
-        if (studentData) {
-          studentList = Object.entries(studentData)
-            .filter(([key]) => !key.startsWith('_'))
-            .map(([reg, value]) => ({ reg, name: (value !== null && typeof value === 'object') ? (value.name || '') : String(value || '') }));
-
-          studentList.sort((a, b) => String(a.reg).localeCompare(String(b.reg), undefined, { numeric: true, sensitivity: 'base' }));
-
-          // Filter by joining academic year — lateral entry students only show from their joining AY
-          const joiningAY = studentData._joiningAY || {};
-          if (academicYear && Object.keys(joiningAY).length > 0) {
-            studentList = studentList.filter(s => {
-              const jAY = joiningAY[s.reg];
-              if (!jAY) return true;
-              return jAY <= academicYear;
-            });
-          }
-        }
-        setStudents(studentList);
-
-        // Check course enrolments for this subject and semester
-        if (subject) {
-          const semNum = deriveSemesterNumber(semester);
-          const rawSubCode = (typeof subject === 'object' ? (subject.code || subject.id) : String(subject).split(' - ')[0]).toUpperCase().trim();
-          const subCodeClean = sanitizeKey(rawSubCode);
-          const subSanitized = sanitizeKey(typeof subject === 'object' ? (subject.name || subject.id || '') : subject);
-          
-          // Derive batch year range (e.g. "25 Batch (2025-27)" -> "2025-2027")
-          let batchYearRange = '';
-          if (batch) {
-            const mYears = String(batch).match(/(19|20)\d{2}/g);
-            if (mYears && mYears.length >= 2) {
-              batchYearRange = `${mYears[0]}-${mYears[mYears.length - 1]}`;
-            } else {
-              const mShort = String(batch).match(/(20\d{2})\s*[-–—]\s*(\d{2,4})/);
-              if (mShort) {
-                let yEnd = mShort[2];
-                if (yEnd.length === 2) yEnd = `${mShort[1].slice(0, 2)}${yEnd}`;
-                batchYearRange = `${mShort[1]}-${yEnd}`;
+          // If top 10 didn't hit, check the remainder in parallel
+          if (!studentData && uniqueCandidates.length > 10) {
+            const secondaryProbes = await Promise.allSettled(
+              uniqueCandidates.slice(10).map(cid => getDoc(doc(db, 'students', cid)))
+            );
+            for (let i = 0; i < secondaryProbes.length; i++) {
+              const res = secondaryProbes[i];
+              if (res.status === 'fulfilled' && res.value && res.value.exists()) {
+                const data = res.value.data();
+                if (data && Object.keys(data).filter(k => !k.startsWith('_')).length > 0) {
+                  studentData = data;
+                  studentDocId = res.value.id;
+                  break;
+                }
               }
             }
           }
 
-          const deptKeys = Array.from(new Set([
-            department,
-            sanitizeKey(department),
-            sanitizeKeyStrict(department)
-          ].filter(Boolean)));
+          // Fallback scan across students collection only if candidate docs missed
+          if (!studentData || Object.keys(studentData).filter(k => !k.startsWith('_')).length === 0) {
+            try {
+              const studentsSnap = await getDocs(collection(db, 'students'));
+              let matchedDoc = null;
+              let matchedBaseDoc = null;
 
-          const batchKeys = Array.from(new Set([
-            batch,
-            batchYearRange,
-            batchYearRange.replace('-', '_'),
-            sanitizeKey(batch),
-            sanitizeKeyStrict(batch)
-          ].filter(Boolean)));
+              studentsSnap.forEach(d => {
+                const data = d.data();
+                const meta = data?._meta || {};
+                const docDept = meta.department || d.id;
+                const docBatch = meta.batch || d.id;
 
-          const yearKeys = Array.from(new Set([
-            academicYear,
-            sanitizeKey(academicYear),
-            String(academicYear || '').replace(/[^0-9-]/g, '')
-          ].filter(Boolean)));
-
-          const subKeys = Array.from(new Set([subCodeClean, subCodeClean.replace(/\s+/g, ''), subSanitized, rawSubCode, rawSubCode.replace(/\s+/g, '')].filter(Boolean)));
-          
-          const secClean = section ? sanitizeKey(section) : '';
-          const sectionSuffixes = Array.from(new Set([
-            section ? `_${section}` : '',
-            secClean ? `_${secClean}` : '',
-            secClean ? `_SEC_${secClean.toUpperCase()}` : '',
-            '',
-            '_Sec-A', '_Sec-B', '_SEC_A', '_SEC_B', '_A', '_B'
-          ].filter(v => v !== undefined)));
-
-          const candidateDocIds = [];
-          for (const prog of [progKey, programme].filter(Boolean)) {
-            for (const dK of deptKeys) {
-              for (const bK of batchKeys) {
-                for (const yK of yearKeys) {
-                  for (const sK of subKeys) {
-                    for (const sSuff of sectionSuffixes) {
-                      const cid = `${prog}_${dK}_${bK}_${yK}_${semNum}_${sK}${sSuff}`;
-                      if (!candidateDocIds.includes(cid)) {
-                        candidateDocIds.push(cid);
-                      }
+                if (isBatchMatch(docBatch, batch) && isDeptMatch(docDept, department)) {
+                  const count = Object.keys(data).filter(k => !k.startsWith('_')).length;
+                  if (count > 0) {
+                    const docIdLower = d.id.toLowerCase();
+                    const secLower = section ? section.toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+                    if (secLower && docIdLower.includes(secLower)) {
+                      matchedDoc = { data, docId: d.id };
+                    } else if (!matchedBaseDoc) {
+                      matchedBaseDoc = { data, docId: d.id };
                     }
                   }
                 }
+              });
+
+              const chosen = matchedDoc || matchedBaseDoc;
+              if (chosen) {
+                studentData = chosen.data;
+                studentDocId = chosen.docId;
+              }
+            } catch (e) {
+              console.warn("Student fallback scan error:", e);
+            }
+          }
+
+          let studentList = [];
+          if (studentData) {
+            studentList = Object.entries(studentData)
+              .filter(([key]) => !key.startsWith('_'))
+              .map(([reg, value]) => ({ reg, name: (value !== null && typeof value === 'object') ? (value.name || '') : String(value || '') }));
+
+            studentList.sort((a, b) => String(a.reg).localeCompare(String(b.reg), undefined, { numeric: true, sensitivity: 'base' }));
+
+            // Filter by joining academic year — lateral entry students only show from their joining AY
+            const joiningAY = studentData._joiningAY || {};
+            if (academicYear && Object.keys(joiningAY).length > 0) {
+              studentList = studentList.filter(s => {
+                const jAY = joiningAY[s.reg];
+                if (!jAY) return true;
+                return jAY <= academicYear;
+              });
+            }
+          }
+
+          // Check course enrolments
+          const enrolled = {};
+          if (subject) {
+            let batchYearRange = '';
+            if (batch) {
+              const mYears = String(batch).match(/(19|20)\d{2}/g);
+              if (mYears && mYears.length >= 2) {
+                batchYearRange = `${mYears[0]}-${mYears[mYears.length - 1]}`;
+              } else {
+                const mShort = String(batch).match(/(20\d{2})\s*[-–—]\s*(\d{2,4})/);
+                if (mShort) {
+                  let yEnd = mShort[2];
+                  if (yEnd.length === 2) yEnd = `${mShort[1].slice(0, 2)}${yEnd}`;
+                  batchYearRange = `${mShort[1]}-${yEnd}`;
+                }
+              }
+            }
+
+            const deptKeys = Array.from(new Set([deptKey, deptKeyStrict].filter(Boolean)));
+            const batchKeys = Array.from(new Set([cleanBatch, batchYearRange ? sanitizeKey(batchYearRange) : ''].filter(Boolean)));
+            const subKeys = Array.from(new Set([subCodeClean, subSanitized].filter(Boolean)));
+            const secSuffixes = section ? [`_${sanitizeKey(section)}`, `_${section}`, ''] : [''];
+
+            const candidateDocIds = [];
+            for (const dK of deptKeys) {
+              for (const bK of batchKeys) {
+                for (const sK of subKeys) {
+                  for (const sSuff of secSuffixes) {
+                    const cid = `${progKey}_${dK}_${bK}_${yKey}_${semNum}_${sK}${sSuff}`;
+                    if (!candidateDocIds.includes(cid)) candidateDocIds.push(cid);
+                  }
+                }
+              }
+            }
+
+            const enrolResults = await Promise.allSettled(
+              candidateDocIds.slice(0, 16).map(cid => getDoc(doc(db, 'course_enrolments', cid)))
+            );
+
+            enrolResults.forEach(res => {
+              if (res.status === 'fulfilled' && res.value && res.value.exists()) {
+                const obj = res.value.data() || {};
+                Object.entries(obj).forEach(([k, val]) => {
+                  if (k.startsWith('_')) return;
+                  if (val === true || val === 1 || val === "true" || (typeof val === 'object' && val !== null && val.enrolled !== false)) {
+                    enrolled[k] = true;
+                  }
+                });
+              }
+            });
+
+            if (Object.keys(enrolled).length > 0) {
+              const filtered = studentList.filter(s => {
+                const sReg = String(s.reg || s.regNo || s.examNo || '').trim();
+                const sNorm = sReg.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+                return Object.keys(enrolled).some(eKey => {
+                  const eNorm = String(eKey).trim().replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+                  return eNorm === sNorm || eKey === sReg;
+                });
+              });
+              if (filtered.length > 0) {
+                studentList = filtered;
               }
             }
           }
 
-          const enrolled = {};
-          const enrolResults = await Promise.allSettled(
-            candidateDocIds.map(cid => getDoc(doc(db, 'course_enrolments', cid)))
-          );
-
-          enrolResults.forEach(res => {
-            if (res.status === 'fulfilled' && res.value && res.value.exists()) {
-              const obj = res.value.data() || {};
-              Object.entries(obj).forEach(([k, val]) => {
-                if (k.startsWith('_')) return;
-                if (val === true || val === 1 || val === "true" || (typeof val === 'object' && val !== null && val.enrolled !== false)) {
-                  enrolled[k] = true;
-                }
-              });
+          // Section index enrichment
+          try {
+            const sectionIndexRef = doc(db, 'student_section_index', studentDocId);
+            const sectionIndexSnap = await getDoc(sectionIndexRef);
+            if (sectionIndexSnap.exists()) {
+              const sectionIndexData = sectionIndexSnap.data();
+              studentList = studentList.map(s => ({
+                ...s,
+                regNo: sectionIndexData[s.reg]?.regNo || ""
+              }));
             }
-          });
+          } catch (e) { }
 
-          if (Object.keys(enrolled).length > 0) {
-            studentList = studentList.filter(s => {
-              const sReg = String(s.reg || s.regNo || s.examNo || '').trim();
-              const sNorm = sReg.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-              return Object.keys(enrolled).some(eKey => {
-                const eNorm = String(eKey).trim().replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-                return eNorm === sNorm || eKey === sReg;
-              });
-            });
-          }
-          setEnrolledRegs(enrolled);
-        } else {
-          setEnrolledRegs({});
-        }
+          const resolvedRoster = { studentList, studentDocId, enrolled };
+          studentRosterCache.set(rosterCacheKey, resolvedRoster);
+          return resolvedRoster;
+        };
 
-        // Enrich studentList with regNo from student_section_index
-        try {
-          const sectionIndexRef = doc(db, 'student_section_index', studentDocId);
-          const sectionIndexSnap = await getDoc(sectionIndexRef);
-          if (sectionIndexSnap.exists()) {
-            const sectionIndexData = sectionIndexSnap.data();
-            studentList = studentList.map(s => ({
-              ...s,
-              regNo: sectionIndexData[s.reg]?.regNo || ""
-            }));
-          }
-        } catch (e) {
-          // Non-critical — index may not exist yet
-        }
+        // --- Task 2: Saved Marks Fetch (Parallel Fast-Break) ---
+        const fetchMarksTask = async () => {
+          if (!exam || !effectiveMarkType) return { savedMarks: {}, activeMarksId: null };
 
-        setStudents(studentList);
-
-        if (exam && markType) {
-          const marksKey = [batch, programme, department, subject, exam, academicYear, semester, markType]
+          const marksKey = [batch, programme, department, subject, exam, academicYear, semester, effectiveMarkType]
             .map(sanitizeKey)
             .join('_') + (section ? `_${sanitizeKey(section)}` : '');
 
-          // Resolve which marks doc to read: exact current-format key first, then
-          // cached legacy resolution, then a _meta scan. Older saves stored the QP
-          // push-ID in the exam slot ("..._CS25C08_-OsVReAuCyJ5lRI2-WsS_...") while
-          // the dropdown now carries the display name ("IA 1") — exact-only lookup
-          // misses those docs and the table wrongly shows all zeros.
-          const resolveSig = [batch, programme, department, subject, exam, academicYear, semester, markType, section].join('|');
+          const resolveSig = [batch, programme, department, subject, exam, academicYear, semester, effectiveMarkType, section].join('|');
+
+          // Check in-memory marks cache
+          if (marksDocumentCache.has(resolveSig)) {
+            const cached = marksDocumentCache.get(resolveSig);
+            return { savedMarks: cached.data || {}, activeMarksId: cached.id };
+          }
+
           let savedMarks = {};
           let activeMarksId = marksKey;
-          try {
-            const cachedId = marksResolveCache.current[resolveSig];
-            if (cachedId) {
-              try {
-                const cachedSnap = await getDoc(doc(db, 'marks', cachedId));
-                if (cachedSnap.exists()) {
-                  const cData = cachedSnap.data() || {};
-                  const cMeta = cData._meta || {};
-                  const cExam = cMeta.exam_name || cMeta.examName || cMeta.exam;
-                  // If cached doc has an exam that does not match this exam, invalidate cache!
-                  if (cExam && !isFirestoreKey(cExam) && !isExamNameMatch(cExam, exam)) {
-                    delete marksResolveCache.current[resolveSig];
-                  } else {
-                    savedMarks = cData;
-                    activeMarksId = cachedId;
-                  }
-                } else {
-                  delete marksResolveCache.current[resolveSig];
-                }
-              } catch { /* fall through to exact + scan */ }
-            }
-            if (Object.keys(savedMarks).length === 0) {
-              const exactSnap = await getDoc(doc(db, 'marks', marksKey));
-              if (exactSnap.exists()) {
-                const eData = exactSnap.data() || {};
-                const eMeta = eData._meta || {};
-                const eExam = eMeta.exam_name || eMeta.examName || eMeta.exam;
-                if (!eExam || isFirestoreKey(eExam) || isExamNameMatch(eExam, exam)) {
-                  savedMarks = eData;
-                  activeMarksId = marksKey;
-                }
-              }
-            }
-            if (Object.keys(savedMarks).length === 0) {
-              const targetSubCode = parseSubjectCodeKey(subject);
-              const targetSemNum = String(deriveSemesterNumber(semester) || '').trim();
 
-              // Strictly scope QP push tokens to QPs that match the current subject AND current exam!
-              const qpIdTokens = (allQPs || [])
-                .filter(qp => {
-                  const c = parseSubjectCodeKey(qp.subject || qp.course || qp.subject_code || qp.courseCode);
-                  if (!c || !targetSubCode || c !== targetSubCode) return false;
-                  if (qp.batch && !isBatchMatch(qp.batch, batch)) return false;
-                  const qpSem = String(deriveSemesterNumber(qp.semester) || '').trim();
-                  if (qpSem && targetSemNum && qpSem !== targetSemNum) return false;
-
-                  const rawQpName = qp.qpaper_name || qp.qpaperName || qp.id;
-                  const matchedCfg = (ciaConfigs || []).find(cfg => cfg.id === rawQpName || cfg.id === qp.id || cfg.examName === rawQpName || cfg.examName === qp.exam_name);
-                  const cleanQpName = qp.exam_name || qp.examName || matchedCfg?.examName || (!isFirestoreKey(rawQpName) ? rawQpName : '');
-                  const qpExam = cleanQpName || qp.qpaper_name || '';
-
-                  return isExamNameMatch(qpExam, exam) || isExamNameMatch(rawQpName, exam) || qp.id === exam;
-                })
-                .flatMap(qp => [qp.id, qp._id, qp._compositeKey, qp.compositeKey])
-                .filter(id => id && isFirestoreKey(id));
-
-              let safeQpName = '';
-              if (qpMeta?.qpaper_name) {
-                const qpNameStr = String(qpMeta.qpaper_name).trim();
-                if (isFirestoreKey(qpNameStr) || isExamNameMatch(qpNameStr, exam)) {
-                  safeQpName = qpNameStr;
-                }
-              }
-
-              const found = await findMarksDocByMeta({
-                batch, programme, department, subject, exam, academicYear, semester, markType, section,
-                qpName: safeQpName,
-                qpIds: qpIdTokens,
-              });
-              if (found) {
-                savedMarks = found.data;
-                activeMarksId = found.id;
-                marksResolveCache.current[resolveSig] = found.id;
-              }
-            }
-          } catch (e) {
-            console.warn('Marks lookup error:', e);
+          // Target exact 4 top candidate keys first
+          const directCandidates = [
+            marksKey,
+            [batch, programme, department, targetSubCode, exam, academicYear, semester, effectiveMarkType].map(sanitizeKey).join('_') + (section ? `_${sanitizeKey(section)}` : ''),
+            [batch, programme, deptKeyStrict, subject, exam, academicYear, semester, effectiveMarkType].map(sanitizeKey).join('_') + (section ? `_${sanitizeKey(section)}` : ''),
+            [batch, programme, deptKeyStrict, targetSubCode, exam, academicYear, semester, effectiveMarkType].map(sanitizeKey).join('_') + (section ? `_${sanitizeKey(section)}` : '')
+          ];
+          if (section) {
+            directCandidates.push(
+              [batch, programme, department, subject, exam, academicYear, semester, effectiveMarkType].map(sanitizeKey).join('_'),
+              [batch, programme, department, targetSubCode, exam, academicYear, semester, effectiveMarkType].map(sanitizeKey).join('_')
+            );
           }
-          setResolvedMarksDocId(activeMarksId);
 
-          // Query exam_attendance for absentees marked in exam cell roster
+          const directProbes = await Promise.allSettled(
+            directCandidates.map(cId => getDoc(doc(db, 'marks', cId)))
+          );
+
+          for (const pRes of directProbes) {
+            if (pRes.status === 'fulfilled' && pRes.value && pRes.value.exists()) {
+              const pData = pRes.value.data() || {};
+              const pMeta = pData._meta || {};
+              const pExam = pMeta.exam_name || pMeta.examName || pMeta.exam;
+              if (!pExam || isFirestoreKey(pExam) || isExamNameMatch(pExam, exam)) {
+                if (pData.students && Object.keys(pData.students).length > 0) {
+                  savedMarks = pData;
+                  activeMarksId = pRes.value.id;
+                  marksDocumentCache.set(resolveSig, { id: activeMarksId, data: savedMarks });
+                  return { savedMarks, activeMarksId };
+                }
+              }
+            }
+          }
+
+          // If direct keys didn't hit, check QP id variations & co_attainment with a strict 1.2s timeout
+          const qpIdTokens = (allQPs || [])
+            .filter(qp => {
+              const c = parseSubjectCodeKey(qp.subject || qp.course || qp.subject_code || qp.courseCode);
+              if (!c || !targetSubCode || c !== targetSubCode) return false;
+              if (qp.batch && !isBatchMatch(qp.batch, batch)) return false;
+              const qpSem = String(deriveSemesterNumber(qp.semester) || '').trim();
+              if (qpSem && String(semNum || '').trim() && qpSem !== String(semNum || '').trim()) return false;
+              const rawQpName = qp.qpaper_name || qp.qpaperName || qp.id;
+              const matchedCfg = (ciaConfigs || []).find(cfg => cfg.id === rawQpName || cfg.id === qp.id || cfg.examName === rawQpName || cfg.examName === qp.exam_name);
+              const cleanQpName = qp.exam_name || qp.examName || matchedCfg?.examName || (!isFirestoreKey(rawQpName) ? rawQpName : '');
+              const qpExam = cleanQpName || qp.qpaper_name || '';
+              return isExamNameMatch(qpExam, exam) || isExamNameMatch(rawQpName, exam) || qp.id === exam;
+            })
+            .flatMap(qp => [qp.id, qp._id, qp._compositeKey, qp.compositeKey])
+            .filter(id => id && isFirestoreKey(id));
+
+          // Fast candidate list
+          const candidateMarksKeys = new Set();
+          const subVariants = [sanitizeKey(subject), sanitizeKey(targetSubCode)].filter(Boolean);
+          const deptVariants = [deptKey, deptKeyStrict].filter(Boolean);
+          const examVariants = [sanitizeKey(exam), sanitizeKey(stripSetSuffix(exam)), ...qpIdTokens].filter(Boolean);
+          const markTypeVariants = [sanitizeKey(effectiveMarkType), ''];
+          const secVariants = section ? [`_${sanitizeKey(section)}`, ''] : [''];
+
+          deptVariants.forEach(dK => {
+            subVariants.forEach(sK => {
+              examVariants.forEach(eK => {
+                markTypeVariants.forEach(mK => {
+                  secVariants.forEach(scK => {
+                    const parts = [batch, programme, dK, sK, eK, academicYear, semester];
+                    if (mK) parts.push(mK);
+                    candidateMarksKeys.add(parts.map(sanitizeKey).join('_') + scK);
+                  });
+                });
+              });
+            });
+          });
+
+          const secondaryList = Array.from(candidateMarksKeys).slice(0, 16);
+          const secProbes = await Promise.allSettled(
+            secondaryList.map(cId => getDoc(doc(db, 'marks', cId)))
+          );
+
+          for (const pRes of secProbes) {
+            if (pRes.status === 'fulfilled' && pRes.value && pRes.value.exists()) {
+              const pData = pRes.value.data() || {};
+              const pMeta = pData._meta || {};
+              const pExam = pMeta.exam_name || pMeta.examName || pMeta.exam;
+              if (!pExam || isFirestoreKey(pExam) || isExamNameMatch(pExam, exam)) {
+                if (pData.students && Object.keys(pData.students).length > 0) {
+                  savedMarks = pData;
+                  activeMarksId = pRes.value.id;
+                  marksDocumentCache.set(resolveSig, { id: activeMarksId, data: savedMarks });
+                  return { savedMarks, activeMarksId };
+                }
+              }
+            }
+          }
+
+          // Fallback check on co_attainment
+          try {
+            const baseKeyParts = [batch, programme, department, targetSubCode, academicYear, semester].map(sanitizeKey);
+            const coAttainmentDocId = baseKeyParts.join('_') + (section ? `_${sanitizeKey(section)}` : '');
+            const examDocId = sanitizeKey(exam);
+            const subDocSnap = await getDoc(doc(db, 'co_attainment', coAttainmentDocId, 'exams', examDocId));
+            if (subDocSnap.exists() && subDocSnap.data()?.students && Object.keys(subDocSnap.data().students).length > 0) {
+              savedMarks = subDocSnap.data();
+              activeMarksId = `co_attainment_${subDocSnap.id}`;
+              marksDocumentCache.set(resolveSig, { id: activeMarksId, data: savedMarks });
+              return { savedMarks, activeMarksId };
+            }
+          } catch (e) { }
+
+          // Bounded timeout race for meta scan (never stalls > 1000ms)
+          const metaScanPromise = findMarksDocByMeta({
+            batch, programme, department, subject, exam, academicYear, semester, markType: effectiveMarkType, section,
+            qpName: qpMeta?.qpaper_name,
+            qpIds: qpIdTokens
+          });
+          const timeoutPromise = new Promise(resolve => setTimeout(() => resolve(null), 1000));
+          const found = await Promise.race([metaScanPromise, timeoutPromise]);
+          if (found && found.data) {
+            savedMarks = found.data;
+            activeMarksId = found.id;
+            marksDocumentCache.set(resolveSig, { id: activeMarksId, data: savedMarks });
+          }
+
+          return { savedMarks, activeMarksId };
+        };
+
+        // --- Task 3: Exam Attendance Absentees (Parallel) ---
+        const fetchAttendanceTask = async () => {
           const absentRegsSet = new Set();
           try {
-            const attSnap = await getDocs(collection(db, "exam_attendance"));
-            const sCodeClean = parseSubjectCodeKey(subject)?.toLowerCase().replace(/[^a-z0-9]/g, "");
+            const sCodeClean = targetSubCode?.toLowerCase().replace(/[^a-z0-9]/g, "");
             const examClean = exam ? exam.toLowerCase().replace(/[^a-z0-9]/g, "") : "";
+            const attDocCandidates = [
+              `${sCodeClean}_${examClean}_${deptKey}`,
+              `${sCodeClean}_${examClean}_${deptKeyStrict}`,
+              `${sCodeClean}_${sanitizeKey(exam)}_${deptKey}`,
+              `${sCodeClean}_${examClean}`
+            ];
 
-            attSnap.forEach((attDoc) => {
-              const attData = attDoc.data() || {};
-              const docCCode = String(attData.courseCode || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-              const docExam = String(attData.examName || "").toLowerCase().replace(/[^a-z0-9]/g, "");
-
-              const isCodeMatch = sCodeClean && docCCode && (docCCode.includes(sCodeClean) || sCodeClean.includes(docCCode));
-              const isExamMatch = !examClean || docExam.includes(examClean) || examClean.includes(docExam);
-
-              if (isCodeMatch && isExamMatch) {
+            const attProbes = await Promise.allSettled(
+              attDocCandidates.map(cid => getDoc(doc(db, "exam_attendance", cid)))
+            );
+            attProbes.forEach(p => {
+              if (p.status === 'fulfilled' && p.value && p.value.exists()) {
+                const attData = p.value.data();
                 const attMap = attData.attendanceMap || {};
                 Object.entries(attMap).forEach(([rNo, status]) => {
                   if (status === "ABSENT" || status === "Absent") {
@@ -2321,60 +2618,104 @@ export default function MarkEntry() {
                 });
               }
             });
-          } catch (attErr) {
-            console.warn("Attendance fetch error:", attErr);
-          }
+          } catch (e) { }
+          return absentRegsSet;
+        };
 
-          const initialMarks = {};
-          studentList.forEach(s => {
-            const saved = savedMarks?.students?.[s.reg] || {};
-            const coSumLoaded = ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].reduce((sum, k) => sum + Number(saved[k] || 0), 0);
+        // EXECUTE ALL 3 TASKS IN PARALLEL (~30-50ms Total)
+        const [rosterResult, marksResult, absentRegsSet] = await Promise.all([
+          fetchRosterTask(),
+          fetchMarksTask(),
+          fetchAttendanceTask()
+        ]);
 
-            const rawReg = s.reg || "";
-            const altRegNo = s.regNo || "";
-            const cleanDigits = rawReg.replace(/[^0-9]/g, "");
+        if (isCancelled) return;
 
-            const isAttendanceAbsent = 
-              absentRegsSet.has(rawReg) ||
-              absentRegsSet.has(rawReg.toUpperCase()) ||
-              absentRegsSet.has(rawReg.toLowerCase()) ||
-              absentRegsSet.has(altRegNo) ||
-              absentRegsSet.has(altRegNo.toUpperCase()) ||
-              (cleanDigits && absentRegsSet.has(cleanDigits));
+        const { studentList, enrolled } = rosterResult;
+        const { savedMarks, activeMarksId } = marksResult;
 
-            const isAbsentFinal = isAttendanceAbsent || !!saved.absent;
+        setStudents(studentList);
+        setEnrolledRegs(enrolled || {});
+        setResolvedMarksDocId(activeMarksId);
 
-            initialMarks[s.reg] = {
-              partA: saved.partA || {},
-              partB: saved.partB || {},
-              partC: saved.partC || {},
-              assignment: saved.assignment || {},
-              overall: saved.overall || "",
-              grade: saved.grade || "",
-              gradePoint: saved.gradePoint || "",
-              absent: isAbsentFinal,
-              absentLocked: isAttendanceAbsent,
-              total: isAbsentFinal ? "AB" : (saved.total || coSumLoaded || 0),
-              CO1: saved.CO1 ?? "",
-              CO2: saved.CO2 ?? "",
-              CO3: saved.CO3 ?? "",
-              CO4: saved.CO4 ?? "",
-              CO5: saved.CO5 ?? ""
-            };
+        // Derive active COs if present in saved marks
+        if (savedMarks?.students) {
+          const allSavedKeys = new Set();
+          Object.values(savedMarks.students).forEach(st => {
+            if (st && typeof st === 'object') {
+              Object.keys(st).forEach(k => {
+                if (/^co\d+$/i.test(k)) allSavedKeys.add(k.toUpperCase());
+              });
+            }
           });
-          setMarksData(initialMarks);
-        } else {
-          setMarksData({});
+          if (allSavedKeys.size > 0) {
+            const sortedSavedCos = Array.from(allSavedKeys).sort((a, b) => (parseInt(a.replace(/\D/g, '')) || 0) - (parseInt(b.replace(/\D/g, '')) || 0));
+            setSubjectCOs(prev => prev.length > 0 ? prev : sortedSavedCos);
+          }
         }
 
+        // Build initialMarks instantly for the student roster (70 students)
+        const initialMarks = {};
+        studentList.forEach(s => {
+          const saved = savedMarks?.students?.[s.reg] || {};
+          const coSumLoaded = activeCOs.reduce((sum, k) => sum + Number(saved[k] || 0), 0);
+
+          const rawReg = s.reg || "";
+          const altRegNo = s.regNo || "";
+          const cleanDigits = rawReg.replace(/[^0-9]/g, "");
+
+          const isAttendanceAbsent =
+            absentRegsSet.has(rawReg) ||
+            absentRegsSet.has(rawReg.toUpperCase()) ||
+            absentRegsSet.has(rawReg.toLowerCase()) ||
+            absentRegsSet.has(altRegNo) ||
+            absentRegsSet.has(altRegNo.toUpperCase()) ||
+            (cleanDigits && absentRegsSet.has(cleanDigits));
+
+          const isAbsentFinal = isAttendanceAbsent || !!saved.absent;
+
+          const coFields = {};
+          activeCOs.forEach(co => {
+            coFields[co] = saved[co] ?? "";
+          });
+          Object.keys(saved).forEach(k => {
+            if (/^co\d+$/i.test(k) && !(k in coFields)) {
+              coFields[k] = saved[k];
+            }
+          });
+
+          initialMarks[s.reg] = {
+            partA: saved.partA || {},
+            partB: saved.partB || {},
+            partC: saved.partC || {},
+            assignment: saved.assignment || {},
+            overall: saved.overall || "",
+            grade: saved.grade || "",
+            gradePoint: saved.gradePoint || "",
+            absent: isAbsentFinal,
+            absentLocked: isAttendanceAbsent,
+            total: isAbsentFinal ? "AB" : (saved.total || coSumLoaded || 0),
+            ...coFields
+          };
+        });
+
+        if (!isCancelled) {
+          setMarksData(initialMarks);
+        }
       } catch (error) {
         console.error("Data Load Error:", error);
       } finally {
-        setLoading(false);
+        if (!isCancelled) {
+          setLoading(false);
+          setMarksLoading(false);
+        }
       }
     };
 
     loadData();
+    return () => {
+      isCancelled = true;
+    };
   }, [programme, department, batch, academicYear, semester, subject, exam, markType, section, isBatchMatch, findMarksDocByMeta]);
 
   const isAssignmentLike = markType === 'Assignment' || markType === 'Project' || markType === 'Practical';
@@ -2389,7 +2730,7 @@ export default function MarkEntry() {
     }
 
     if (markType === 'CO Wise') {
-      const coSum = ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].reduce((a, co) => a + Number(s[co] || 0), 0);
+      const coSum = activeCOs.reduce((a, co) => a + Number(s[co] || 0), 0);
       return coSum;
     }
 
@@ -2564,27 +2905,20 @@ export default function MarkEntry() {
 
   const handleSave = async () => {
     if (!batch || !programme || !department || !subject || !exam || !academicYear || !semester) return;
+    if (loading || marksLoading || saving) return;
 
     const defaultMarksKey = [batch, programme, department, subject, exam, academicYear, semester, markType]
-      .filter(Boolean)
-      .map(sanitizeKey)
-      .join('_') + (section ? `_${sanitizeKey(section)}` : '');
+        .filter(Boolean)
+        .map(sanitizeKey)
+        .join('_') + (section ? `_${sanitizeKey(section)}` : '');
 
     let marksDocId = defaultMarksKey;
     if (resolvedMarksDocId) {
-      const curExamSanitized = sanitizeKey(exam).toLowerCase();
-      const curExamClean = sanitizeKey(stripSetSuffix(exam)).toLowerCase();
       const resolvedSanitized = String(resolvedMarksDocId).toLowerCase();
+      const otherExamTokens = getOtherConfiguredExamTokens(exam, ciaConfigs, allQPs, availableExams);
 
-      const knownOtherExams = ['ia 1', 'ia 2', 'ia 3', 'ia1', 'ia2', 'ia3', 'model', 'assignment 1', 'assignment 2']
-        .filter(ke => {
-          const keSan = sanitizeKey(ke).toLowerCase();
-          return keSan !== curExamClean && keSan !== curExamSanitized;
-        });
-
-      const hasMismatchedExam = knownOtherExams.some(ke => {
-        const keSan = sanitizeKey(ke).toLowerCase();
-        return resolvedSanitized.includes(`_${keSan}_`);
+      const hasMismatchedExam = otherExamTokens.some(keSan => {
+        return resolvedSanitized.includes(`_${keSan}_`) || resolvedSanitized.endsWith(`_${keSan}`);
       });
 
       if (!hasMismatchedExam) {
@@ -2604,6 +2938,9 @@ export default function MarkEntry() {
       exam_name: matchedAvail?.text || exam,
       mark_type: markType,
       is_university: isUniversityExam,
+      isUniversity: isUniversityExam,
+      is_indirect: isIndirectAssessment,
+      isIndirectAssessment: isIndirectAssessment,
       entry_mode: isUniversityExam ? markType : 'CO Wise',
       qpaper_meta: qpMeta,
       section: section || ""
@@ -2617,28 +2954,43 @@ export default function MarkEntry() {
 
       if (!sData.absent) {
         if (markType === 'CO Wise') {
-          ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].forEach(co => {
+          activeCOs.forEach(co => {
             coTotals[co] = Number(sData[co] || 0);
           });
         } else if (markType === 'Overall' && isUniversityExam) {
-          ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].forEach(co => {
+          activeCOs.forEach(co => {
             coTotals[co] = Number(sData.overall || 0);
           });
         } else if (isAssignmentLike) {
           Object.entries(sData.assignment || {}).forEach(([qKey, mark]) => {
             const qIndex = parseInt(qKey.replace('Q', '')) - 1;
             if (mark === '' || mark === undefined || mark === null) return;
+            const qNum = Number(mark);
+            if (isNaN(qNum) || qNum <= 0) return;
+
             const qMappings = assignmentConfig[qIndex]?.mappings || [];
-            const questionTotal = Number(assignmentConfig[qIndex]?.marks) || 0;
-            const totalAllocated = qMappings.reduce((sum, m) => sum + (parseInt(m?.marks, 10) || 0), 0);
-            const divisor = questionTotal > 0 ? questionTotal : totalAllocated;
-            qMappings.forEach(m => {
-              const coKey = (m.co || '').trim().toUpperCase();
-              if (coKey && /^CO\d+/i.test(coKey) && divisor > 0) {
-                const alloc = parseInt(m?.marks, 10) || 0;
-                coTotals[coKey] = (coTotals[coKey] || 0) + Math.round((Number(mark) * alloc) / divisor);
-              }
+            const validMappings = qMappings.filter(m => {
+              const c = (m.co || '').trim().toUpperCase();
+              return c && /^CO\d+/i.test(c);
             });
+            if (validMappings.length === 0) return;
+
+            // Calculate proportional ratio split per CO mapping
+            const mapWeights = validMappings.map(m => parseInt(m?.marks, 10) || 0);
+            const totalWeight = mapWeights.reduce((a, b) => a + b, 0);
+
+            validMappings.forEach((m, idx) => {
+              const coKey = (m.co || '').trim().toUpperCase();
+              const weight = mapWeights[idx];
+              // Proportional ratio split: if weights are set, split by weight / totalWeight; else equal split
+              const ratio = totalWeight > 0 ? (weight / totalWeight) : (1 / validMappings.length);
+              const splitMark = qNum * ratio;
+              coTotals[coKey] = (coTotals[coKey] || 0) + splitMark;
+            });
+          });
+          // Round accumulated CO marks cleanly
+          Object.keys(coTotals).forEach(co => {
+            coTotals[co] = Math.round(coTotals[co]);
           });
         } else {
           // Part A
@@ -2647,9 +2999,13 @@ export default function MarkEntry() {
             const co = getCOForQuestion('A', qNo);
             if (co && mark !== '') {
               const coKeys = String(co).split(',').map(c => c.trim().toUpperCase()).filter(Boolean);
-              coKeys.forEach(coKey => {
-                coTotals[coKey] = (coTotals[coKey] || 0) + Number(mark || 0);
-              });
+              if (coKeys.length > 0) {
+                const markVal = Number(mark || 0);
+                const split = markVal / coKeys.length;
+                coKeys.forEach(coKey => {
+                  coTotals[coKey] = (coTotals[coKey] || 0) + split;
+                });
+              }
             }
           });
 
@@ -2659,9 +3015,13 @@ export default function MarkEntry() {
             const co = getCOForQuestion('B', qNo, data.radio);
             if (co && data.mark !== '' && data.mark !== undefined) {
               const coKeys = String(co).split(',').map(c => c.trim().toUpperCase()).filter(Boolean);
-              coKeys.forEach(coKey => {
-                coTotals[coKey] = (coTotals[coKey] || 0) + Number(data.mark || 0);
-              });
+              if (coKeys.length > 0) {
+                const markVal = Number(data.mark || 0);
+                const split = markVal / coKeys.length;
+                coKeys.forEach(coKey => {
+                  coTotals[coKey] = (coTotals[coKey] || 0) + split;
+                });
+              }
             }
           });
 
@@ -2671,10 +3031,19 @@ export default function MarkEntry() {
             const co = getCOForQuestion('C', qNo, data.radio);
             if (co && data.mark !== '' && data.mark !== undefined) {
               const coKeys = String(co).split(',').map(c => c.trim().toUpperCase()).filter(Boolean);
-              coKeys.forEach(coKey => {
-                coTotals[coKey] = (coTotals[coKey] || 0) + Number(data.mark || 0);
-              });
+              if (coKeys.length > 0) {
+                const markVal = Number(data.mark || 0);
+                const split = markVal / coKeys.length;
+                coKeys.forEach(coKey => {
+                  coTotals[coKey] = (coTotals[coKey] || 0) + split;
+                });
+              }
             }
+          });
+
+          // Round accumulated CO marks cleanly
+          Object.keys(coTotals).forEach(co => {
+            coTotals[co] = Math.round(coTotals[co]);
           });
         }
       }
@@ -2704,8 +3073,12 @@ export default function MarkEntry() {
       return;
     }
 
+    setSaving(true);
     try {
       await setDoc(doc(db, 'marks', marksDocId), payload); // Use setDoc for Firestore
+
+      const resolveSig = [batch, programme, department, subject, exam, academicYear, semester, markType, section].join('|');
+      marksDocumentCache.set(resolveSig, { id: marksDocId, data: payload });
 
       // Calculate and update CO attainment for this specific exam only
       const coAttainmentDocId = [batch, programme, department, subject, academicYear, semester].map(sanitizeKey).join('_') + (section ? `_${sanitizeKey(section)}` : '');
@@ -2715,7 +3088,7 @@ export default function MarkEntry() {
       let coMaxMarks = {};
       if (isUniversityExam || isIndirectAssessment) {
         const maxVal = isIndirectAssessment ? 3 : 100;
-        ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].forEach(co => { coMaxMarks[co] = maxVal; });
+        activeCOs.forEach(co => { coMaxMarks[co] = maxVal; });
       } else if (isAssignmentLike) {
         // Assignment/Project/Practical: CO max marks = allocated marks per CO from mappings
         const derived = {};
@@ -2734,62 +3107,112 @@ export default function MarkEntry() {
         // Regular internal exams: prefer the QP's explicit CO weightage (summary table).
         // The per-question `co` field in parts may be incomplete/empty for some questions,
         // which silently zeroes out max marks for those COs. co_weightage covers every CO.
+        const derived = {};
+        qpParts.forEach(part => {
+          const marks = Number(part.marks_per_question || 0);
+          if (marks <= 0) return;
+          const groups = {};
+          (part.questions || []).forEach(q => {
+            const base = String(q.qno).replace(/\(?[ab]\)?$/i, '').trim();
+            if (!groups[base]) groups[base] = new Set();
+            if (q.co) groups[base].add(String(q.co).trim().toUpperCase());
+          });
+          Object.values(groups).forEach(coSet => {
+            coSet.forEach(co => {
+              derived[co] = (derived[co] || 0) + marks;
+            });
+          });
+        });
+
         const weightage = qpMeta?.co_weightage || {};
         const weightageKeys = Object.keys(weightage).filter(k => Number(weightage[k]) > 0);
-        if (weightageKeys.length > 0) {
+        const maxWeight = Math.max(0, ...weightageKeys.map(k => Number(weightage[k]) || 0));
+
+        if (maxWeight > 1) {
           weightageKeys.forEach(co => {
             coMaxMarks[String(co).trim().toUpperCase()] = Number(weightage[co]) || 0;
           });
-        } else {
-          const derived = {};
-          qpParts.forEach(part => {
-            const marks = Number(part.marks_per_question || 0);
-            if (marks <= 0) return;
-            const groups = {};
-            (part.questions || []).forEach(q => {
-              const base = String(q.qno).replace(/\(?[ab]\)?$/i, '').trim();
-              if (!groups[base]) groups[base] = new Set();
-              if (q.co) groups[base].add(String(q.co).trim().toUpperCase());
-            });
-            Object.values(groups).forEach(coSet => {
-              coSet.forEach(co => {
-                derived[co] = (derived[co] || 0) + marks;
-              });
-            });
-          });
+        } else if (Object.keys(derived).length > 0) {
           coMaxMarks = derived;
+        } else if (weightageKeys.length > 0) {
+          weightageKeys.forEach(co => {
+            coMaxMarks[String(co).trim().toUpperCase()] = Number(weightage[co]) || 0;
+          });
         }
       }
 
-      ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].forEach(co => { if (!(co in coMaxMarks)) coMaxMarks[co] = 0; });
+      activeCOs.forEach(co => {
+        const cKey = co.toUpperCase();
+        if (!(cKey in coMaxMarks) || coMaxMarks[cKey] <= 1) {
+          const observed = Math.max(0, ...Object.values(enrichedMarksData).map(s => Number(s[cKey] || 0)));
+          if (observed > 1) {
+            if (observed <= 20.5) coMaxMarks[cKey] = 20;
+            else if (observed <= 25) coMaxMarks[cKey] = 25;
+            else if (observed <= 50) coMaxMarks[cKey] = 50;
+            else if (observed <= 100) coMaxMarks[cKey] = 100;
+            else coMaxMarks[cKey] = Math.ceil(observed);
+          } else {
+            coMaxMarks[cKey] = coMaxMarks[cKey] || 0;
+          }
+        }
+      });
 
-      // Build per-student CO totals from the enrichedMarksData we just saved
+      // Build per-student CO totals from the enrichedMarksData we just saved with strict max mark capping
       const studentsCo = {};
       Object.entries(enrichedMarksData).forEach(([regno, sData]) => {
         const studentName = (students.find(st => st.reg === regno)?.name) || '';
         const entry = { name: studentName };
+        if (sData.grade !== undefined && sData.grade !== null && sData.grade !== '') entry.grade = sData.grade;
+        if (sData.gradePoint !== undefined && sData.gradePoint !== null && sData.gradePoint !== '') entry.gradePoint = sData.gradePoint;
+        if (sData.gpa !== undefined && sData.gpa !== null && sData.gpa !== '') entry.gpa = sData.gpa;
+        if (sData.overall !== undefined && sData.overall !== null && sData.overall !== '') entry.overall = sData.overall;
+        if (sData.total !== undefined && sData.total !== null && sData.total !== '') entry.total = sData.total;
+        if (sData.absent) entry.absent = true;
         Object.keys(sData).forEach(k => {
           if (/^CO\d+/i.test(k) && typeof sData[k] === 'number') {
-            entry[k.trim().toUpperCase()] = sData[k];
+            const cUpper = k.trim().toUpperCase();
+            let markVal = sData[k];
+            // Strict upper bound guard: student's CO mark cannot exceed coMaxMarks for this exam
+            if (coMaxMarks[cUpper] && coMaxMarks[cUpper] > 0 && markVal > coMaxMarks[cUpper]) {
+              markVal = coMaxMarks[cUpper];
+            }
+            entry[cUpper] = markVal;
           }
         });
         studentsCo[regno] = entry;
       });
 
       // Write per-exam attainment under subjectKey / examKey
-      await setDoc(doc(db, 'co_attainment', coAttainmentDocId, 'exams', examDocId), { // Firestore subcollection path
+      const attainmentExamPayload = {
         _meta: {
           batch, programme, department, subject, academicYear, semester,
-          exam: exam, exam_name: matchedAvail?.text || exam, updated_at: new Date().toISOString()
+          exam: exam, exam_name: matchedAvail?.text || exam, updated_at: new Date().toISOString(),
+          is_university: isUniversityExam,
+          isUniversity: isUniversityExam,
+          is_indirect: isIndirectAssessment,
+          isIndirectAssessment: isIndirectAssessment,
+          entry_mode: isUniversityExam ? markType : 'CO Wise',
+          mark_type: markType,
+          section: section || ""
         },
         co_max_marks: coMaxMarks,
         students: studentsCo
-      });
+      };
+
+      await setDoc(doc(db, 'co_attainment', coAttainmentDocId, 'exams', examDocId), attainmentExamPayload);
+
+      // If saved with a specific section, also write to the base course-level document
+      if (section) {
+        const coAttainmentDocIdNoSec = [batch, programme, department, subject, academicYear, semester].map(sanitizeKey).join('_');
+        await setDoc(doc(db, 'co_attainment', coAttainmentDocIdNoSec, 'exams', examDocId), attainmentExamPayload).catch(() => { });
+      }
 
       showToastMsg("Marks Saved and CO Attainment Updated!", "success");
     } catch (error) {
       console.error("Save Error:", error);
       showToastMsg("Failed to save marks.", "error");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -2809,7 +3232,7 @@ export default function MarkEntry() {
       mainHeader.push("Grade", "Grade Point", "Mark");
       subHeader.push("", "", "");
     } else if (isCOWise) {
-      ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].forEach(co => {
+      activeCOs.forEach(co => {
         mainHeader.push("CO Marks");
         subHeader.push(co);
       });
@@ -2858,7 +3281,7 @@ export default function MarkEntry() {
         row.push(isAbsent ? "AB" : (data.gradePoint || ""));
         row.push(isAbsent ? "AB" : (data.overall || ""));
       } else if (isCOWise) {
-        ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].forEach(co => {
+        activeCOs.forEach(co => {
           row.push(isAbsent ? "AB" : (data[co] ?? ""));
         });
       } else if (isAssignment) {
@@ -2929,9 +3352,9 @@ export default function MarkEntry() {
         const idx = qnosC.indexOf(qNo);
         if (idx !== -1 && idx < qnosC.length - 1) target = { regno, part: 'C', qNo: qnosC[idx + 1] };
       } else if (part === 'CO') {
-        const cos = ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'];
+        const cos = activeCOs;
         const idx = cos.indexOf(qNo);
-        if (idx < cos.length - 1) target = { regno, part: 'CO', qNo: cos[idx + 1] };
+        if (idx !== -1 && idx < cos.length - 1) target = { regno, part: 'CO', qNo: cos[idx + 1] };
       } else if (part === 'Assignment') {
         const idx = qnosAssignment.indexOf(qNo);
         if (idx !== -1 && idx < qnosAssignment.length - 1) target = { regno, part: 'Assignment', qNo: qnosAssignment[idx + 1] };
@@ -2954,7 +3377,7 @@ export default function MarkEntry() {
         else if (qnosB.length > 0) target = { regno, part: 'B', qNo: qnosB[qnosB.length - 1] };
         else if (qnosA.length > 0) target = { regno, part: 'A', qNo: qnosA[qnosA.length - 1] };
       } else if (part === 'CO') {
-        const cos = ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'];
+        const cos = activeCOs;
         const idx = cos.indexOf(qNo);
         if (idx > 0) target = { regno, part: 'CO', qNo: cos[idx - 1] };
       } else if (part === 'Assignment') {
@@ -2976,7 +3399,7 @@ export default function MarkEntry() {
               qnosB.length > 0 ? 'B' :
                 qnosC.length > 0 ? 'C' : null;
 
-        const firstQ = firstPart === 'CO' ? 'CO1' :
+        const firstQ = firstPart === 'CO' ? (activeCOs[0] || 'CO1') :
           firstPart === 'Assignment' ? 1 :
             firstPart === 'A' ? qnosA[0] :
               firstPart === 'B' ? qnosB[0] :
@@ -3142,7 +3565,7 @@ export default function MarkEntry() {
     const rawSec = dashboardQp.section || dashboardQp.sec || (Array.isArray(dashboardQp.sections) ? dashboardQp.sections[0] : '') || dashboardQp.allocatedTo?.section || dashboardQp.meta?.section || dashboardQp._meta?.section || '';
     const normSec = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
     let secToSet = '';
-    
+
     if (rawSec) {
       const targetNorm = normSec(rawSec);
       secToSet = availableSections.find(s => {
@@ -3368,7 +3791,14 @@ export default function MarkEntry() {
               <div className="relative">
                 <select
                   value={subject}
-                  onChange={(e) => setSubject(e.target.value)}
+                  onChange={(e) => {
+                    const chosen = e.target.value;
+                    setSubject(chosen);
+                    const matchedSub = subjects.find(s => s.value === chosen);
+                    if (matchedSub?.type) {
+                      setSubjectCourseType(matchedSub.type);
+                    }
+                  }}
                   className="w-full appearance-none bg-slate-50/50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 focus:ring-2 focus:ring-blue-500 outline-none transition-all font-medium"
                 >
                   <option value="">Select Subject</option>
@@ -3431,8 +3861,16 @@ export default function MarkEntry() {
 
         {/* Table Section */}
         <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-zinc-100">
-          <div className="bg-[#120c7a] px-6 py-2 flex justify-between items-center">
-            <h4 className="text-white font-bold text-sm">Mark Entry Table</h4>
+          <div className="bg-[#120c7a] px-6 py-2.5 flex justify-between items-center">
+            <div className="flex items-center gap-3">
+              <h4 className="text-white font-bold text-sm tracking-wide">Mark Entry Table</h4>
+              {(loading || marksLoading) && (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-400/20 text-amber-200 border border-amber-400/30 animate-pulse">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping"></span>
+                  Fetching saved marks...
+                </span>
+              )}
+            </div>
             <div className="flex gap-2">
               {isIndirectAssessment && (
                 <div className="flex items-center gap-3">
@@ -3442,7 +3880,8 @@ export default function MarkEntry() {
                   </div>
                   <button
                     onClick={handleDownloadTemplate}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-lg shadow-emerald-900/20"
+                    disabled={loading || marksLoading || saving}
+                    className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-lg shadow-emerald-900/20"
                   >
                     <Download size={14} /> Download Template
                   </button>
@@ -3455,7 +3894,8 @@ export default function MarkEntry() {
                   />
                   <button
                     onClick={() => fileInputRef.current?.click()}
-                    className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-lg shadow-blue-900/20"
+                    disabled={loading || marksLoading || saving}
+                    className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-lg shadow-blue-900/20"
                   >
                     <Upload size={14} /> Upload CO Marks (CSV)
                   </button>
@@ -3465,7 +3905,8 @@ export default function MarkEntry() {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={handleDownloadEseTemplate}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-md shadow-emerald-900/20"
+                    disabled={loading || marksLoading || saving}
+                    className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-md shadow-emerald-900/20"
                   >
                     <Download size={14} /> Download Template
                   </button>
@@ -3478,7 +3919,8 @@ export default function MarkEntry() {
                   />
                   <button
                     onClick={() => eseFileInputRef.current?.click()}
-                    className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-md shadow-blue-900/20"
+                    disabled={loading || marksLoading || saving}
+                    className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-md shadow-blue-900/20"
                   >
                     <Upload size={14} /> Upload Grades
                   </button>
@@ -3486,15 +3928,17 @@ export default function MarkEntry() {
               )}
               <button
                 onClick={handleDownloadExcel}
-                className="bg-white hover:bg-zinc-100 text-[#120c7a] px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5"
+                disabled={loading || marksLoading || saving}
+                className="bg-white hover:bg-zinc-100 disabled:opacity-50 disabled:cursor-not-allowed text-[#120c7a] px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5"
               >
                 <Download size={14} /> Download as Excel
               </button>
               <button
                 onClick={handleSave}
-                className="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5"
+                disabled={loading || marksLoading || saving}
+                className="bg-green-500 hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-md shadow-green-900/20"
               >
-                <Save size={14} /> Save to Dashboard
+                <Save size={14} /> {saving ? "Saving..." : (loading || marksLoading) ? "Loading..." : "Save to Dashboard"}
               </button>
             </div>
           </div>
@@ -3514,9 +3958,13 @@ export default function MarkEntry() {
                     </>
                   ) : markType === 'CO Wise' ? (
                     <>
-                      {['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].map(co => (
-                        <th key={co} className="px-6 py-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-center w-24">{co}</th>
-                      ))}
+                      {activeCOs.length === 0 ? (
+                        <th className="px-6 py-3 text-[11px] font-bold text-amber-600 uppercase tracking-wider border-b border-slate-200 text-center">No COs Found in Course Bank</th>
+                      ) : (
+                        activeCOs.map(co => (
+                          <th key={co} className="px-6 py-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-center w-24">{co}</th>
+                        ))
+                      )}
                       <th className="px-6 py-3 text-[11px] font-bold text-slate-500 uppercase tracking-wider border-b border-slate-200 text-center w-24">Total</th>
                     </>
                   ) : isAssignmentLike ? (
@@ -3535,22 +3983,40 @@ export default function MarkEntry() {
                 </tr>
               </thead>
               <tbody>
-                {loading ? (
+                {(loading || marksLoading) ? (
                   <tr>
-                    <td colSpan={10} className="p-20 text-center text-slate-400 italic">
-                      <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-                      Loading data...
+                    <td colSpan={50} className="p-16 sm:p-24 text-center bg-slate-50/50">
+                      <div className="flex flex-col items-center justify-center gap-3.5 max-w-md mx-auto">
+                        <div className="relative">
+                          <div className="w-12 h-12 border-4 border-indigo-200 border-t-[#120c7a] rounded-full animate-spin"></div>
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            <span className="w-2.5 h-2.5 bg-blue-600 rounded-full animate-ping"></span>
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-base font-bold text-slate-800">
+                            Loading assessment & student marks...
+                          </p>
+                          <p className="text-xs text-slate-500 font-medium">
+                            Fetching saved assessment data from database. Please wait...
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2 px-3 py-1 bg-blue-50 border border-blue-200/60 rounded-full text-[11px] font-semibold text-blue-700 animate-pulse">
+                          <span className="w-1.5 h-1.5 rounded-full bg-blue-600"></span>
+                          Synchronizing with Firestore
+                        </div>
+                      </div>
                     </td>
                   </tr>
                 ) : !exam ? (
                   <tr>
-                    <td colSpan={10} className="p-20 text-center text-slate-400 italic font-medium">
+                    <td colSpan={50} className="p-20 text-center text-slate-400 italic font-medium">
                       Select an exam to view student list.
                     </td>
                   </tr>
                 ) : students.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="p-20 text-center text-slate-400 italic font-medium">
+                    <td colSpan={50} className="p-20 text-center text-slate-400 italic font-medium">
                       No students found for the selected filters.
                     </td>
                   </tr>
@@ -3628,44 +4094,50 @@ export default function MarkEntry() {
                           </>
                         ) : markType === 'CO Wise' ? (
                           <>
-                            {['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].map(co => (
-                              <td key={co} className={`px-6 py-3 border-r border-slate-50 ${isAbsent ? 'opacity-40 grayscale' : ''}`}>
-                                <input
-                                  id={`input-CO-${co}-${s.reg}`}
-                                  type="text"
-                                  inputMode="decimal"
-                                  disabled={isAbsent}
-                                  value={data[co] ?? ""}
-                                  onKeyDown={(e) => handleKeyDown(e, s.reg, 'CO', co)}
-                                  onChange={(e) => {
-                                    const val = e.target.value;
-                                    if (val !== '' && isNaN(val)) return;
-                                    let parsed = val === '' ? '' : Number(val);
-                                    if (parsed !== '' && parsed < 0) parsed = 0;
-                                    setMarksData(prev => {
-                                      const studentObj = prev[s.reg] || {};
-                                      const updatedStudent = {
-                                        ...studentObj,
-                                        [co]: parsed
-                                      };
-                                      const totalSum = ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].reduce((acc, cKey) => {
-                                        const cVal = Number(updatedStudent[cKey]);
-                                        return acc + (isNaN(cVal) ? 0 : cVal);
-                                      }, 0);
-                                      updatedStudent.total = totalSum;
-                                      return {
-                                        ...prev,
-                                        [s.reg]: updatedStudent
-                                      };
-                                    });
-                                  }}
-                                  className="w-16 h-8 border border-slate-200 rounded-md text-center focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none disabled:bg-slate-50 mx-auto block"
-                                />
+                            {activeCOs.length === 0 ? (
+                              <td className="px-6 py-3 text-center text-xs text-slate-400 italic border-r border-slate-50">
+                                Configure COs in Course Bank
                               </td>
-                            ))}
+                            ) : (
+                              activeCOs.map(co => (
+                                <td key={co} className={`px-6 py-3 border-r border-slate-50 ${isAbsent ? 'opacity-40 grayscale' : ''}`}>
+                                  <input
+                                    id={`input-CO-${co}-${s.reg}`}
+                                    type="text"
+                                    inputMode="decimal"
+                                    disabled={isAbsent}
+                                    value={data[co] ?? ""}
+                                    onKeyDown={(e) => handleKeyDown(e, s.reg, 'CO', co)}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      if (val !== '' && isNaN(val)) return;
+                                      let parsed = val === '' ? '' : Number(val);
+                                      if (parsed !== '' && parsed < 0) parsed = 0;
+                                      setMarksData(prev => {
+                                        const studentObj = prev[s.reg] || {};
+                                        const updatedStudent = {
+                                          ...studentObj,
+                                          [co]: parsed
+                                        };
+                                        const totalSum = activeCOs.reduce((acc, cKey) => {
+                                          const cVal = Number(updatedStudent[cKey]);
+                                          return acc + (isNaN(cVal) ? 0 : cVal);
+                                        }, 0);
+                                        updatedStudent.total = totalSum;
+                                        return {
+                                          ...prev,
+                                          [s.reg]: updatedStudent
+                                        };
+                                      });
+                                    }}
+                                    className="w-16 h-8 border border-slate-200 rounded-md text-center focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none disabled:bg-slate-50 mx-auto block"
+                                  />
+                                </td>
+                              ))
+                            )}
                             <td className={`total-marks px-6 py-3 text-center font-black tabular-nums text-xl ${isAbsent ? 'text-red-600' : 'text-blue-600'}`}>
                               {isAbsent ? 'AB' : (() => {
-                                const coSum = ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].reduce((sum, key) => {
+                                const coSum = activeCOs.reduce((sum, key) => {
                                   const val = Number(data[key]);
                                   return sum + (isNaN(val) ? 0 : val);
                                 }, 0);

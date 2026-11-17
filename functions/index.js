@@ -1,4 +1,5 @@
 const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
+const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { defineSecret } = require("firebase-functions/params");
 const { initializeApp } = require("firebase-admin/app");
 const { getFirestore, Timestamp } = require("firebase-admin/firestore");
@@ -9,6 +10,7 @@ const db = getFirestore();
 
 const HDFC_API_KEY = defineSecret("HDFC_API_KEY");
 const HDFC_MERCHANT_ID = defineSecret("HDFC_MERCHANT_ID");
+const HDFC_RESPONSE_KEY = defineSecret("HDFC_RESPONSE_KEY");
 const HDFC_MODE = defineSecret("HDFC_MODE");
 
 const EXAM_CELL_HDFC_API_KEY = defineSecret("EXAM_CELL_HDFC_API_KEY");
@@ -16,12 +18,24 @@ const EXAM_CELL_HDFC_MERCHANT_ID = defineSecret("EXAM_CELL_HDFC_MERCHANT_ID");
 const EXAM_CELL_HDFC_RESPONSE_KEY = defineSecret("EXAM_CELL_HDFC_RESPONSE_KEY");
 const EXAM_CELL_HDFC_MODE = defineSecret("EXAM_CELL_HDFC_MODE");
 
+const HDFC_SECRETS = [
+  HDFC_API_KEY,
+  HDFC_MERCHANT_ID,
+  HDFC_RESPONSE_KEY,
+  HDFC_MODE,
+  EXAM_CELL_HDFC_API_KEY,
+  EXAM_CELL_HDFC_MERCHANT_ID,
+  EXAM_CELL_HDFC_RESPONSE_KEY,
+  EXAM_CELL_HDFC_MODE,
+];
+
 const SANDBOX_BASE = "https://smartgateway.hdfcuat.bank.in";
 const PRODUCTION_BASE = "https://smartgateway.hdfc.bank.in";
 
 function getConfig() {
   let apiKey = process.env.HDFC_API_KEY || "";
   let merchantId = process.env.HDFC_MERCHANT_ID || "";
+  let responseKey = process.env.HDFC_RESPONSE_KEY || "";
   let mode = process.env.HDFC_MODE || "production";
 
   try {
@@ -39,6 +53,13 @@ function getConfig() {
   } catch (_) {}
 
   try {
+    if (typeof HDFC_RESPONSE_KEY !== "undefined" && HDFC_RESPONSE_KEY.value) {
+      const val = HDFC_RESPONSE_KEY.value();
+      if (val) responseKey = val;
+    }
+  } catch (_) {}
+
+  try {
     if (typeof HDFC_MODE !== "undefined" && HDFC_MODE.value) {
       const val = HDFC_MODE.value();
       if (val) mode = val;
@@ -48,8 +69,10 @@ function getConfig() {
   const isSandbox = mode === "sandbox";
   const baseUrl = isSandbox ? SANDBOX_BASE : PRODUCTION_BASE;
   const basicAuth = Buffer.from(`${apiKey}:`).toString("base64");
-  return { baseUrl, apiKey, merchantId, basicAuth, isSandbox };
+  return { baseUrl, apiKey, merchantId, responseKey, basicAuth, isSandbox };
 }
+
+const isStaffName = (n) => !n || /master|admin|cashier|staff|super/i.test(String(n));
 
 async function getExamCellConfig() {
   let apiKey = process.env.EXAM_CELL_HDFC_API_KEY || "";
@@ -85,18 +108,18 @@ async function getExamCellConfig() {
     }
   } catch (_) {}
 
-  if (!apiKey || !merchantId) {
+  if (!merchantId) {
     try {
       const gwSnap = await db.collection("exam_cell_settings").doc("gateway").get();
       if (gwSnap.exists) {
         const gwData = gwSnap.data();
-        if (gwData.apiKey) apiKey = gwData.apiKey;
+        // Only non-sensitive parameters can fall back to Firestore.
+        // Sensitive API and response keys MUST only come from Secret Manager or environment variables.
         if (gwData.merchantId) merchantId = gwData.merchantId;
-        if (gwData.responseKey) responseKey = gwData.responseKey;
-        if (gwData.mode) mode = gwData.mode;
+        if (gwData.mode && !process.env.EXAM_CELL_HDFC_MODE) mode = gwData.mode;
       }
     } catch (e) {
-      console.error("Error reading exam_cell_settings/gateway from Firestore:", e);
+      console.error("Error reading exam_cell_settings/gateway non-secret config from Firestore:", e);
     }
   }
 
@@ -124,13 +147,14 @@ exports.createPaymentSession = onCall(
     maxInstances: 20,
     concurrency: 40,
     enforceAppCheck: false,
+    secrets: HDFC_SECRETS,
   },
   async (request) => {
     validateAuth(request);
     const { data } = request;
-    const uid = request.auth.uid;
-    const userEmail = request.auth.token.email || "";
-    const userName = request.auth.token.name || "";
+    const uid = (data.studentId && typeof data.studentId === "string" && data.studentId.trim()) ? data.studentId.trim() : request.auth.uid;
+    const userEmail = data.studentEmail || request.auth.token.email || "";
+    const rawPassedName = (!isStaffName(data.studentName) && data.studentName) ? String(data.studentName).trim() : "";
 
     const { amount, feeHead, returnUrl, academicYear: requestedYear } = data;
 
@@ -148,16 +172,60 @@ exports.createPaymentSession = onCall(
     }
 
     // Backend validation of the amount (Request Tampering prevention)
-    const userSnap = await db.collection("users").doc(uid).get();
-    if (!userSnap.exists) {
-      throw new HttpsError("not-found", "User profile not found.");
+    let userData = {};
+    try {
+      const userSnap = await db.collection("users").doc(uid).get();
+      if (userSnap.exists) {
+        userData = userSnap.data() || {};
+      }
+    } catch (uErr) {
+      console.warn("User lookup warning:", uErr);
     }
-    const userData = userSnap.data();
-    const { programme, department, batch, regNo } = userData;
-    const userDisplayName = userData.displayName || userData.name || userData.studentName || userName || "";
 
-    if (!programme || !batch) {
-      throw new HttpsError("failed-precondition", "Student profile is incomplete (programme/batch missing).");
+    let programme = (data.programme || userData.programme || userData._profile_data?.programme || userData.course || "").trim();
+    let batch = (data.batch || userData.batch || userData._profile_data?.batch || "").trim();
+    let department = (data.department || userData.department || userData._profile_data?.department || userData.branch || "").trim();
+    let regNo = (data.regNo || userData.regNo || userData.examNumber || userData.admissionNo || userData._profile_data?.regNo || "").trim();
+    let userDisplayName = (!isStaffName(data.studentName) && data.studentName) ? String(data.studentName).trim() : "";
+    if (!userDisplayName && !isStaffName(userData.displayName)) {
+      userDisplayName = String(userData.displayName).trim();
+    }
+    if (!userDisplayName && !isStaffName(userData.studentName)) {
+      userDisplayName = String(userData.studentName).trim();
+    }
+
+    // If programme or batch is still missing, attempt index lookup
+    if ((!programme || !batch) && (regNo || uid)) {
+      const lookupReg = regNo || (uid.length >= 6 ? uid : "");
+      if (lookupReg) {
+        try {
+          const idxSnap = await db.collection("student_index").doc(lookupReg.replace(/[^a-zA-Z0-9]/g, "_")).get();
+          if (idxSnap.exists) {
+            const sDocId = idxSnap.data().studentDocId;
+            if (sDocId) {
+              const sSnap = await db.collection("students").doc(sDocId).get();
+              if (sSnap.exists) {
+                const sData = sSnap.data()._student_data?.[lookupReg] || sSnap.data();
+                if (!programme) programme = (sData.programme || "").trim();
+                if (!batch) batch = (sData.batch || "").trim();
+                if (!department) department = (sData.department || "").trim();
+                if (!userDisplayName && (sData.displayName || sData.studentName || sData.name)) {
+                  userDisplayName = (sData.displayName || sData.studentName || sData.name || "").trim();
+                }
+              }
+            }
+          }
+        } catch (lookupErr) {
+          console.warn("student_index fallback warning:", lookupErr);
+        }
+      }
+    }
+
+    // Safe fallbacks to prevent blocking valid office/student payment
+    if (!programme) programme = "UG";
+    if (!batch) batch = "2026-2030";
+    if (!userDisplayName || isStaffName(userDisplayName)) {
+      userDisplayName = rawPassedName || "Student";
     }
 
     // Fetch configurations, previous payments, and student index in parallel
@@ -243,7 +311,8 @@ exports.createPaymentSession = onCall(
       });
     }
 
-    if (!matchingConfigs.length) {
+    const hasAllocations = data.allocations && Array.isArray(data.allocations) && data.allocations.length > 0;
+    if (!matchingConfigs.length && !hasAllocations) {
       throw new HttpsError("invalid-argument", `No fee configuration found for ${feeHead}.`);
     }
 
@@ -301,13 +370,15 @@ exports.createPaymentSession = onCall(
     if (!targetCfg) {
       targetCfg = byYear.find((c) => remainingFor(c) > 0) || byYear[0];
     }
-    const targetYear = String(targetCfg.academicYear || '');
+    const targetYear = String(targetCfg?.academicYear || requestedYear || '2026-2027');
     const yearTotal = byYear.filter((c) => eqYear(c.academicYear, targetYear)).reduce((s, c) => s + (Number(c.amount) || 0), 0);
     const yearPaid = paidPerYear.get(targetYear) || 0;
 
-    const maxAllowedPay = Math.max(0, yearTotal - yearPaid);
-    if (amount > maxAllowedPay + 1) { // 1 rupee buffer for rounding
-      throw new HttpsError("invalid-argument", `Requested amount ₹${amount} exceeds the outstanding balance of ₹${maxAllowedPay} for ${feeHead} (${targetYear || 'current year'}).`);
+    if (!hasAllocations && matchingConfigs.length > 0) {
+      const maxAllowedPay = Math.max(0, yearTotal - yearPaid);
+      if (amount > maxAllowedPay + 1) { // 1 rupee buffer for rounding
+        throw new HttpsError("invalid-argument", `Requested amount ₹${amount} exceeds the outstanding balance of ₹${maxAllowedPay} for ${feeHead} (${targetYear || 'current year'}).`);
+      }
     }
 
     const { baseUrl, merchantId, basicAuth, isSandbox } = getConfig();
@@ -334,8 +405,8 @@ exports.createPaymentSession = onCall(
       action: "paymentPage",
       return_url: callbackUrl,
       description: `Fee payment: ${feeHead}`,
-      first_name: userName.split(" ")[0] || "Student",
-      last_name: userName.split(" ").slice(1).join(" ") || "",
+      first_name: userDisplayName.split(" ")[0] || "Student",
+      last_name: userDisplayName.split(" ").slice(1).join(" ") || "",
       source_object: "PAYMENT_LINK",
     };
 
@@ -407,6 +478,9 @@ exports.createPaymentSession = onCall(
       updatedAt: Timestamp.now(),
       environment: isSandbox ? "sandbox" : "production",
       returnUrl,
+      isOnline: true,
+      mode: "gateway",
+      allocations: data.allocations || null,
     };
 
     try {
@@ -424,12 +498,432 @@ exports.createPaymentSession = onCall(
   }
 );
 
+async function fulfillFeePaymentSuccess(orderId, gatewayData, options = {}) {
+  const paymentRef = db.collection("fee_payments").doc(orderId);
+  const paymentSnap = await paymentRef.get();
+  if (!paymentSnap.exists) {
+    return { success: false, reason: "Payment record not found." };
+  }
+  const paymentRecord = paymentSnap.data();
+
+  // Idempotency: If already SUCCESS and receipt exists, do not duplicate!
+  let existingReceiptNo = paymentRecord.receiptNo || "";
+  let receiptDocId = paymentRecord.receiptDocId || "";
+
+  if (paymentRecord.status === "SUCCESS" && existingReceiptNo) {
+    const existingRecSnap = await db.collection("fee_receipts").where("receiptNo", "==", existingReceiptNo).limit(1).get();
+    if (!existingRecSnap.empty) {
+      return { success: true, alreadyProcessed: true, receiptNo: existingReceiptNo, orderId };
+    }
+  }
+
+  const expectedAmount = Number(paymentRecord.amount || paymentRecord.chargedAmount || 0);
+  const responseAmount = parseFloat(gatewayData.amount || expectedAmount || 0);
+  const gatewayCurrency = String(gatewayData.currency || "INR").toUpperCase().trim();
+
+  // Strict Request & Amount Tampering Protection
+  if (gatewayCurrency !== "INR") {
+    console.error(`Currency mismatch for order ${orderId}: expected INR, got ${gatewayCurrency}`);
+    await paymentRef.update({
+      currencyMismatch: true,
+      gatewayCurrency,
+      hdfcStatus: gatewayData.status || "",
+      reviewRequired: true,
+      updatedAt: Timestamp.now(),
+    });
+    return { success: false, reviewRequired: true, reason: `Currency mismatch: expected INR, got ${gatewayCurrency}` };
+  }
+
+  if (expectedAmount > 0 && Math.abs(responseAmount - expectedAmount) > 0.01) {
+    console.error(`Amount mismatch for order ${orderId}: expected ₹${expectedAmount}, got ₹${responseAmount}`);
+    await paymentRef.update({
+      amountMismatch: true,
+      expectedAmount,
+      gatewayAmount: responseAmount,
+      hdfcStatus: gatewayData.status || "",
+      reviewRequired: true,
+      updatedAt: Timestamp.now(),
+    });
+    return { success: false, reviewRequired: true, reason: `Amount mismatch: expected ₹${expectedAmount}, got ₹${responseAmount}` };
+  }
+
+  const pg = gatewayData.payment_gateway_response || {};
+  const txnId = pg.txn_id || pg.epg_txn_id || gatewayData.txn_id || gatewayData.id || "";
+  const rrn = pg.rrn || gatewayData.rrn || "";
+
+  // Guaranteed genuine student name resolution — never fall back to logged-in admin/cashier
+  let studentName = paymentRecord.studentName || "";
+  if (isStaffName(studentName)) {
+    const reg = paymentRecord.examNumber || paymentRecord.regNo;
+    if (reg) {
+      try {
+        const idxSnap = await db.collection("student_index").doc(reg.replace(/[^a-zA-Z0-9]/g, "_")).get();
+        if (idxSnap.exists) {
+          const sDocId = idxSnap.data().studentDocId;
+          if (sDocId) {
+            const sSnap = await db.collection("students").doc(sDocId).get();
+            if (sSnap.exists) {
+              const sData = sSnap.data()._student_data?.[reg] || sSnap.data();
+              const candName = sData.displayName || sData.studentName || sData.name;
+              if (!isStaffName(candName)) studentName = candName;
+            }
+          }
+        }
+      } catch (_) {}
+    }
+    if (isStaffName(studentName) && paymentRecord.uid) {
+      try {
+        const uSnap = await db.collection("users").doc(paymentRecord.uid).get();
+        if (uSnap.exists) {
+          const uData = uSnap.data();
+          const cleanUName = uData.displayName || uData.studentName || uData.name;
+          if (!isStaffName(cleanUName)) studentName = cleanUName;
+        }
+      } catch (_) {}
+    }
+  }
+  if (isStaffName(studentName)) studentName = "Student";
+
+  const receiptNo = existingReceiptNo || `FEE${new Date().getFullYear()}-${String(Date.now()).slice(-5)}`;
+
+  const updateData = {
+    status: "SUCCESS",
+    hdfcStatus: gatewayData.status || "CHARGED",
+    chargedAmount: responseAmount,
+    receiptNo,
+    verifiedAt: Timestamp.now(),
+    updatedAt: Timestamp.now(),
+    gatewayResponse: {
+      rrn,
+      txnId,
+      epgTxnId: pg.epg_txn_id || "",
+      authCode: pg.auth_id_code || "",
+      respCode: pg.resp_code || "",
+      respMessage: pg.resp_message || "",
+      status: gatewayData.status || "",
+    },
+  };
+  if (studentName) updateData.studentName = studentName;
+  if (options.auditSource) updateData.fulfillmentSource = options.auditSource;
+
+  if (paymentRecord.allocations && Array.isArray(paymentRecord.allocations) && paymentRecord.allocations.length > 1) {
+    const allocs = paymentRecord.allocations;
+    updateData.feeHead = allocs[0].feeHead || allocs[0].head || paymentRecord.feeHead;
+    updateData.amount = Number(allocs[0].allocatedAmount || allocs[0].amount);
+    updateData.chargedAmount = Number(allocs[0].allocatedAmount || allocs[0].amount);
+    if (allocs[0].academicYear) updateData.academicYear = allocs[0].academicYear;
+
+    await paymentRef.update(updateData);
+
+    for (let i = 1; i < allocs.length; i++) {
+      const alloc = allocs[i];
+      const subAmt = Number(alloc.allocatedAmount || alloc.amount || 0);
+      if (subAmt <= 0) continue;
+      const subOrderId = `${orderId}_${i + 1}`;
+      await db.collection("fee_payments").doc(subOrderId).set({
+        ...paymentRecord,
+        ...updateData,
+        orderId: subOrderId,
+        parentOrderId: orderId,
+        feeHead: alloc.feeHead || alloc.head,
+        academicYear: alloc.academicYear || paymentRecord.academicYear || "",
+        amount: subAmt,
+        chargedAmount: subAmt,
+        status: "SUCCESS",
+        verifiedAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+      }, { merge: true });
+    }
+  } else {
+    await paymentRef.update(updateData);
+  }
+
+  // Ensure idempotent receipt record in fee_receipts
+  let existingReceiptSnap = await db.collection("fee_receipts").where("refNo", "==", orderId).limit(1).get();
+  if (existingReceiptSnap.empty) {
+    existingReceiptSnap = await db.collection("fee_receipts").where("orderId", "==", orderId).limit(1).get();
+  }
+  if (existingReceiptSnap.empty && existingReceiptNo) {
+    existingReceiptSnap = await db.collection("fee_receipts").where("receiptNo", "==", existingReceiptNo).limit(1).get();
+  }
+
+  if (existingReceiptSnap.empty) {
+    const receiptRecord = {
+      orderId,
+      uid: paymentRecord.uid || paymentRecord.studentId || "",
+      studentId: paymentRecord.studentId || paymentRecord.uid || "",
+      examNumber: paymentRecord.examNumber || paymentRecord.regNo || "",
+      regNo: paymentRecord.regNo || paymentRecord.examNumber || "",
+      studentName: studentName || "Student",
+      programme: paymentRecord.programme || "UG",
+      department: paymentRecord.department || "",
+      batch: paymentRecord.batch || "",
+      amount: responseAmount,
+      status: "active",
+      mode: paymentRecord.mode || "gateway",
+      feeHead: paymentRecord.feeHead || "No Due Fee",
+      academicYear: paymentRecord.academicYear || "2026-2027",
+      remarks: paymentRecord.remarks || `HDFC SmartGateway Payment ${orderId}`,
+      refNo: orderId,
+      receiptNo,
+      paymentDate: paymentRecord.paymentDate || Timestamp.now(),
+      createdAt: Timestamp.now(),
+      cancelledAt: null,
+      reason: null,
+      reprintCount: 0,
+      bankRrn: rrn,
+      txnId,
+      items: (paymentRecord.allocations && Array.isArray(paymentRecord.allocations) && paymentRecord.allocations.length > 0)
+        ? paymentRecord.allocations.map(a => ({
+            head: a.feeHead || a.head,
+            amount: a.allocatedAmount || a.amount
+          }))
+        : [{ head: paymentRecord.feeHead || "No Due Fee", amount: responseAmount }]
+    };
+    const recDocRef = db.collection("fee_receipts").doc(`REC_${orderId}`);
+    await recDocRef.set({ ...receiptRecord, id: `REC_${orderId}` }, { merge: true });
+    receiptDocId = `REC_${orderId}`;
+    await paymentRef.update({ receiptDocId }).catch(() => {});
+  } else {
+    receiptDocId = existingReceiptSnap.docs[0].id;
+  }
+
+  if (options.auditSource) {
+    try {
+      await db.collection("payment_audit_logs").add({
+        orderId,
+        merchantId: "76980",
+        action: "FULFILLMENT_SUCCESS",
+        source: options.auditSource,
+        adminUid: options.adminUid || null,
+        amount: responseAmount,
+        rrn,
+        txnId,
+        receiptNo,
+        timestamp: Timestamp.now(),
+      });
+    } catch (_) {}
+  }
+
+  return { success: true, orderId, receiptNo, receiptDocId, amount: responseAmount };
+}
+
+async function fulfillExamCellPaymentSuccess(orderId, gatewayData, options = {}) {
+  const paymentRef = db.collection("exam_cell_payments").doc(orderId);
+  const paymentSnap = await paymentRef.get();
+  if (!paymentSnap.exists) {
+    return { success: false, reason: "Exam payment record not found." };
+  }
+  const paymentRecord = paymentSnap.data();
+
+  // Idempotency: If already SUCCESS and receipt exists, do not duplicate!
+  if (paymentRecord.status === "SUCCESS" && paymentRecord.receiptNo) {
+    return { success: true, alreadyProcessed: true, receiptNo: paymentRecord.receiptNo, orderId };
+  }
+
+  const expectedAmount = Number(paymentRecord.amount || paymentRecord.chargedAmount || 0);
+  const responseAmount = parseFloat(gatewayData.amount || expectedAmount || 0);
+  const gatewayCurrency = String(gatewayData.currency || "INR").toUpperCase().trim();
+
+  // Strict Request & Amount Tampering Protection
+  if (gatewayCurrency !== "INR") {
+    console.error(`Currency mismatch for exam order ${orderId}: expected INR, got ${gatewayCurrency}`);
+    await paymentRef.update({
+      currencyMismatch: true,
+      gatewayCurrency,
+      hdfcStatus: gatewayData.status || "",
+      reviewRequired: true,
+      updatedAt: Timestamp.now(),
+    });
+    return { success: false, reviewRequired: true, reason: `Currency mismatch: expected INR, got ${gatewayCurrency}` };
+  }
+
+  if (expectedAmount > 0 && Math.abs(responseAmount - expectedAmount) > 0.01) {
+    console.error(`Amount mismatch for exam order ${orderId}: expected ₹${expectedAmount}, got ₹${responseAmount}`);
+    await paymentRef.update({
+      amountMismatch: true,
+      expectedAmount,
+      gatewayAmount: responseAmount,
+      hdfcStatus: gatewayData.status || "",
+      reviewRequired: true,
+      updatedAt: Timestamp.now(),
+    });
+    return { success: false, reviewRequired: true, reason: `Amount mismatch: expected ₹${expectedAmount}, got ₹${responseAmount}` };
+  }
+
+  const pg = gatewayData.payment_gateway_response || {};
+  const txnId = pg.txn_id || pg.epg_txn_id || gatewayData.txn_id || gatewayData.id || orderId;
+  const rrn = pg.rrn || gatewayData.rrn || "";
+  const catLower = (paymentRecord.category || "").toLowerCase();
+  const receiptNo = paymentRecord.receiptNo || (catLower.includes("ese") ? `REC-ESE-${orderId}` : `REC-EXAM-${orderId}`);
+
+  // Guaranteed genuine student name resolution — never fall back to logged-in admin/cashier
+  let studentName = paymentRecord.studentName || "";
+  if (isStaffName(studentName)) {
+    const reg = paymentRecord.examNumber || paymentRecord.regNo;
+    if (reg) {
+      try {
+        const idxSnap = await db.collection("student_index").doc(reg.replace(/[^a-zA-Z0-9]/g, "_")).get();
+        if (idxSnap.exists) {
+          const sDocId = idxSnap.data().studentDocId;
+          if (sDocId) {
+            const sSnap = await db.collection("students").doc(sDocId).get();
+            if (sSnap.exists) {
+              const sData = sSnap.data()._student_data?.[reg] || sSnap.data();
+              const candName = sData.displayName || sData.studentName || sData.name;
+              if (!isStaffName(candName)) studentName = candName;
+            }
+          }
+        }
+      } catch (_) {}
+    }
+    if (isStaffName(studentName) && paymentRecord.uid) {
+      try {
+        const uSnap = await db.collection("users").doc(paymentRecord.uid).get();
+        if (uSnap.exists) {
+          const uData = uSnap.data();
+          const cleanUName = uData.displayName || uData.studentName || uData.name;
+          if (!isStaffName(cleanUName)) studentName = cleanUName;
+        }
+      } catch (_) {}
+    }
+  }
+  if (isStaffName(studentName)) studentName = "Student";
+
+  // If already SUCCESS and registered, do not duplicate
+  if (paymentRecord.status === "SUCCESS" && paymentRecord.receiptNo) {
+    return { success: true, alreadyProcessed: true, receiptNo: paymentRecord.receiptNo, orderId };
+  }
+
+  await paymentRef.update({
+    status: "SUCCESS",
+    hdfcStatus: gatewayData.status || "CHARGED",
+    chargedAmount: responseAmount,
+    receiptNo,
+    studentName,
+    updatedAt: Timestamp.now(),
+    verifiedAt: Timestamp.now(),
+    gatewayResponse: {
+      rrn,
+      txnId,
+      status: gatewayData.status || "",
+    },
+    fulfillmentSource: options.auditSource || "system",
+  });
+
+  let targetAppId = options.appId || paymentRecord.appId;
+  let targetCollection = "photocopy_applications";
+  if (catLower.includes("review")) {
+    targetCollection = "review_applications";
+  } else if (catLower.includes("revaluation")) {
+    targetCollection = "revaluation_applications";
+  } else if (catLower.includes("ese")) {
+    targetCollection = "ese_fee_registrations";
+  }
+
+  if (!targetAppId) {
+    try {
+      let appSnap = await db.collection(targetCollection).where("orderId", "==", orderId).limit(1).get();
+      if (appSnap.empty) {
+        for (const col of ["ese_fee_registrations", "review_applications", "revaluation_applications", "photocopy_applications"]) {
+          if (col !== targetCollection) {
+            appSnap = await db.collection(col).where("orderId", "==", orderId).limit(1).get();
+            if (!appSnap.empty) {
+              targetCollection = col;
+              break;
+            }
+          }
+        }
+      }
+      if (!appSnap.empty) {
+        targetAppId = appSnap.docs[0].id;
+      }
+    } catch (err) {
+      console.error("Error finding application by orderId:", err);
+    }
+  }
+
+  if (targetAppId) {
+    try {
+      const appRef = db.collection(targetCollection).doc(targetAppId);
+      const appSnap = await appRef.get();
+      if (appSnap.exists) {
+        const currentAppData = appSnap.data() || {};
+        const paidTimestamp = Timestamp.now();
+        const electronicBill = {
+          receiptNo,
+          orderId,
+          transactionId: txnId,
+          rrn,
+          amount: responseAmount,
+          paidAt: new Date().toISOString(),
+          paymentGateway: "HDFC SmartGateway (Exam Cell Account #76983)",
+          paymentStatus: "Paid",
+          billAttached: true,
+        };
+
+        const updateFields = {
+          orderId,
+          paymentStatus: "Paid",
+          billAttached: true,
+          transactionId: txnId,
+          rrn,
+          receiptNo,
+          paidAt: paidTimestamp,
+          electronicBill,
+          updatedAt: paidTimestamp,
+        };
+
+        if (!currentAppData.status || currentAppData.status === "Payment Pending" || currentAppData.status === "Applied") {
+          updateFields.status = targetCollection === "ese_fee_registrations" ? "Paid" : "Submitted to HOD";
+        }
+
+        await appRef.update(updateFields);
+
+        if (targetCollection === "ese_fee_registrations") {
+          await db.collection("ese_fee_payments").doc(orderId).set({
+            ...currentAppData,
+            ...updateFields,
+            registrationId: targetAppId,
+            studentName: currentAppData.studentName || paymentRecord.studentName || "Student",
+            regNo: currentAppData.regNo || paymentRecord.examNumber || "",
+            department: currentAppData.department || paymentRecord.department || "",
+            feeAmount: responseAmount,
+          }, { merge: true });
+        }
+      }
+    } catch (err) {
+      console.error("Failed to update application payment status:", err);
+    }
+  }
+
+  if (options.auditSource) {
+    try {
+      await db.collection("payment_audit_logs").add({
+        orderId,
+        merchantId: "76983",
+        action: "FULFILLMENT_SUCCESS",
+        source: options.auditSource,
+        adminUid: options.adminUid || null,
+        amount: responseAmount,
+        rrn,
+        txnId,
+        receiptNo,
+        timestamp: Timestamp.now(),
+      });
+    } catch (_) {}
+  }
+
+  return { success: true, orderId, receiptNo, amount: responseAmount };
+}
+
 exports.verifyPayment = onCall(
   {
     cors: true,
     maxInstances: 20,
     concurrency: 40,
     enforceAppCheck: false,
+    secrets: HDFC_SECRETS,
   },
   async (request) => {
     validateAuth(request);
@@ -521,13 +1015,8 @@ exports.verifyPayment = onCall(
     } else if (["FAILED", "EXPIRED", "VOID", "JUSPAY_DECLINED", "AUTHENTICATION_FAILED", "AUTHORIZATION_FAILED", "CANCELLED", "DECLINED"].includes(hdfcStatus)) {
       localStatus = "FAILED";
     } else if (["PENDING", "STARTED", "NEW", "AUTHORIZING"].includes(hdfcStatus)) {
-      const createdAtMs = paymentRecord.createdAt?.toMillis ? paymentRecord.createdAt.toMillis() : new Date(paymentRecord.createdAt).getTime();
-      const elapsedMinutes = (Date.now() - createdAtMs) / (1000 * 60);
-      if (elapsedMinutes > 5) {
-        localStatus = "FAILED";
-      } else {
-        localStatus = "PENDING";
-      }
+      // Never mark FAILED prematurely simply because time has elapsed without a redirect
+      localStatus = "PENDING";
     }
 
     const updateData = {
@@ -581,14 +1070,10 @@ exports.verifyPayment = onCall(
       }
     }
 
-    if (localStatus === "SUCCESS" && responseData.amount) {
-      updateData.chargedAmount = parseFloat(responseData.amount);
-    }
-
-    try {
-      await db.collection("fee_payments").doc(orderId).update(updateData);
-    } catch (dbError) {
-      console.error("Firestore update error:", dbError);
+    if (localStatus === "SUCCESS" && !isDuplicate && !isTampered) {
+      await fulfillFeePaymentSuccess(orderId, responseData, { auditSource: "verifyPayment_callable" });
+    } else {
+      await db.collection("fee_payments").doc(orderId).update(updateData).catch((err) => console.error("Firestore update error:", err));
     }
 
     return {
@@ -693,11 +1178,12 @@ function sendRedirectResponse(res, targetUrl) {
 exports.paymentCallback = onRequest(
   {
     cors: true,
+    secrets: HDFC_SECRETS,
   },
   async (req, res) => {
     const orderId = req.body?.order_id || req.query?.order_id || req.body?.orderId || req.query?.orderId || "";
 
-    console.log(`paymentCallback: Received redirect for order ${orderId}`);
+    console.log(`paymentCallback: Received return for order ${orderId}`);
 
     let redirectUrl = "https://outcomex.web.app/student/fees"; // Default fallback
 
@@ -710,8 +1196,29 @@ exports.paymentCallback = onRequest(
             redirectUrl = data.returnUrl;
           }
         }
+
+        // Proactive server-side check before returning browser redirect
+        const { baseUrl, merchantId, basicAuth } = getConfig();
+        if (basicAuth && merchantId) {
+          const gwRes = await fetch(`${baseUrl}/orders/${orderId}`, {
+            method: "GET",
+            headers: {
+              Authorization: `Basic ${basicAuth}`,
+              "x-merchantid": merchantId,
+              "Content-Type": "application/json",
+              version: "2023-06-30",
+            },
+          });
+          if (gwRes.ok) {
+            const gwData = await gwRes.json();
+            if (gwData.status === "CHARGED") {
+              await fulfillFeePaymentSuccess(orderId, gwData, { auditSource: "browser_callback" });
+              console.log(`paymentCallback: Order ${orderId} verified and fulfilled on server.`);
+            }
+          }
+        }
       } catch (err) {
-        console.error("Error retrieving returnUrl from Firestore:", err);
+        console.error("Error in paymentCallback verification:", err);
       }
     }
 
@@ -737,13 +1244,46 @@ exports.createExamCellPaymentSession = onCall(
     maxInstances: 20,
     concurrency: 40,
     enforceAppCheck: false,
+    secrets: HDFC_SECRETS,
   },
   async (request) => {
     validateAuth(request);
     const { data } = request;
-    const uid = request.auth.uid;
-    const userEmail = request.auth.token.email || "";
-    const userName = request.auth.token.name || "";
+    const uid = (data.studentId && typeof data.studentId === "string" && data.studentId.trim()) ? data.studentId.trim() : request.auth.uid;
+    const userEmail = data.studentEmail || request.auth.token.email || "";
+    const rawPassedName = (!isStaffName(data.studentName) && data.studentName) ? String(data.studentName).trim() : "";
+
+    let userDisplayName = rawPassedName;
+    if (!userDisplayName && uid) {
+      try {
+        const uSnap = await db.collection("users").doc(uid).get();
+        if (uSnap.exists) {
+          const uData = uSnap.data();
+          const cleanUName = uData.displayName || uData.studentName || uData.name;
+          if (!isStaffName(cleanUName)) userDisplayName = cleanUName;
+        }
+      } catch (_) {}
+    }
+    const studentReg = data.regNo || data.studentRegNo || data.examNumber || "";
+    if ((!userDisplayName || isStaffName(userDisplayName)) && studentReg) {
+      try {
+        const idxSnap = await db.collection("student_index").doc(studentReg.replace(/[^a-zA-Z0-9]/g, "_")).get();
+        if (idxSnap.exists) {
+          const sDocId = idxSnap.data().studentDocId;
+          if (sDocId) {
+            const sSnap = await db.collection("students").doc(sDocId).get();
+            if (sSnap.exists) {
+              const sData = sSnap.data()._student_data?.[studentReg] || sSnap.data();
+              const candName = sData.displayName || sData.studentName || sData.name;
+              if (!isStaffName(candName)) userDisplayName = candName;
+            }
+          }
+        }
+      } catch (_) {}
+    }
+    if (!userDisplayName || isStaffName(userDisplayName)) {
+      userDisplayName = "Student";
+    }
 
     const { amount, category, appId, returnUrl } = data;
 
@@ -784,8 +1324,8 @@ exports.createExamCellPaymentSession = onCall(
       action: "paymentPage",
       return_url: callbackUrl,
       description: `Exam Cell Payment: ${category || "Photocopy"}`,
-      first_name: userName.split(" ")[0] || "Student",
-      last_name: userName.split(" ").slice(1).join(" ") || "",
+      first_name: userDisplayName.split(" ")[0] || "Student",
+      last_name: userDisplayName.split(" ").slice(1).join(" ") || "",
       source_object: "PAYMENT_LINK",
     };
 
@@ -831,7 +1371,7 @@ exports.createExamCellPaymentSession = onCall(
       uid,
       studentId: uid,
       studentEmail: userEmail,
-      studentName: userName || userEmail,
+      studentName: userDisplayName,
       category: category || "Photocopy",
       amount,
       currency: "INR",
@@ -842,6 +1382,9 @@ exports.createExamCellPaymentSession = onCall(
       updatedAt: Timestamp.now(),
       environment: isSandbox ? "sandbox" : "production",
       returnUrl,
+      isOnline: true,
+      mode: "gateway",
+      allocations: data.allocations || null,
     };
 
     await db.collection("exam_cell_payments").doc(orderId).set(paymentRecord);
@@ -897,6 +1440,17 @@ exports.verifyExamCellPayment = onCall(
     }
     const paymentRecord = paymentSnap.data();
 
+    // Prevent double processing if the transaction was already successful
+    if (paymentRecord.status === "SUCCESS") {
+      return {
+        success: true,
+        status: "SUCCESS",
+        hdfcStatus: paymentRecord.hdfcStatus,
+        amount: parseFloat(paymentRecord.chargedAmount || paymentRecord.amount || 0),
+        orderId,
+      };
+    }
+
     const { baseUrl, merchantId, basicAuth } = await getExamCellConfig();
 
     let responseData = {};
@@ -951,102 +1505,15 @@ exports.verifyExamCellPayment = onCall(
       localStatus = "FAILED";
     }
 
-    await paymentRef.update({
-      hdfcStatus: rawStatus || paymentRecord.hdfcStatus || "UNKNOWN",
-      status: localStatus,
-      updatedAt: Timestamp.now(),
-      verifiedAt: Timestamp.now(),
-    });
-
     if (localStatus === "SUCCESS") {
-      let targetAppId = appId || paymentRecord.appId;
-      const catLower = (paymentRecord.category || "").toLowerCase();
-      let targetCollection = "photocopy_applications";
-      if (catLower.includes("review")) {
-        targetCollection = "review_applications";
-      } else if (catLower.includes("revaluation")) {
-        targetCollection = "revaluation_applications";
-      } else if (catLower.includes("ese")) {
-        targetCollection = "ese_fee_registrations";
-      }
-
-      if (!targetAppId) {
-        try {
-          let appSnap = await db.collection(targetCollection).where("orderId", "==", orderId).limit(1).get();
-          if (appSnap.empty) {
-            for (const col of ["ese_fee_registrations", "review_applications", "revaluation_applications", "photocopy_applications"]) {
-              if (col !== targetCollection) {
-                appSnap = await db.collection(col).where("orderId", "==", orderId).limit(1).get();
-                if (!appSnap.empty) break;
-              }
-            }
-          }
-          if (!appSnap.empty) {
-            targetAppId = appSnap.docs[0].id;
-          }
-        } catch (err) {
-          console.error("Error finding application by orderId:", err);
-        }
-      }
-
-      if (targetAppId) {
-        try {
-          let activeCollection = targetCollection;
-          let appRef = db.collection(activeCollection).doc(targetAppId);
-          let appSnap = await appRef.get();
-
-          if (!appSnap.exists) {
-            for (const altCol of ["review_applications", "revaluation_applications", "photocopy_applications"]) {
-              if (altCol !== activeCollection) {
-                const altRef = db.collection(altCol).doc(targetAppId);
-                const altSnap = await altRef.get();
-                if (altSnap.exists) {
-                  activeCollection = altCol;
-                  appRef = altRef;
-                  appSnap = altSnap;
-                  break;
-                }
-              }
-            }
-          }
-
-          if (appSnap.exists) {
-            const currentAppData = appSnap.data() || {};
-            const txnId = responseData.payment_gateway_response?.txn_id || responseData.payment_gateway_response?.rrn || responseData.id || orderId;
-            const paidTimestamp = Timestamp.now();
-            const receiptNo = `REC-EXAM-${orderId}`;
-            const electronicBill = {
-              receiptNo,
-              orderId,
-              transactionId: txnId,
-              amount: parseFloat(responseData.amount || paymentRecord.amount || 0),
-              paidAt: new Date().toISOString(),
-              paymentGateway: "HDFC SmartGateway (Exam Cell Account #76983)",
-              paymentStatus: "Paid",
-              billAttached: true,
-            };
-
-            const updateFields = {
-              orderId,
-              paymentStatus: "Paid",
-              billAttached: true,
-              transactionId: txnId,
-              receiptNo: receiptNo,
-              paidAt: paidTimestamp,
-              electronicBill: electronicBill,
-              updatedAt: paidTimestamp,
-            };
-
-            if (!currentAppData.status || currentAppData.status === "Payment Pending" || currentAppData.status === "Applied") {
-              updateFields.status = activeCollection === "ese_fee_registrations" ? "Paid" : "Submitted to HOD";
-            }
-
-            await appRef.update(updateFields);
-          }
-        } catch (err) {
-          console.error("Failed to update application payment status:", err);
-        }
-      }
+      await fulfillExamCellPaymentSuccess(orderId, responseData, { appId, auditSource: "verifyExamCellPayment_callable" });
+    } else {
+      await paymentRef.update({
+        hdfcStatus: rawStatus || paymentRecord.hdfcStatus || "UNKNOWN",
+        status: localStatus,
+        updatedAt: Timestamp.now(),
+        verifiedAt: Timestamp.now(),
+      });
     }
 
     return {
@@ -1060,10 +1527,15 @@ exports.verifyExamCellPayment = onCall(
 );
 
 exports.examCellPaymentCallback = onRequest(
-  { cors: true },
+  {
+    cors: true,
+    secrets: HDFC_SECRETS,
+  },
   async (req, res) => {
     const orderId = req.body?.order_id || req.query?.order_id || req.body?.orderId || req.query?.orderId || "";
-    let redirectUrl = "https://outcomex.web.app/student/photocopy";
+    console.log(`examCellPaymentCallback: Received return for order ${orderId}`);
+
+    let redirectUrl = "https://outcomex.web.app/student/ese-fee"; // Default fallback
 
     if (orderId) {
       try {
@@ -1072,8 +1544,30 @@ exports.examCellPaymentCallback = onRequest(
           const data = docSnap.data();
           if (data.returnUrl) redirectUrl = data.returnUrl;
         }
+
+        // Proactive server-side check with HDFC SmartGateway Exam Cell Account #76983
+        const { baseUrl, merchantId, basicAuth } = await getExamCellConfig();
+        if (basicAuth && merchantId) {
+          const gwRes = await fetch(`${baseUrl}/orders/${orderId}`, {
+            method: "GET",
+            headers: {
+              Authorization: `Basic ${basicAuth}`,
+              "x-merchantid": merchantId,
+              "Content-Type": "application/json",
+              version: "2023-06-30",
+            },
+          });
+          if (gwRes.ok) {
+            const gwData = await gwRes.json();
+            const stat = (gwData.status || "").toUpperCase();
+            if (["CHARGED", "SUCCESS", "PAID", "COMPLETED", "CAPTURED", "SETTLED"].includes(stat)) {
+              await fulfillExamCellPaymentSuccess(orderId, gwData, { auditSource: "browser_callback" });
+              console.log(`examCellPaymentCallback: Order ${orderId} verified and fulfilled on server.`);
+            }
+          }
+        }
       } catch (err) {
-        console.error("Error retrieving returnUrl for exam cell callback:", err);
+        console.error("Error in examCellPaymentCallback verification:", err);
       }
     }
 
@@ -1082,5 +1576,345 @@ exports.examCellPaymentCallback = onRequest(
       redirectUrl = `${redirectUrl}${connector}order_id=${orderId}`;
     }
     sendRedirectResponse(res, redirectUrl);
+  }
+);
+
+/**
+ * Phase 2 — Server-to-Server Webhook Endpoint
+ * Receives asynchronous notifications from HDFC SmartGateway/Juspay for both Merchant #76980 and #76983.
+ * Independently queries GET /orders/{order_id} using server credentials before executing fulfillment.
+ */
+exports.smartGatewayWebhook = onRequest(
+  {
+    cors: true,
+    secrets: HDFC_SECRETS,
+  },
+  async (req, res) => {
+    try {
+      const payload = req.body || {};
+      let orderId = (payload.order_id || payload.orderId || payload.content?.order?.order_id || req.query?.order_id || "").trim();
+      const eventName = payload.event_name || payload.event || payload.action || "UNKNOWN_EVENT";
+
+      // Gateway attempt normalization (e.g. 76983-EXAMMUL31Z5F7942711D-1 -> EXAMMUL31Z5F7942711D)
+      const attemptMatch = orderId.match(/^(?:76980|76983)-(.+)-\d+$/);
+      if (attemptMatch) {
+        orderId = attemptMatch[1];
+      }
+
+      console.log(`smartGatewayWebhook received: event=${eventName}, orderId=${orderId}`);
+
+      // Basic request format validation to block unauthenticated garbage requests from causing outbound API calls
+      if (!orderId || !/^[A-Za-z0-9_-]{5,64}$/.test(orderId)) {
+        return res.status(200).json({ status: "ignored", warning: "Invalid or missing order_id in webhook payload" });
+      }
+
+      const isExam = orderId.startsWith("EXAM") || orderId.includes("EXAM");
+
+      if (isExam) {
+        const { baseUrl, merchantId, basicAuth } = await getExamCellConfig();
+        if (basicAuth && merchantId) {
+          const gwRes = await fetch(`${baseUrl}/orders/${orderId}`, {
+            method: "GET",
+            headers: {
+              Authorization: `Basic ${basicAuth}`,
+              "x-merchantid": merchantId,
+              "Content-Type": "application/json",
+              version: "2023-06-30",
+            },
+          });
+          if (gwRes.ok) {
+            const gwData = await gwRes.json();
+            const stat = (gwData.status || "").toUpperCase();
+            if (["CHARGED", "SUCCESS", "PAID", "COMPLETED", "CAPTURED", "SETTLED"].includes(stat)) {
+              await fulfillExamCellPaymentSuccess(orderId, gwData, { auditSource: "webhook" });
+              console.log(`smartGatewayWebhook: Exam Cell order ${orderId} fulfilled.`);
+            }
+          }
+        }
+      } else {
+        const { baseUrl, merchantId, basicAuth } = getConfig();
+        if (basicAuth && merchantId) {
+          const gwRes = await fetch(`${baseUrl}/orders/${orderId}`, {
+            method: "GET",
+            headers: {
+              Authorization: `Basic ${basicAuth}`,
+              "x-merchantid": merchantId,
+              "Content-Type": "application/json",
+              version: "2023-06-30",
+            },
+          });
+          if (gwRes.ok) {
+            const gwData = await gwRes.json();
+            if (gwData.status === "CHARGED") {
+              await fulfillFeePaymentSuccess(orderId, gwData, { auditSource: "webhook" });
+              console.log(`smartGatewayWebhook: College Fee order ${orderId} fulfilled.`);
+            }
+          }
+        }
+      }
+
+      return res.status(200).json({ status: "acknowledged", orderId });
+    } catch (err) {
+      console.error("smartGatewayWebhook processing error:", err);
+      return res.status(200).json({ status: "error_logged", error: err.message });
+    }
+  }
+);
+
+/**
+ * Phase 3 — Automatic Scheduled Payment Reconciliation
+ * Sweeps PENDING transactions older than 10 minutes and younger than 24 hours.
+ * Reconciles both Merchant #76980 (College) and #76983 (Exam Cell) independently.
+ */
+exports.reconcilePendingPayments = onSchedule(
+  {
+    schedule: "every 15 minutes",
+    timeZone: "Asia/Kolkata",
+    secrets: HDFC_SECRETS,
+  },
+  async (event) => {
+    console.log("Starting reconcilePendingPayments sweep...");
+    const cutoffTime = Timestamp.fromDate(new Date(Date.now() - 10 * 60 * 1000)); // older than 10 mins
+    const maxLookback = Timestamp.fromDate(new Date(Date.now() - 72 * 60 * 60 * 1000)); // within 72 hours (sweeps dropped/abandoned UPI attempts)
+
+    let reconciledCount = 0;
+
+    // 1. Reconcile College Fee Operations (Merchant 76980)
+    try {
+      const { baseUrl, merchantId, basicAuth } = getConfig();
+      if (basicAuth && merchantId) {
+        const pendingCollege = await db.collection("fee_payments")
+          .where("status", "==", "PENDING")
+          .where("createdAt", ">=", maxLookback)
+          .where("createdAt", "<=", cutoffTime)
+          .limit(25)
+          .get();
+
+        for (const doc of pendingCollege.docs) {
+          const orderId = doc.id;
+          try {
+            const gwRes = await fetch(`${baseUrl}/orders/${orderId}`, {
+              method: "GET",
+              headers: {
+                Authorization: `Basic ${basicAuth}`,
+                "x-merchantid": merchantId,
+                "Content-Type": "application/json",
+                version: "2023-06-30",
+              },
+            });
+            if (gwRes.ok) {
+              const gwData = await gwRes.json();
+              if (gwData.status === "CHARGED") {
+                await fulfillFeePaymentSuccess(orderId, gwData, { auditSource: "reconciliation_cron" });
+                reconciledCount++;
+                console.log(`Reconciled College order ${orderId} -> SUCCESS`);
+              } else if (["FAILED", "EXPIRED", "VOID", "DECLINED"].includes((gwData.status || "").toUpperCase())) {
+                await doc.ref.update({
+                  status: "FAILED",
+                  hdfcStatus: gwData.status,
+                  updatedAt: Timestamp.now(),
+                });
+              }
+            }
+          } catch (err) {
+            console.error(`Error reconciling College order ${orderId}:`, err);
+          }
+        }
+      }
+    } catch (cErr) {
+      console.error("College fee reconciliation error:", cErr);
+    }
+
+    // 2. Reconcile Exam Cell / COE Operations (Merchant 76983)
+    try {
+      const { baseUrl, merchantId, basicAuth } = await getExamCellConfig();
+      if (basicAuth && merchantId) {
+        const pendingExam = await db.collection("exam_cell_payments")
+          .where("status", "==", "PENDING")
+          .where("createdAt", ">=", maxLookback)
+          .where("createdAt", "<=", cutoffTime)
+          .limit(25)
+          .get();
+
+        for (const doc of pendingExam.docs) {
+          const orderId = doc.id;
+          try {
+            const gwRes = await fetch(`${baseUrl}/orders/${orderId}`, {
+              method: "GET",
+              headers: {
+                Authorization: `Basic ${basicAuth}`,
+                "x-merchantid": merchantId,
+                "Content-Type": "application/json",
+                version: "2023-06-30",
+              },
+            });
+            if (gwRes.ok) {
+              const gwData = await gwRes.json();
+              const stat = (gwData.status || "").toUpperCase();
+              if (["CHARGED", "SUCCESS", "PAID", "COMPLETED", "CAPTURED", "SETTLED"].includes(stat)) {
+                await fulfillExamCellPaymentSuccess(orderId, gwData, { auditSource: "reconciliation_cron" });
+                reconciledCount++;
+                console.log(`Reconciled Exam Cell order ${orderId} -> SUCCESS`);
+              } else if (["FAILED", "EXPIRED", "VOID", "DECLINED"].includes(stat)) {
+                await doc.ref.update({
+                  status: "FAILED",
+                  hdfcStatus: gwData.status,
+                  updatedAt: Timestamp.now(),
+                });
+              }
+            }
+          } catch (err) {
+            console.error(`Error reconciling Exam Cell order ${orderId}:`, err);
+          }
+        }
+      }
+    } catch (eErr) {
+      console.error("Exam Cell fee reconciliation error:", eErr);
+    }
+
+    console.log(`reconcilePendingPayments finished. Reconciled ${reconciledCount} transactions.`);
+    return null;
+  }
+);
+
+/**
+ * Phase 6 — Admin Payment Verification and Instant Recovery Tool
+ * Authenticated admin callable to query HDFC SmartGateway and recover any pending transaction.
+ */
+exports.adminVerifyAndRecoverPayment = onCall(
+  {
+    cors: true,
+    secrets: HDFC_SECRETS,
+  },
+  async (request) => {
+    validateAuth(request);
+    const { data } = request;
+    const { orderId } = data || {};
+
+    if (!orderId || typeof orderId !== "string") {
+      throw new HttpsError("invalid-argument", "Valid Order ID is required.");
+    }
+
+    let cleanOrderId = orderId.trim();
+    // Normalize gateway attempt IDs (e.g. 76983-EXAMMUL31Z5F7942711D-1 -> EXAMMUL31Z5F7942711D)
+    const attemptMatch = cleanOrderId.match(/^(?:76980|76983)-(.+)-\d+$/);
+    if (attemptMatch) {
+      cleanOrderId = attemptMatch[1];
+    }
+    const isExam = cleanOrderId.startsWith("EXAM") || cleanOrderId.includes("EXAM");
+
+    if (isExam) {
+      const { baseUrl, merchantId, basicAuth } = await getExamCellConfig();
+      if (!basicAuth || !merchantId) {
+        throw new HttpsError("failed-precondition", "Exam Cell gateway credentials not configured.");
+      }
+
+      let response;
+      try {
+        response = await fetch(`${baseUrl}/orders/${cleanOrderId}`, {
+          method: "GET",
+          headers: {
+            Authorization: `Basic ${basicAuth}`,
+            "x-merchantid": merchantId,
+            "Content-Type": "application/json",
+            version: "2023-06-30",
+          },
+        });
+      } catch (err) {
+        throw new HttpsError("unavailable", "Payment gateway unreachable.");
+      }
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new HttpsError("internal", `Gateway returned HTTP ${response.status}: ${text}`);
+      }
+
+      const orderData = await response.json();
+      const status = (orderData.status || "").toUpperCase();
+      const pg = orderData.payment_gateway_response || {};
+      const rrn = pg.rrn || orderData.rrn || "N/A";
+      const txnId = pg.txn_id || pg.epg_txn_id || orderData.txn_id || "N/A";
+      const amount = parseFloat(orderData.amount || 0);
+
+      let recovered = false;
+      let fulfillmentResult = null;
+
+      if (["CHARGED", "SUCCESS", "PAID", "COMPLETED", "CAPTURED", "SETTLED"].includes(status)) {
+        fulfillmentResult = await fulfillExamCellPaymentSuccess(cleanOrderId, orderData, {
+          auditSource: "admin_recovery",
+          adminUid: request.auth.uid,
+        });
+        recovered = true;
+      }
+
+      return {
+        success: true,
+        orderId: cleanOrderId,
+        merchantId: "76983 (Exam Cell)",
+        status,
+        amount,
+        rrn,
+        txnId,
+        recovered,
+        receiptNo: fulfillmentResult?.receiptNo || null,
+        gatewayData: orderData,
+      };
+    } else {
+      const { baseUrl, merchantId, basicAuth } = getConfig();
+      if (!basicAuth || !merchantId) {
+        throw new HttpsError("failed-precondition", "College fee gateway credentials not configured.");
+      }
+
+      let response;
+      try {
+        response = await fetch(`${baseUrl}/orders/${cleanOrderId}`, {
+          method: "GET",
+          headers: {
+            Authorization: `Basic ${basicAuth}`,
+            "x-merchantid": merchantId,
+            "Content-Type": "application/json",
+            version: "2023-06-30",
+          },
+        });
+      } catch (err) {
+        throw new HttpsError("unavailable", "Payment gateway unreachable.");
+      }
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new HttpsError("internal", `Gateway returned HTTP ${response.status}: ${text}`);
+      }
+
+      const orderData = await response.json();
+      const status = (orderData.status || "").toUpperCase();
+      const pg = orderData.payment_gateway_response || {};
+      const rrn = pg.rrn || orderData.rrn || "N/A";
+      const txnId = pg.txn_id || pg.epg_txn_id || orderData.txn_id || "N/A";
+      const amount = parseFloat(orderData.amount || 0);
+
+      let recovered = false;
+      let fulfillmentResult = null;
+
+      if (status === "CHARGED") {
+        fulfillmentResult = await fulfillFeePaymentSuccess(cleanOrderId, orderData, {
+          auditSource: "admin_recovery",
+          adminUid: request.auth.uid,
+        });
+        recovered = true;
+      }
+
+      return {
+        success: true,
+        orderId: cleanOrderId,
+        merchantId: "76980 (College Fee)",
+        status,
+        amount,
+        rrn,
+        txnId,
+        recovered,
+        receiptNo: fulfillmentResult?.receiptNo || null,
+        gatewayData: orderData,
+      };
+    }
   }
 );

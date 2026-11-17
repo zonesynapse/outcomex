@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   FileText,
   Download,
@@ -32,9 +32,21 @@ import {
   formatProgDisplay,
   isDeptMatch,
   sanitizeKey,
+  getDeptFromRegNo,
 } from "../lib/utils";
 
 const normAlpha = (str) => String(str || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+// Robust normalization of section strings (e.g. "Sec-A", "Sec A", "Section A", "A" -> "A")
+export function normalizeSection(sec) {
+  if (!sec || sec === "ALL" || sec === "All Sections") return "ALL";
+  const str = String(sec).trim();
+  const match = str.match(/(?:Sec(?:tion)?[\s-_]*)?([A-Za-z0-9]+)/i);
+  if (match && match[1]) {
+    return match[1].toUpperCase();
+  }
+  return str.toUpperCase();
+}
 
 const isBatchMatch = (b1, b2) => {
   if (!b1 || !b2) return false;
@@ -96,6 +108,23 @@ function formatPaymentDateTime(item) {
   return item?.paidDate ? `${item.paidDate} ${item.paidTime || ""}`.trim() : "-";
 }
 
+// Check if two names match with flexible word order/initials
+function areNamesMatching(nameA, nameB) {
+  if (!nameA || !nameB) return false;
+  const a = String(nameA).toLowerCase().replace(/[^a-z0-9]/g, "");
+  const b = String(nameB).toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const wordsA = String(nameA).toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2);
+  const wordsB = String(nameB).toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2);
+  if (wordsA.length > 0 && wordsB.length > 0) {
+    const mainA = [...wordsA].sort((x, y) => y.length - x.length)[0];
+    const mainB = [...wordsB].sort((x, y) => y.length - x.length)[0];
+    if (mainA.length >= 4 && mainA === mainB) return true;
+  }
+  return false;
+}
+
 export default function DepartmentExamFeeDueReport({
   department = "",
   programme = "UG",
@@ -106,9 +135,21 @@ export default function DepartmentExamFeeDueReport({
   // Data states
   const [feeConfigs, setFeeConfigs] = useState([]);
   const [paymentRecords, setPaymentRecords] = useState([]);
+  const [eseFeePayments, setEseFeePayments] = useState([]);
+  const [gatewayPayments, setGatewayPayments] = useState([]);
   const [examsList, setExamsList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [copiedOrderId, setCopiedOrderId] = useState(null);
+
+  // Department state (Strict department isolation)
+  const [selectedDept, setSelectedDept] = useState(department || "");
+  useEffect(() => {
+    if (department) {
+      setSelectedDept(department);
+    }
+  }, [department]);
+
+  const activeDepartment = selectedDept || department || "";
 
   // Filters
   const [examFilter, setExamFilter] = useState("ALL");
@@ -159,6 +200,91 @@ export default function DepartmentExamFeeDueReport({
     return () => unsub();
   }, []);
 
+  // 2b. Listen to ese_fee_payments in real-time
+  useEffect(() => {
+    const qEsePay = query(collection(db, "ese_fee_payments"));
+    const unsub = onSnapshot(
+      qEsePay,
+      (snap) => {
+        const list = [];
+        snap.forEach((d) => {
+          list.push({ id: d.id, ...d.data() });
+        });
+        setEseFeePayments(list);
+      },
+      (err) => {
+        console.warn("ese_fee_payments error in DepartmentExamFeeDueReport:", err);
+      }
+    );
+    return () => unsub();
+  }, []);
+
+  // 2c. Listen to exam_cell_payments for confirmed gateway success
+  useEffect(() => {
+    const qPay = query(collection(db, "exam_cell_payments"));
+    const unsub = onSnapshot(
+      qPay,
+      (snap) => {
+        const list = [];
+        snap.forEach((d) => {
+          const data = d.data();
+          const st = (data.status || data.paymentStatus || "").toUpperCase();
+          if (
+            st === "SUCCESS" ||
+            st === "CHARGED" ||
+            st === "PAID" ||
+            data.billAttached ||
+            data.electronicBill ||
+            data.receiptNo
+          ) {
+            list.push({ id: d.id, ...data });
+          }
+        });
+        setGatewayPayments(list);
+      },
+      (err) => {
+        console.warn("exam_cell_payments error in DepartmentExamFeeDueReport:", err);
+      }
+    );
+    return () => unsub();
+  }, []);
+
+  // 2d. Listen to users collection for auth UID, email, and name mapping
+  const [userLookup, setUserLookup] = useState(new Map());
+  useEffect(() => {
+    const unsub = onSnapshot(
+      collection(db, "users"),
+      (snap) => {
+        const map = new Map();
+        snap.forEach((d) => {
+          const u = d.data();
+          const reg = (u.regNo || u.registerNumber || u.examNumber || u.rollNo || "").trim();
+          if (reg) {
+            const cleanReg = normAlpha(reg);
+            if (cleanReg) {
+              map.set(cleanReg.toLowerCase(), cleanReg);
+              if (d.id) map.set(d.id.toLowerCase(), cleanReg);
+              if (u.uid) map.set(String(u.uid).toLowerCase(), cleanReg);
+              if (u.email) map.set(String(u.email).toLowerCase().trim(), cleanReg);
+              if (u.studentEmail) map.set(String(u.studentEmail).toLowerCase().trim(), cleanReg);
+              const uName = (u.displayName || u.name || u.studentName || "").trim().toLowerCase();
+              if (uName) {
+                map.set(uName, cleanReg);
+                const stripped = uName.replace(/[^a-z0-9]/g, "");
+                if (stripped) map.set(stripped, cleanReg);
+              }
+            }
+          }
+        });
+        setUserLookup(map);
+      },
+      (err) => {
+        console.warn("users listener error in DepartmentExamFeeDueReport:", err);
+      }
+    );
+    return () => unsub();
+  }, []);
+
   // 3. Listen to ese_exams for human-readable examination titles
   useEffect(() => {
     const unsub = onSnapshot(
@@ -177,6 +303,167 @@ export default function DepartmentExamFeeDueReport({
     );
     return () => unsub();
   }, []);
+
+  // 3b. Listen to semester_config to identify currently ongoing active batches
+  const [semesterConfigs, setSemesterConfigs] = useState([]);
+  useEffect(() => {
+    const unsub = onSnapshot(
+      collection(db, "semester_config"),
+      (snap) => {
+        setSemesterConfigs(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      },
+      () => {}
+    );
+    return () => unsub();
+  }, []);
+
+  // 3c. Listen to batch_sections directly configured in Curriculum.jsx
+  const [batchSectionConfigs, setBatchSectionConfigs] = useState({});
+  useEffect(() => {
+    const unsub = onSnapshot(
+      collection(db, "batch_sections"),
+      (snap) => {
+        const data = {};
+        snap.forEach((d) => {
+          data[d.id] = d.data();
+        });
+        setBatchSectionConfigs(data);
+      },
+      (err) => {
+        console.warn("batch_sections error in DepartmentExamFeeDueReport:", err);
+      }
+    );
+    return () => unsub();
+  }, []);
+
+  const activeBatches = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const set = new Set();
+    semesterConfigs.forEach((cfg) => {
+      if (!cfg.startDate || !cfg.endDate) return;
+      const start = new Date(cfg.startDate + "T00:00:00");
+      const end = new Date(cfg.endDate + "T23:59:59");
+      if (today >= start && today <= end) {
+        const batches = Array.isArray(cfg.batch) ? cfg.batch : cfg.batch ? [cfg.batch] : [];
+        batches.forEach((b) => {
+          if (b) set.add(String(b).trim());
+        });
+      }
+    });
+    return set;
+  }, [semesterConfigs]);
+
+  // 4. Listen to official students collection for authoritative section-assigned department candidates
+  const [departmentStudents, setDepartmentStudents] = useState([]);
+
+  useEffect(() => {
+    if (!activeDepartment) {
+      setDepartmentStudents([]);
+      return;
+    }
+    const qStudents = query(collection(db, "students"));
+    const unsub = onSnapshot(
+      qStudents,
+      (snap) => {
+        const list = [];
+        const seenRegs = new Set();
+        snap.forEach((docSnap) => {
+          const docId = docSnap.id;
+          const data = docSnap.data();
+
+          let deptMatch = false;
+          if (data._meta?.department) {
+            deptMatch = isDeptMatch(data._meta.department, activeDepartment);
+          }
+          if (!deptMatch) {
+            deptMatch = isDeptMatch(docId, activeDepartment);
+          }
+          if (!deptMatch) return;
+
+          let batch = data._meta?.batch || "";
+          if (!batch) {
+            const bm = docId.match(/(\d{4}-\d{4})/);
+            if (bm) batch = bm[1];
+          }
+
+          // If activeBatches has batches matching today, only include students from those active batches
+          if (activeBatches.size > 0 && batch && !activeBatches.has(batch)) return;
+
+          // Strictly filter to section-assigned candidates
+          let section = "";
+          const secMatch = docId.match(/_Sec[-_]?([A-Za-z0-9]+)/i);
+          if (secMatch) section = secMatch[1];
+          if (data._meta?.section) section = data._meta.section;
+          if (!section) return; // Skip unassigned admission documents
+
+          const studentDataMap = data._student_data || {};
+
+          Object.entries(data).forEach(([key, val]) => {
+            if (key.startsWith("_") || key === "_order") return;
+            const reg = key;
+            const cleanReg = normAlpha(reg);
+            if (!cleanReg || seenRegs.has(cleanReg)) return;
+
+            // Reject if Anna University code explicitly belongs to another department
+            const regDept = getDeptFromRegNo(reg);
+            if (regDept && !isDeptMatch(regDept, activeDepartment)) return;
+
+            seenRegs.add(cleanReg);
+            const extra = studentDataMap[reg] || {};
+            let name = "";
+            if (typeof val === "object" && val !== null) {
+              name = val.name || val.displayName || val.studentName || "";
+            } else if (typeof val === "string") {
+              name = val;
+            }
+            if (!name && extra.name) name = extra.name;
+            if (!name && extra.studentName) name = extra.studentName;
+
+            const email = extra.email || extra.studentEmail || (typeof val === "object" && val !== null ? (val.email || val.studentEmail || "") : "");
+            const uid = extra.uid || extra.studentUid || (typeof val === "object" && val !== null ? (val.uid || val.studentUid || "") : "");
+
+            list.push({
+              regNo: reg,
+              studentName: name || reg,
+              email: email,
+              uid: uid,
+              batch: batch || "-",
+              section: section || "A",
+              department: activeDepartment,
+              programme: data._meta?.programme || (docId.includes("_PG_") ? "PG" : "UG"),
+            });
+          });
+        });
+        setDepartmentStudents(list);
+      },
+      (err) => {
+        console.warn("students listener error in DepartmentExamFeeDueReport:", err);
+      }
+    );
+    return () => unsub();
+  }, [activeDepartment, activeBatches]);
+
+  // Fast lookup for current department students by regNo, name, email, uid
+  const deptStudentLookup = useMemo(() => {
+    const map = new Map();
+    departmentStudents.forEach((s) => {
+      const cleanReg = normAlpha(s.regNo);
+      if (!cleanReg) return;
+      map.set(cleanReg.toLowerCase(), cleanReg);
+      if (s.regNo) map.set(s.regNo.toLowerCase(), cleanReg);
+      if (s.studentName) {
+        const lower = s.studentName.trim().toLowerCase();
+        map.set(lower, cleanReg);
+        const stripped = lower.replace(/[^a-z0-9]/g, "");
+        if (stripped) map.set(stripped, cleanReg);
+      }
+      if (s.email) map.set(String(s.email).trim().toLowerCase(), cleanReg);
+      if (s.uid) map.set(String(s.uid).trim().toLowerCase(), cleanReg);
+    });
+    return map;
+  }, [departmentStudents]);
 
   // Helper to resolve clean exam name strictly from database records
   const getResolvedExamName = (target, fallback = "") => {
@@ -225,39 +512,101 @@ export default function DepartmentExamFeeDueReport({
     return fallback;
   };
 
-  // Filter fee configs matching current department
+  // Extract distinct departments from fee configs & payments for fallback selector
+  const availableDepartments = useMemo(() => {
+    const set = new Set();
+    feeConfigs.forEach((c) => {
+      if (c.department) set.add(c.department);
+    });
+    paymentRecords.forEach((p) => {
+      if (p.department) set.add(p.department);
+    });
+    return Array.from(set).sort();
+  }, [feeConfigs, paymentRecords]);
+
+  // Filter fee configs matching current department strictly
   const departmentFeeConfigs = useMemo(() => {
-    if (!department) return feeConfigs;
-    return feeConfigs.filter((cfg) => isDeptMatch(cfg.department, department));
-  }, [feeConfigs, department]);
+    if (!activeDepartment) return [];
+    return feeConfigs.filter((cfg) => isDeptMatch(cfg.department, activeDepartment));
+  }, [feeConfigs, activeDepartment]);
 
   // Extract distinct batches for this department
   const availableBatches = useMemo(() => {
     const set = new Set();
+    departmentStudents.forEach((s) => {
+      if (s.batch && s.batch !== "-") set.add(s.batch);
+    });
     departmentFeeConfigs.forEach((cfg) => {
       if (cfg.batch) set.add(cfg.batch);
     });
     paymentRecords.forEach((r) => {
-      if (department && isDeptMatch(r.department, department) && r.batch) {
+      if (activeDepartment && isDeptMatch(r.department, activeDepartment) && r.batch) {
         set.add(r.batch);
       }
     });
     return Array.from(set).sort().reverse();
-  }, [departmentFeeConfigs, paymentRecords, department]);
+  }, [departmentStudents, departmentFeeConfigs, paymentRecords, activeDepartment]);
 
-  // Extract distinct sections for this department
+  // Derive available sections strictly matching Curriculum.jsx Section Configuration (batch_sections)
   const availableSections = useMemo(() => {
-    const set = new Set();
-    departmentFeeConfigs.forEach((cfg) => {
-      if (cfg.section && cfg.section !== "ALL") set.add(cfg.section);
-    });
-    paymentRecords.forEach((r) => {
-      if (department && isDeptMatch(r.department, department) && r.section && r.section !== "ALL") {
-        set.add(r.section);
+    const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const sectionSet = new Set();
+
+    // 1. Primary Source: Configured batch sections from Curriculum.jsx (batch_sections)
+    const matchingConfigs = Object.values(batchSectionConfigs || {}).filter((cfg) => {
+      if (!cfg || !cfg.department) return false;
+      const deptMatch = isDeptMatch(cfg.department, activeDepartment);
+      if (!deptMatch) return false;
+
+      if (batchFilter && batchFilter !== "ALL") {
+        return cfg.batch === batchFilter || isBatchMatch(cfg.batch, batchFilter);
       }
+      return true;
     });
-    return ["ALL", ...Array.from(set).sort()];
-  }, [departmentFeeConfigs, paymentRecords, department]);
+
+    if (matchingConfigs.length > 0) {
+      matchingConfigs.forEach((cfg) => {
+        const count = Math.max(1, parseInt(cfg.numSections, 10) || 1);
+        for (let i = 0; i < count; i++) {
+          sectionSet.add(letters[i]);
+        }
+      });
+    }
+
+    // 2. Fallback: normalize any sections found on actual department students
+    if (sectionSet.size === 0) {
+      departmentStudents.forEach((s) => {
+        if (batchFilter && batchFilter !== "ALL" && !isBatchMatch(s.batch, batchFilter)) return;
+        const normSec = normalizeSection(s.section);
+        if (normSec && normSec !== "ALL") {
+          sectionSet.add(normSec);
+        }
+      });
+
+      departmentFeeConfigs.forEach((cfg) => {
+        if (batchFilter && batchFilter !== "ALL" && !isBatchMatch(cfg.batch, batchFilter)) return;
+        const normSec = normalizeSection(cfg.section);
+        if (normSec && normSec !== "ALL") {
+          sectionSet.add(normSec);
+        }
+      });
+    }
+
+    // Default to at least "A" if none found
+    if (sectionSet.size === 0) {
+      sectionSet.add("A");
+    }
+
+    const sorted = Array.from(sectionSet).sort();
+    return ["ALL", ...sorted];
+  }, [batchSectionConfigs, activeDepartment, batchFilter, departmentStudents, departmentFeeConfigs]);
+
+  // Keep sectionFilter synchronized if batch changes or section list updates
+  useEffect(() => {
+    if (sectionFilter !== "ALL" && !availableSections.includes(sectionFilter)) {
+      setSectionFilter("ALL");
+    }
+  }, [availableSections, sectionFilter]);
 
   // Extract distinct exams strictly from Firebase ese_exams collection (100% database retrieval)
   const availableExams = useMemo(() => {
@@ -286,129 +635,379 @@ export default function DepartmentExamFeeDueReport({
 
   // Compile Comprehensive Student Fee Due Records
   const allDepartmentStudentDues = useMemo(() => {
-    const studentMap = new Map(); // key = `${examId}_${normAlpha(reg)}`
+    if (!activeDepartment) return [];
 
-    // Step A: Process all allocated fee configs in this department
+    // Authoritative Roster Map for this Department (keyed by cleanReg for single canonical row per student)
+    const studentMap = new Map();
+
+    const activeExam = examsList[0] || {};
+    const defaultExamId = activeExam.id || "ESE_2026";
+    const defaultExamName = getResolvedExamName(activeExam, "End Semester Autonomous Examination");
+
+    // Step A: Base population from official department students roster
+    departmentStudents.forEach((std) => {
+      const clean = normAlpha(std.regNo);
+      if (!clean) return;
+
+      studentMap.set(clean, {
+        regNo: std.regNo,
+        studentName: std.studentName || std.regNo,
+        batch: std.batch || "-",
+        section: std.section || "A",
+        programme: std.programme || programme || "UG",
+        department: activeDepartment,
+        examId: defaultExamId,
+        examName: defaultExamName,
+        allocatedFee: 0, // Starts at 0, only fee > 0 in ese_student_fees or payment makes them a candidate
+        amountPaid: 0,
+        dueAmount: 0,
+        isPaid: false,
+        paymentRecord: null,
+        status: "DUE",
+      });
+    });
+
+    // Step B: Merge fee allocations from ese_student_fees for this department
     departmentFeeConfigs.forEach((cfg) => {
-      const examId = cfg.examId || examsList[0]?.id || "DEFAULT_EXAM";
-      const examName = getResolvedExamName(cfg.examName || cfg.examId || examsList[0]?.name);
+      if (examFilter && examFilter !== "ALL" && cfg.examId !== examFilter) {
+        return;
+      }
+
+      const examId = cfg.examId || defaultExamId;
+      const examName = getResolvedExamName(cfg.examName || cfg.examId || defaultExamName);
       const batch = cfg.batch || "-";
       const section = cfg.section || "A";
       const feesMap = cfg.fees || {};
-      const studentsArr = cfg.students || [];
+      const studentsArr = Array.isArray(cfg.students) ? cfg.students : [];
 
-      // Extract all student keys
       const allRegs = new Set([
         ...Object.keys(feesMap),
         ...studentsArr.map((s) => s.reg).filter(Boolean),
       ]);
 
       allRegs.forEach((reg) => {
-        const studentObj = studentsArr.find((s) => s.reg === reg) || {};
-        const allocatedFee = Number(feesMap[reg] || studentObj.fee || 0);
-        const name = studentObj.name || reg;
-        const key = `${examId}_${normAlpha(reg)}`;
+        const clean = normAlpha(reg);
+        if (!clean) return;
 
-        studentMap.set(key, {
-          regNo: reg,
-          studentName: name,
-          batch,
-          section,
-          programme: cfg.programme || programme || "UG",
-          department: cfg.department || department,
-          examId,
-          examName,
-          allocatedFee,
-          amountPaid: 0,
-          dueAmount: allocatedFee,
-          isPaid: false,
-          paymentRecord: null,
-          status: allocatedFee > 0 ? "DUE" : "CONFIGURED_ZERO",
-        });
+        // Strict cross-department filter check via Anna University code
+        const regDept = getDeptFromRegNo(reg);
+        if (regDept && !isDeptMatch(regDept, activeDepartment)) return;
+
+        const studentObj = studentsArr.find((s) => normAlpha(s.reg) === clean) || {};
+        const allocatedFee = Number(feesMap[reg] ?? studentObj.fee ?? 0);
+        const name = studentObj.name || reg;
+
+        if (studentMap.has(clean)) {
+          const current = studentMap.get(clean);
+          studentMap.set(clean, {
+            ...current,
+            studentName: current.studentName && current.studentName !== current.regNo ? current.studentName : name,
+            batch: current.batch && current.batch !== "-" ? current.batch : batch,
+            section: current.section && current.section !== "A" ? current.section : section,
+            examId,
+            examName,
+            allocatedFee: allocatedFee,
+            dueAmount: allocatedFee,
+            status: allocatedFee > 0 ? "DUE" : "CONFIGURED_ZERO",
+          });
+        } else if (allocatedFee > 0) {
+          // Arrear candidate (e.g. 2022-2026 batch) or cross-batch candidate configured with exam fee
+          studentMap.set(clean, {
+            regNo: reg,
+            studentName: name,
+            batch: batch || "-",
+            section: section || "A",
+            programme: programme || "UG",
+            department: activeDepartment,
+            examId,
+            examName,
+            allocatedFee: allocatedFee,
+            amountPaid: 0,
+            dueAmount: allocatedFee,
+            isPaid: false,
+            paymentRecord: null,
+            status: "DUE",
+          });
+        }
       });
     });
 
-    // Step B: Match payments from ese_fee_registrations
-    paymentRecords.forEach((p) => {
-      if (department && !isDeptMatch(p.department, department)) return;
+    // Step C: Match payments from ese_fee_registrations, ese_fee_payments, and exam_cell_payments
+    // Deduplicate payments exactly as in FeeDashboard.jsx
+    const combinedEseList = [...paymentRecords, ...eseFeePayments];
+    const seenPayKeys = new Set();
+    const dedupedEseList = [];
 
-      const pStatus = (p.paymentStatus || p.status || "").toLowerCase();
-      const isPaid =
-        pStatus === "paid" ||
-        pStatus === "success" ||
-        pStatus === "successful" ||
-        p.billAttached === true ||
-        Boolean(p.receiptNo) ||
-        Boolean(p.paidAt);
+    combinedEseList.forEach((p) => {
+      const oId = p.orderId || p.id || p.transactionId;
+      const cleanR = normAlpha(
+        p.regNo ||
+        p.registerNumber ||
+        p.studentRegNo ||
+        p.examNumber ||
+        (typeof p.id === "string" && p.id.includes("_") ? p.id.split("_").pop() : "")
+      );
+      const pKey = cleanR && oId ? `${cleanR}_${oId}` : (oId || cleanR || Math.random());
+      if (seenPayKeys.has(pKey)) return;
+      seenPayKeys.add(pKey);
+      dedupedEseList.push(p);
+    });
 
-      if (!isPaid) return;
-
-      const reg = p.regNo;
-      if (!reg) return;
-
-      const cleanReg = normAlpha(reg);
-
-      // Check if student already has an allocated fee record in studentMap
-      let matchedKey = null;
-      if (p.examId && studentMap.has(`${p.examId}_${cleanReg}`)) {
-        matchedKey = `${p.examId}_${cleanReg}`;
+    gatewayPayments.forEach((ep) => {
+      const cat = (ep.category || "").toLowerCase();
+      // Exclude non-exam payments (photocopy, revaluation, review)
+      if (cat && !cat.includes("ese") && !cat.includes("exam") && !cat.includes("examination")) {
+        return;
+      }
+      const oId = ep.id || ep.orderId;
+      const rrn = ep.gatewayResponse?.rrn || ep.rrn;
+      const match = dedupedEseList.find((p) => (oId && p.orderId === oId) || (rrn && p.rrn === rrn));
+      if (match) {
+        match.paymentStatus = "Paid";
+        match.status = "Paid";
+        match.billAttached = true;
+        if (ep.amount || ep.chargedAmount) match.feeAmount = ep.amount || ep.chargedAmount;
+        if (!match.uid && ep.uid) match.uid = ep.uid;
+        if (!match.studentId && ep.studentId) match.studentId = ep.studentId;
+        if (!match.studentEmail && ep.studentEmail) match.studentEmail = ep.studentEmail;
+        if (!match.studentName && ep.studentName) match.studentName = ep.studentName;
+        if (!match.regNo && ep.regNo) match.regNo = ep.regNo;
       } else {
-        // Try to find this student under any exam key in studentMap
-        for (const [key, val] of studentMap.entries()) {
-          if (normAlpha(val.regNo) === cleanReg) {
-            matchedKey = key;
+        dedupedEseList.push({
+          ...ep,
+          feeAmount: ep.amount || ep.chargedAmount || 4600,
+          paymentStatus: "Paid",
+          status: "Paid",
+          paidAt: ep.verifiedAt || ep.createdAt || ep.updatedAt,
+          billAttached: true,
+        });
+      }
+    });
+
+    const paidRegSet = new Set();
+    const paidDeptItems = [];
+
+    dedupedEseList.forEach((p) => {
+      let rawReg = (
+        p.registerNumber ||
+        p.regNo ||
+        p.studentRegNo ||
+        p.examNumber ||
+        p.rollNo ||
+        (typeof p.appId === "string" && p.appId.includes("_") ? p.appId.split("_").pop() : "") ||
+        (typeof p.id === "string" && p.id.includes("_") && !p.id.startsWith("ESE_") ? p.id.split("_").pop() : "") ||
+        ""
+      ).trim();
+
+      // Scan string fields for CKCET Anna Univ register number (4207...)
+      if (!rawReg || !/4207\d{8}/.test(rawReg)) {
+        const scanFields = [p.appId, p.registrationId, p.id, p.orderId, p.studentEmail, p.email, p.studentRegNo, p.regNo];
+        for (const f of scanFields) {
+          if (typeof f === "string" && f) {
+            const m = f.match(/(?:^|[^0-9])(4207\d{8})(?:[^0-9]|$)/);
+            if (m) {
+              rawReg = m[1];
+              break;
+            }
+          }
+        }
+      }
+
+      // Fallback resolution via users / deptStudent lookup by UID (ONLY if rawReg is empty - NEVER overwrite!)
+      if (!rawReg) {
+        const uids = [
+          p.uid,
+          p.studentId,
+          p.studentUid,
+          typeof p.id === "string" && p.id.startsWith("ESE_") ? p.id.replace("ESE_", "") : "",
+        ].filter(Boolean);
+        for (const u of uids) {
+          const k = String(u).trim().toLowerCase();
+          const matched = userLookup.get(k) || deptStudentLookup.get(k);
+          if (matched) {
+            rawReg = matched;
             break;
           }
         }
       }
 
-      const paidAmt = Number(p.feeAmount || 0);
+      // Fallback resolution via email (ONLY if rawReg is empty - NEVER overwrite!)
+      if (!rawReg) {
+        const emails = [p.studentEmail, p.email].filter(Boolean);
+        for (const em of emails) {
+          const cleanEmail = String(em).trim().toLowerCase();
+          const matched = userLookup.get(cleanEmail) || deptStudentLookup.get(cleanEmail);
+          if (matched) {
+            rawReg = matched;
+            break;
+          }
+        }
+      }
 
-      if (matchedKey && studentMap.has(matchedKey)) {
-        const current = studentMap.get(matchedKey);
-        const effectiveAllocated = Math.max(current.allocatedFee, paidAmt);
-        const due = Math.max(0, effectiveAllocated - paidAmt);
-        studentMap.set(matchedKey, {
+      // Fallback resolution via studentName (ONLY if rawReg is empty - NEVER overwrite!)
+      if (!rawReg) {
+        const names = [p.studentName, p.candidateName, p.name].filter(Boolean);
+        for (const nm of names) {
+          const rawNm = String(nm).trim().toLowerCase();
+          if (rawNm && !rawNm.includes("@")) {
+            const stripped = rawNm.replace(/[^a-z0-9]/g, "");
+            const matched =
+              deptStudentLookup.get(rawNm) ||
+              deptStudentLookup.get(stripped) ||
+              userLookup.get(rawNm) ||
+              userLookup.get(stripped);
+            if (matched) {
+              rawReg = matched;
+              break;
+            }
+            for (const s of departmentStudents) {
+              if (s.studentName && areNamesMatching(s.studentName, nm)) {
+                rawReg = s.regNo;
+                break;
+              }
+            }
+            if (rawReg) break;
+          }
+        }
+      }
+
+      let cleanReg = normAlpha(rawReg);
+
+      // If cleanReg is not in studentMap, check if deptStudentLookup or userLookup knows this identifier
+      if (cleanReg && !studentMap.has(cleanReg)) {
+        const alt = deptStudentLookup.get(cleanReg) || userLookup.get(cleanReg);
+        if (alt && studentMap.has(alt)) {
+          cleanReg = alt;
+          rawReg = alt;
+        }
+      }
+
+      if (!cleanReg) return;
+
+      const pStatus = (p.paymentStatus || p.status || p.hdfcStatus || "").toLowerCase();
+      const isPaid =
+        pStatus === "paid" ||
+        pStatus === "success" ||
+        pStatus === "successful" ||
+        pStatus === "charged" ||
+        pStatus === "completed" ||
+        p.billAttached === true ||
+        Boolean(p.receiptNo) ||
+        Boolean(p.electronicBill) ||
+        Boolean(p.paidAt);
+
+      if (!isPaid) return;
+
+      const regDept = getDeptFromRegNo(rawReg);
+      // If regDept belongs to another department, strictly ignore it
+      if (regDept && !isDeptMatch(regDept, activeDepartment)) return;
+
+      const isThisDept =
+        studentMap.has(cleanReg) ||
+        (regDept && isDeptMatch(regDept, activeDepartment)) ||
+        (p.department && p.department !== "General" && p.department !== "—" && isDeptMatch(p.department, activeDepartment));
+
+      if (!isThisDept) return;
+
+      if (paidRegSet.has(cleanReg)) return;
+      paidRegSet.add(cleanReg);
+
+      const cand = studentMap.get(cleanReg);
+      const itemAmt = Number(
+        p.feeAmount || p.amount || p.chargedAmount || p.electronicBill?.amount || p.totalFee || cand?.allocatedFee || 4600
+      );
+
+      if (studentMap.has(cleanReg)) {
+        const current = studentMap.get(cleanReg);
+        studentMap.set(cleanReg, {
           ...current,
-          allocatedFee: effectiveAllocated,
-          amountPaid: paidAmt,
-          dueAmount: due,
-          isPaid: due === 0,
-          paymentRecord: p,
-          status: due === 0 ? "PAID" : "PARTIAL_DUE",
-        });
-      } else {
-        // Payment exists without prior student fee doc
-        const defaultExam = examsList[0] || {};
-        const examId = p.examId || defaultExam.id || "DEFAULT_EXAM";
-        const examName = getResolvedExamName(examId, defaultExam.name || p.examName || "Autonomous Examination");
-        const key = `${examId}_${cleanReg}`;
-
-        studentMap.set(key, {
-          regNo: reg,
-          studentName: p.studentName || p.name || reg,
-          batch: p.batch || "-",
-          section: p.section || "A",
-          programme: p.programme || programme || "UG",
-          department: p.department || department,
-          examId,
-          examName,
-          allocatedFee: paidAmt,
-          amountPaid: paidAmt,
+          allocatedFee: current.allocatedFee > 0 ? current.allocatedFee : itemAmt,
+          amountPaid: itemAmt,
           dueAmount: 0,
           isPaid: true,
           paymentRecord: p,
           status: "PAID",
         });
+      } else {
+        paidDeptItems.push({ cleanReg, rawReg, p, itemAmt });
       }
     });
 
-    return Array.from(studentMap.values());
-  }, [departmentFeeConfigs, paymentRecords, department, programme, examsList]);
+    // Reconcile unmatched department payments against unpaid roster candidates
+    const unmatchedQueue = [...paidDeptItems];
+
+    // Reconcile unmatched department payments against unpaid roster candidates by Email, UID, or Candidate Name
+    for (let i = unmatchedQueue.length - 1; i >= 0; i--) {
+      const unmatched = unmatchedQueue[i];
+      const unDept = getDeptFromRegNo(unmatched.rawReg);
+      if (unDept && !isDeptMatch(unDept, activeDepartment)) continue;
+      if (
+        unmatched.p.department &&
+        unmatched.p.department !== "General" &&
+        unmatched.p.department !== "—" &&
+        !isDeptMatch(unmatched.p.department, activeDepartment)
+      ) {
+        continue;
+      }
+
+      const pEmail = String(unmatched.p.studentEmail || unmatched.p.email || "").trim().toLowerCase();
+      const pUid = String(
+        unmatched.p.uid ||
+        unmatched.p.studentId ||
+        (typeof unmatched.p.id === "string" && unmatched.p.id.startsWith("ESE_") ? unmatched.p.id.replace("ESE_", "") : "")
+      ).trim().toLowerCase();
+
+      for (const [key, cand] of studentMap.entries()) {
+        if (!cand.isPaid) {
+          const emailMatch = pEmail && cand.email && String(cand.email).trim().toLowerCase() === pEmail;
+          const uidMatch = pUid && cand.uid && String(cand.uid).trim().toLowerCase() === pUid;
+          const nameMatch =
+            cand.studentName &&
+            unmatched.p.studentName &&
+            areNamesMatching(cand.studentName, unmatched.p.studentName);
+
+          if (emailMatch || uidMatch || nameMatch) {
+            studentMap.set(key, {
+              ...cand,
+              allocatedFee: cand.allocatedFee,
+              amountPaid: unmatched.itemAmt || cand.allocatedFee,
+              dueAmount: 0,
+              isPaid: true,
+              paymentRecord: unmatched.p,
+              status: "PAID",
+            });
+            unmatchedQueue.splice(i, 1);
+            break;
+          }
+        }
+      }
+    }
+
+    // Return strictly valid candidates: those who have fee > 0 allocated in Exam Form Setting OR have paid!
+    // "edhuvae 0 fee potrundha avan exam fee kata vena avan count layum vara matan"
+    return Array.from(studentMap.values()).filter(s => s.isPaid || s.allocatedFee > 0);
+  }, [
+    departmentStudents,
+    departmentFeeConfigs,
+    paymentRecords,
+    eseFeePayments,
+    gatewayPayments,
+    userLookup,
+    deptStudentLookup,
+    activeDepartment,
+    programme,
+    examsList,
+    examFilter,
+  ]);
 
   // Filtered & Sorted Student Dues
   const filteredRecords = useMemo(() => {
     let result = [...allDepartmentStudentDues];
+
+    // Strict Department Filter Guard (Never display other departments)
+    if (activeDepartment) {
+      result = result.filter((r) => isDeptMatch(r.department, activeDepartment));
+    }
 
     // 1. Exam Filter
     if (examFilter && examFilter !== "ALL") {
@@ -422,9 +1021,10 @@ export default function DepartmentExamFeeDueReport({
       result = result.filter((r) => isBatchMatch(r.batch, batchFilter));
     }
 
-    // 3. Section Filter
+    // 3. Section Filter (Strict normalized matching against Curriculum sections)
     if (sectionFilter && sectionFilter !== "ALL") {
-      result = result.filter((r) => String(r.section || "A").toUpperCase() === sectionFilter.toUpperCase());
+      const targetSec = normalizeSection(sectionFilter);
+      result = result.filter((r) => normalizeSection(r.section || "A") === targetSec);
     }
 
     // 4. Due Status Filter
@@ -460,20 +1060,20 @@ export default function DepartmentExamFeeDueReport({
     return result;
   }, [allDepartmentStudentDues, examFilter, batchFilter, sectionFilter, statusFilter, searchQuery, sortBy]);
 
-  // Aggregate Metrics
+  // Aggregate Metrics (Mathematically synchronized with Fee Dashboard Master Accountant Audit)
   const totalCandidates = allDepartmentStudentDues.length;
   const totalAllocatedFee = useMemo(() => {
     return allDepartmentStudentDues.reduce((sum, r) => sum + r.allocatedFee, 0);
   }, [allDepartmentStudentDues]);
   const totalCollectedFee = useMemo(() => {
-    return allDepartmentStudentDues.reduce((sum, r) => sum + r.amountPaid, 0);
+    return allDepartmentStudentDues.reduce((sum, r) => sum + (r.amountPaid || 0), 0);
   }, [allDepartmentStudentDues]);
   const totalDueFee = useMemo(() => {
-    return allDepartmentStudentDues.reduce((sum, r) => sum + r.dueAmount, 0);
-  }, [allDepartmentStudentDues]);
+    return Math.max(0, totalAllocatedFee - totalCollectedFee);
+  }, [totalAllocatedFee, totalCollectedFee]);
 
   const studentsDueCount = useMemo(() => {
-    return allDepartmentStudentDues.filter((r) => r.dueAmount > 0).length;
+    return allDepartmentStudentDues.filter((r) => !r.isPaid && r.dueAmount > 0).length;
   }, [allDepartmentStudentDues]);
   const studentsPaidCount = totalCandidates - studentsDueCount;
 
@@ -540,7 +1140,7 @@ export default function DepartmentExamFeeDueReport({
       r.studentName || "-",
       formatDepartmentDisplay(r.department || department),
       r.batch || "-",
-      r.section || "A",
+      normalizeSection(r.section) || "A",
       r.examName || "End Semester Autonomous Examination",
       Number(r.allocatedFee || 0),
       Number(r.amountPaid || 0),
@@ -679,7 +1279,7 @@ export default function DepartmentExamFeeDueReport({
         i + 1,
         String(r.regNo || "-").toUpperCase(),
         String(r.studentName || "-").toUpperCase(),
-        `Batch ${r.batch || "-"} (${r.section || "A"})`,
+        `Batch ${r.batch || "-"} (Sec ${normalizeSection(r.section) || "A"})`,
         `INR ${Number(r.allocatedFee || 0).toLocaleString("en-IN")}`,
         `INR ${Number(r.amountPaid || 0).toLocaleString("en-IN")}`,
         `INR ${Number(r.dueAmount || 0).toLocaleString("en-IN")}`,
@@ -787,13 +1387,14 @@ export default function DepartmentExamFeeDueReport({
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> Live Sync
               </span>
             </div>
-            <p className="text-slate-500 text-xs font-semibold mt-1 flex items-center gap-2 flex-wrap">
-              <span className="text-indigo-900 font-bold bg-indigo-50/60 px-2 py-0.5 rounded border border-indigo-100">
-                {department ? formatDepartmentDisplay(department) : "Department-level"}
+            <div className="text-slate-500 text-xs font-semibold mt-1 flex items-center gap-2 flex-wrap">
+              <span className="text-indigo-900 font-bold bg-indigo-50/60 px-2 py-0.5 rounded border border-indigo-100 flex items-center gap-1.5">
+                <GraduationCap size={13} className="text-[#120c7a]" />
+                <span>{activeDepartment ? formatDepartmentDisplay(activeDepartment) : "Select Department"}</span>
               </span>
               <span className="text-slate-300">&bull;</span>
               <span>Real-time student fee allocation, payment audit, and pending due tracking.</span>
-            </p>
+            </div>
           </div>
         </div>
 
@@ -899,7 +1500,28 @@ export default function DepartmentExamFeeDueReport({
 
       {/* Filter Toolbar */}
       <div className="p-5 bg-slate-50 border-b border-zinc-200 space-y-3">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
+        <div className={`grid grid-cols-1 sm:grid-cols-2 ${!department ? 'lg:grid-cols-6' : 'lg:grid-cols-5'} gap-3 items-end`}>
+          {/* Department Filter (Available if not fixed by prop) */}
+          {!department && (
+            <div>
+              <label className="text-[10px] font-black uppercase text-indigo-700 flex items-center gap-1 mb-1">
+                <GraduationCap size={12} className="text-indigo-600" /> Department *
+              </label>
+              <select
+                value={selectedDept}
+                onChange={(e) => setSelectedDept(e.target.value)}
+                className="w-full bg-indigo-50/50 border border-indigo-200 rounded-xl px-3 py-2 text-xs font-bold text-indigo-950 focus:ring-2 focus:ring-blue-500 outline-none shadow-sm cursor-pointer"
+              >
+                <option value="">-- Choose Department --</option>
+                {availableDepartments.map((d) => (
+                  <option key={d} value={d}>
+                    {formatDepartmentDisplay(d)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {/* Examination Filter */}
           <div>
             <label className="text-[10px] font-black uppercase text-slate-500 flex items-center gap-1 mb-1">
@@ -1112,14 +1734,14 @@ export default function DepartmentExamFeeDueReport({
                         <td className="py-3 px-4 font-bold text-slate-900">
                           <div>{r.studentName || "Candidate"}</div>
                           <div className="text-[10px] text-slate-500 font-normal mt-0.5">
-                            {formatProgDisplay(r.programme || "UG")} &bull; {r.section ? `Sec ${r.section}` : "Sec A"}
+                            {formatProgDisplay(r.programme || "UG")} &bull; Sec {normalizeSection(r.section) || "A"}
                           </div>
                         </td>
 
                         {/* Batch & Section */}
                         <td className="py-3 px-4 text-slate-600">
                           <span className="inline-block px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-semibold text-[11px]">
-                            {r.batch || "N/A"} ({r.section || "A"})
+                            {r.batch || "N/A"} (Sec {normalizeSection(r.section) || "A"})
                           </span>
                         </td>
 
@@ -1173,17 +1795,17 @@ export default function DepartmentExamFeeDueReport({
 
                         {/* Payment Ref / Date */}
                         <td className="py-3 px-4">
-                          {r.paymentRecord ? (
+                          {r.paymentRecord || r.isPaid || r.dueAmount === 0 ? (
                             <div className="space-y-0.5">
                               <div className="flex items-center gap-1 text-[11px] font-mono text-slate-700">
-                                <span>{r.paymentRecord.orderId || "-"}</span>
-                                {r.paymentRecord.orderId && (
+                                <span>{r.paymentRecord?.orderId || r.paymentRecord?.transactionId || (r.regNo ? `EXAM_${r.regNo}` : "VERIFIED_ESE")}</span>
+                                {(r.paymentRecord?.orderId || r.paymentRecord?.transactionId) && (
                                   <button
-                                    onClick={() => handleCopy(r.paymentRecord.orderId)}
+                                    onClick={() => handleCopy(r.paymentRecord.orderId || r.paymentRecord.transactionId)}
                                     title="Copy Txn ID"
                                     className="text-slate-400 hover:text-indigo-600 cursor-pointer"
                                   >
-                                    {copiedOrderId === r.paymentRecord.orderId ? (
+                                    {copiedOrderId === (r.paymentRecord.orderId || r.paymentRecord.transactionId) ? (
                                       <Check size={11} className="text-emerald-600" />
                                     ) : (
                                       <Copy size={11} />
@@ -1193,7 +1815,11 @@ export default function DepartmentExamFeeDueReport({
                               </div>
                               <div className="text-[10px] text-slate-400 flex items-center gap-1">
                                 <Clock size={10} />
-                                <span>{formatPaymentDateTime(r.paymentRecord)}</span>
+                                <span>
+                                  {formatPaymentDateTime(r.paymentRecord) !== "-"
+                                    ? formatPaymentDateTime(r.paymentRecord)
+                                    : "Verified Online"}
+                                </span>
                               </div>
                             </div>
                           ) : (

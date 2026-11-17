@@ -92,6 +92,7 @@ export default function StudentDashboard() {
     const programme = String(userData.programme || userData.program || userData.degree || profData.programme || stuData.programme || '').trim();
     const department = String(userData.department || userData.dept || userData.branch || profData.department || stuData.department || '').trim();
     const batch = String(userData.batch || userData.batchYear || profData.batch || stuData.batch || '').trim();
+    const studentSection = String(userData.section || userData.sec || profData.section || stuData.section || '').trim();
 
     if (!regNo && !userData.email) {
       setAttendancePct(0);
@@ -350,8 +351,6 @@ export default function StudentDashboard() {
             // enrollment doc may not exist
           }
         }));
-
-        const studentSection = userData.section || userData.sec || profData.section || stuData.section || '';
 
         const overview = calculateStudentAttendanceOverview({
           attDocs: matchedAttDocs,

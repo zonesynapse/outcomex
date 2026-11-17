@@ -6,10 +6,11 @@ import { onAuthStateChanged } from "firebase/auth";
 import {
   IndianRupee, AlertCircle, Loader2, Wallet, Receipt, X, CheckCircle2,
   ArrowRight, ExternalLink, Clock, RefreshCw, Banknote, Copy, Check,
-  Ban, ShieldAlert, Bus,
+  Ban, ShieldAlert, Bus, Users, Printer, FileText,
 } from "lucide-react";
-import { formatBatchDisplay, formatProgrammeKey, formatDepartmentDisplay, sanitizeKey } from "../../lib/utils";
-import { computePaidByConfig, yearStart } from "../../utils/feeAllocation";
+import { formatBatchDisplay, formatProgrammeKey, formatDepartmentDisplay, formatProgDisplay, sanitizeKey } from "../../lib/utils";
+import { computePaidByConfig, yearStart, normHead } from "../../utils/feeAllocation";
+import OfficialFeeReceiptModal from "../../components/OfficialFeeReceiptModal";
 
 const PAYMENT_STATUS = {
   PENDING: { label: "Pending", color: "text-amber-600", bg: "bg-amber-50", border: "border-amber-200" },
@@ -27,6 +28,27 @@ const normalizeAcademicYearStr = (y) => {
     return `${y1}-${y2}`;
   }
   return String(y).trim();
+};
+
+const numberToWordsINR = (num) => {
+  if (!num || isNaN(num) || num <= 0) return "Zero Rupees Only";
+  const ones = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
+  const tens = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+  const convert = (n) => {
+    if (n < 20) return ones[n];
+    if (n < 100) return tens[Math.floor(n / 10)] + (n % 10 ? " " + ones[n % 10] : "");
+    if (n < 1000) return ones[Math.floor(n / 100)] + " Hundred" + (n % 100 ? " and " + convert(n % 100) : "");
+    if (n < 100000) return convert(Math.floor(n / 1000)) + " Thousand" + (n % 1000 ? " " + convert(n % 1000) : "");
+    if (n < 10000000) return convert(Math.floor(n / 100000)) + " Lakh" + (n % 100000 ? " " + convert(n % 100000) : "");
+    return convert(Math.floor(n / 10000000)) + " Crore" + (n % 10000000 ? " " + convert(n % 10000000) : "");
+  };
+  const mainPart = Math.floor(num);
+  const paisePart = Math.round((num - mainPart) * 100);
+  let words = "Rupees " + convert(mainPart);
+  if (paisePart > 0) {
+    words += " and " + convert(paisePart) + " Paise";
+  }
+  return words + " Only";
 };
 
 const subscribeAppPaymentsForStudent = (student, setAppPayments) => {
@@ -74,6 +96,7 @@ const subscribeAppPaymentsForStudent = (student, setAppPayments) => {
             const dateVal = p.paymentDate
               ? (p.paymentDate.toDate ? p.paymentDate : Timestamp.fromDate(new Date(p.paymentDate)))
               : (data.createdAt ? (data.createdAt.toDate ? data.createdAt : Timestamp.fromDate(new Date(data.createdAt))) : Timestamp.now());
+            const pRef = p.upiNumber || p.refNo || p.transactionId || p.utr || data.upiNumber || data.refNo || "";
             collected.push({
               id: pId,
               status: "SUCCESS",
@@ -83,9 +106,15 @@ const subscribeAppPaymentsForStudent = (student, setAppPayments) => {
               paymentDate: dateVal,
               createdAt: dateVal,
               mode: p.paymentMode || p.mode || "cash",
+              refNo: pRef,
+              upiNumber: p.upiNumber || data.upiNumber || "",
+              rawRecord: p,
               receiptNo: `APP ${data.applicationNo || data.enquiryId || docId}`,
-              orderId: `APP ${data.applicationNo || data.enquiryId || docId}`,
+              orderId: pRef || `APP ${data.applicationNo || data.enquiryId || docId}`,
               _source: "Application",
+              enquiryId: data.enquiryId || docId,
+              applicationNo: data.applicationNo || "",
+              paymentIndex: i,
             });
           }
         });
@@ -100,6 +129,7 @@ const subscribeAppPaymentsForStudent = (student, setAppPayments) => {
           const dateVal = data.paymentDate
             ? (data.paymentDate.toDate ? data.paymentDate : Timestamp.fromDate(new Date(data.paymentDate)))
             : (data.createdAt ? (data.createdAt.toDate ? data.createdAt : Timestamp.fromDate(new Date(data.createdAt))) : Timestamp.now());
+          const pRef = data.upiNumber || data.refNo || data.transactionId || "";
           collected.push({
             id: pId,
             status: "SUCCESS",
@@ -109,9 +139,15 @@ const subscribeAppPaymentsForStudent = (student, setAppPayments) => {
             paymentDate: dateVal,
             createdAt: dateVal,
             mode: data.paymentMode || "cash",
+            refNo: pRef,
+            upiNumber: data.upiNumber || "",
+            rawRecord: data,
             receiptNo: `APP ${data.applicationNo || data.enquiryId || docId}`,
-            orderId: `APP ${data.applicationNo || data.enquiryId || docId}`,
+            orderId: pRef || `APP ${data.applicationNo || data.enquiryId || docId}`,
             _source: "Application",
+            enquiryId: data.enquiryId || docId,
+            applicationNo: data.applicationNo || "",
+            paymentIndex: 0,
           });
         }
       }
@@ -149,6 +185,8 @@ export default function Fees() {
   const [payments, setPayments] = useState([]);
   const [appPayments, setAppPayments] = useState([]);
   const [payModal, setPayModal] = useState({ open: false, feeHead: "", amount: "", maxAmount: 0 });
+  const [selectedHeads, setSelectedHeads] = useState([]);
+  const [customPayAmount, setCustomPayAmount] = useState("");
   const [processing, setProcessing] = useState(false);
   const [processingStep, setProcessingStep] = useState(0);
   const [error, setError] = useState("");
@@ -160,7 +198,99 @@ export default function Fees() {
   const [approvedTransportApps, setApprovedTransportApps] = useState([]);
   const [statusModal, setStatusModal] = useState({ open: false, success: false, orderId: "", amount: 0, feeHead: "", error: "", tampered: false, duplicate: false });
   const [receiptModal, setReceiptModal] = useState({ open: false, payment: null });
+  const [selectedHistoryPayments, setSelectedHistoryPayments] = useState([]);
   const ignoreBeforeUnloadRef = useRef(false);
+
+  const handleToggleSelectHistoryPayment = (paymentId) => {
+    setSelectedHistoryPayments((prev) =>
+      prev.includes(paymentId) ? prev.filter((id) => id !== paymentId) : [...prev, paymentId]
+    );
+  };
+
+  const handleSelectAllHistoryPayments = (checked) => {
+    if (checked) {
+      const successfulIds = allHistoryPayments
+        .filter(isSuccessfulPayment)
+        .map((p) => p.id || p.orderId || p.receiptNo);
+      setSelectedHistoryPayments(successfulIds);
+    } else {
+      setSelectedHistoryPayments([]);
+    }
+  };
+
+  const handlePrintConsolidatedHistory = () => {
+    const selected = allHistoryPayments.filter(
+      (p) => selectedHistoryPayments.includes(p.id || p.orderId || p.receiptNo) && isSuccessfulPayment(p)
+    );
+    if (selected.length === 0) return;
+    if (selected.length === 1) {
+      setReceiptModal({ open: true, payment: selected[0] });
+      return;
+    }
+    const totalAmount = selected.reduce(
+      (sum, p) => sum + Number(p.chargedAmount || p.amount || 0),
+      0
+    );
+    const combinedItems = selected.flatMap((p) => {
+      if (Array.isArray(p.items) && p.items.length > 0) return p.items;
+      if (Array.isArray(p.allocations) && p.allocations.length > 0) return p.allocations;
+      return [
+        {
+          head: p.feeHead || "Semester Fee",
+          amount: Number(p.chargedAmount || p.amount || 0),
+          academicYear: p.academicYear || "2026-2027",
+          semester: p.semester || "",
+        },
+      ];
+    });
+
+    const studentReg = studentData?.regNo || studentData?.admissionNo || studentData?.rollNo || studentData?.examNumber || "STU";
+
+    const consolidatedReceipt = {
+      isConsolidated: true,
+      receiptNo: `REC-CONS-${studentReg}-${Date.now().toString(36).toUpperCase()}`,
+      orderId: `CONS-${selected.map((s) => String(s.orderId || s.receiptNo || "REF").slice(-4)).join("-")}`,
+      paymentDate: new Date(),
+      items: combinedItems,
+      amount: totalAmount,
+      mode: "Consolidated (Online / Counter)",
+      studentName: studentData?.displayName || studentData?.name || "Candidate",
+      regNo: studentReg,
+      department: studentData?.department,
+      programme: studentData?.programme,
+      batch: studentData?.batch,
+      section: studentData?.section,
+    };
+    setReceiptModal({ open: true, payment: consolidatedReceipt });
+  };
+
+  const handlePrintDueDemandBill = () => {
+    if (selectedHeads.length === 0) return;
+    const totalDue = selectedHeads.reduce((sum, h) => sum + Number(h.due || 0), 0);
+    const studentReg = studentData?.regNo || studentData?.admissionNo || studentData?.rollNo || studentData?.examNumber || "STU";
+    const dueDemandPayment = {
+      isDueDemand: true,
+      demandNo: `DEM-${studentReg}-${Date.now().toString(36).toUpperCase()}`,
+      demandRef: `DEM-${studentReg}-${selectedHeads.length}H`,
+      demandDate: new Date(),
+      items: selectedHeads.map((h) => ({
+        head: h.head,
+        amount: Number(h.due || 0),
+        academicYear: h.academicYear || "2026-2027",
+        semester: h.semester || "",
+      })),
+      totalDue: totalDue,
+      amount: totalDue,
+      mode: "Payment Due (Demand Voucher)",
+      studentName: studentData?.displayName || studentData?.name || "Candidate",
+      regNo: studentReg,
+      department: studentData?.department,
+      programme: studentData?.programme,
+      batch: studentData?.batch,
+      section: studentData?.section,
+    };
+    setReceiptModal({ open: true, payment: dueDemandPayment });
+  };
 
   const verifyPaymentOnReturn = useCallback(async (orderId) => {
     try {
@@ -168,6 +298,7 @@ export default function Fees() {
       const result = await verifyFn({ orderId });
       const data = result.data;
       if (data.success) {
+        localStorage.removeItem("pending_student_fee_order_id");
         setStatusModal({
           open: true,
           success: true,
@@ -210,7 +341,20 @@ export default function Fees() {
       const cleanUrl = window.location.pathname + window.location.hash;
       window.history.replaceState({}, document.title, cleanUrl);
       verifyPaymentOnReturn(orderId);
+      return;
     }
+
+    // Auto-recovery for student if they closed browser during payment
+    const checkPendingOnMount = async () => {
+      try {
+        const pendingOrderId = localStorage.getItem("pending_student_fee_order_id");
+        if (pendingOrderId) {
+          console.log("Checking pending student fee payment on mount:", pendingOrderId);
+          await verifyPaymentOnReturn(pendingOrderId);
+        }
+      } catch (_) {}
+    };
+    checkPendingOnMount();
   }, [verifyPaymentOnReturn]);
 
   useEffect(() => {
@@ -634,6 +778,31 @@ export default function Fees() {
         });
 
         const configs = Array.from(configMap.values());
+
+        // Also fetch any previous academic year opening dues for this student
+        try {
+          const odSnap = await getDocs(collection(db, "fee_opening_dues"));
+          const sReg = (studentData.regNo || studentData.examNumber || "").trim().toLowerCase();
+          odSnap.docs.forEach(d => {
+            const od = d.data();
+            const odReg = (od.regNo || "").trim().toLowerCase();
+            const isMatch = (studentData.id && (od.studentId === studentData.id || od.uid === studentData.id)) ||
+              (sReg && odReg && sReg === odReg);
+            if (isMatch && Number(od.amount) > 0) {
+              configs.push({
+                id: d.id,
+                head: od.head,
+                academicYear: od.academicYear || "Previous AY",
+                semester: od.semester || "All",
+                amount: Number(od.amount),
+                isOpeningDue: true
+              });
+            }
+          });
+        } catch (e) {
+          console.warn("Error fetching student opening dues in portal:", e);
+        }
+
         setFeeConfigs(configs);
       } catch (err) { console.error("Error fetching fee configs:", err); }
     };
@@ -674,6 +843,7 @@ export default function Fees() {
     unsubs.push(onSnapshot(query(collection(db, "fee_payments"), where("studentId", "==", currentUid)), handleSnapshot, () => setLoading(false)));
     if (regNo) {
       unsubs.push(onSnapshot(query(collection(db, "fee_payments"), where("examNumber", "==", regNo)), handleSnapshot, () => setLoading(false)));
+      unsubs.push(onSnapshot(query(collection(db, "fee_payments"), where("regNo", "==", regNo)), handleSnapshot, () => setLoading(false)));
       unsubs.push(onSnapshot(query(collection(db, "fee_payments"), where("studentId", "==", regNo)), handleSnapshot, () => setLoading(false)));
     }
     if (studentDocId && studentDocId !== currentUid && studentDocId !== regNo) {
@@ -821,6 +991,91 @@ export default function Fees() {
     return p.status === "SUCCESS" || p.status === "active" || p.status === undefined || p.status === null;
   };
 
+  // Get effective payment date (prefers original paymentDate over Firestore sync/creation timestamp)
+  const getEffectivePaymentDate = useCallback((p) => {
+    if (!p) return new Date(0);
+    const pd = p.paymentDate;
+    if (pd) {
+      if (typeof pd.toDate === "function") return pd.toDate();
+      const d = new Date(pd);
+      if (!isNaN(d.getTime())) return d;
+    }
+    const ca = p.verifiedAt || p.paidAt || p.createdAt || p.timestamp;
+    if (ca) {
+      if (typeof ca.toDate === "function") return ca.toDate();
+      const d = new Date(ca);
+      if (!isNaN(d.getTime())) return d;
+    }
+    return new Date(0);
+  }, []);
+
+  // Deduplicate application payments:
+  // If an admission/application payment from enquiries has ALREADY been synced into fee_payments
+  // (e.g. as REC-APP-ENQ... or enq_pay_...), exclude the duplicate raw appPayment!
+  const unSyncedAppPayments = useMemo(() => {
+    if (!appPayments || appPayments.length === 0) return [];
+    if (!payments || payments.length === 0) return appPayments;
+
+    // Track synced application payments present in fee_payments
+    const syncedPayments = payments.filter((p) =>
+      p.isApplicationFee === true ||
+      p.source === "admission_enquiry" ||
+      (typeof p.id === "string" && p.id.startsWith("enq_pay_")) ||
+      (typeof p.receiptNo === "string" && p.receiptNo.startsWith("REC-APP-"))
+    );
+
+    if (syncedPayments.length === 0) return appPayments;
+
+    // Mutable pool to match against 1-to-1
+    const availableSynced = [...syncedPayments];
+
+    return appPayments.filter((ap) => {
+      const apHead = normHead(ap.feeHead);
+      const apAmt = Number(ap.chargedAmount || ap.amount || 0);
+      const apDocId = String(ap.enquiryId || ap._docId || "").toLowerCase();
+      const apAppNo = String(ap.applicationNo || "").toLowerCase();
+
+      const matchIdx = availableSynced.findIndex((sp) => {
+        const spHead = normHead(sp.feeHead);
+        const spAmt = Number(sp.chargedAmount || sp.amount || 0);
+
+        if (spHead !== apHead) return false;
+        if (Math.abs(spAmt - apAmt) > 0.01) return false;
+
+        const spId = String(sp.id || "").toLowerCase();
+        const spReceipt = String(sp.receiptNo || "").toLowerCase();
+        const spRef = String(sp.refNo || "").toLowerCase();
+        const spRemarks = String(sp.remarks || "").toLowerCase();
+        const spExam = String(sp.examNumber || "").toLowerCase();
+
+        if (apDocId && (spId.includes(apDocId) || spReceipt.includes(apDocId) || spRemarks.includes(apDocId))) {
+          return true;
+        }
+        if (apAppNo && (spRef.includes(apAppNo) || spRemarks.includes(apAppNo) || spExam === apAppNo)) {
+          return true;
+        }
+
+        return true;
+      });
+
+      if (matchIdx !== -1) {
+        availableSynced.splice(matchIdx, 1);
+        return false;
+      }
+
+      return true;
+    });
+  }, [appPayments, payments]);
+
+  // Combined payment history for UI display
+  const allHistoryPayments = useMemo(() => {
+    return [...payments, ...unSyncedAppPayments].sort((a, b) => {
+      const da = getEffectivePaymentDate(a);
+      const db2 = getEffectivePaymentDate(b);
+      return db2.getTime() - da.getTime();
+    });
+  }, [payments, unSyncedAppPayments, getEffectivePaymentDate]);
+
   // Each portal payment reduces exactly ONE config (year-tagged → that year,
   // untagged legacy → oldest due first). Application payments keep the
   // first-year-only rule. Shared allocator keeps office & portal consistent.
@@ -828,8 +1083,8 @@ export default function Fees() {
   const paidByConfigId = useMemo(() => computePaidByConfig({
     configs: combinedFeeConfigs,
     portalPayments: payments.filter((p) => isSuccessfulPayment(p)),
-    appPayments: appPayments.filter((p) => isSuccessfulPayment(p)),
-  }), [combinedFeeConfigs, payments, appPayments]);
+    appPayments: unSyncedAppPayments.filter((p) => isSuccessfulPayment(p)),
+  }), [combinedFeeConfigs, payments, unSyncedAppPayments]);
 
   // Reactive paid calculation per head/config, honoring portal payments, fee_payments,
   // and direct transport application payments/clearance.
@@ -929,34 +1184,157 @@ export default function Fees() {
     );
   }, [visibleFeeConfigs, paidForHead]);
 
-  // Determine the FIRST academic year per fee head — application-time payments only reduce that year's head
-  const normHead = (s) => {
-    const str = String(s || '').replace(/[\s\u00A0]+/g, ' ').trim().toLowerCase();
-    if (!str) return '';
-    if (str.includes('application') || str.includes('app fee') || str.includes('consortium') || str.includes('registration') || str.includes('enquiry')) return 'application fee';
-    if (str.includes('admission')) return 'admission fee';
-    if (str.includes('caution')) return 'caution deposit';
-    if (str.includes('tuition')) return 'tuition fee';
-    if (str.includes('other')) return 'other fee';
-    if (str.includes('transport')) return 'transport fee';
-    if (str.includes('hostel')) return 'hostel fee';
-    return str;
-  };
 
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(amount);
   };
 
+  const parseDateSafely = (val) => {
+    if (!val) return null;
+    if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+    if (typeof val.toDate === "function") {
+      try {
+        const d = val.toDate();
+        if (d && !isNaN(d.getTime())) return d;
+      } catch (_) {}
+    }
+    if (typeof val.seconds === "number") {
+      const d = new Date(val.seconds * 1000);
+      if (!isNaN(d.getTime())) return d;
+    }
+    if (typeof val._seconds === "number") {
+      const d = new Date(val._seconds * 1000);
+      if (!isNaN(d.getTime())) return d;
+    }
+    if (typeof val === "number") {
+      const d = new Date(val);
+      if (!isNaN(d.getTime())) return d;
+    }
+    if (typeof val === "string") {
+      const d = new Date(val);
+      if (!isNaN(d.getTime())) return d;
+      const parts = val.split(/[-/]/);
+      if (parts.length === 3) {
+        const d2 = new Date(parts[2], parts[1] - 1, parts[0]);
+        if (!isNaN(d2.getTime())) return d2;
+      }
+    }
+    return null;
+  };
+
   const formatDate = (ts) => {
-    if (!ts) return "-";
-    const d = ts.toDate ? ts.toDate() : new Date(ts);
+    const d = parseDateSafely(ts);
+    if (!d) return "-";
     return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
   };
 
   const formatTime = (ts) => {
-    if (!ts) return "";
-    const d = ts.toDate ? ts.toDate() : new Date(ts);
+    const d = parseDateSafely(ts);
+    if (!d) return "";
     return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+  };
+
+  const handleToggleHead = (cfg, due, ay, sem, isChecked) => {
+    let updated;
+    if (isChecked) {
+      updated = [
+        ...selectedHeads.filter(h => h.id !== cfg.id),
+        {
+          id: cfg.id,
+          head: cfg.head || "Fee",
+          due: Number(due) || 0,
+          academicYear: cfg.academicYear || ay || "2026-2027",
+          semester: cfg.semester || sem || "",
+          totalAmount: Number(cfg.amount) || 0
+        }
+      ];
+    } else {
+      updated = selectedHeads.filter(h => h.id !== cfg.id);
+    }
+    setSelectedHeads(updated);
+
+    if (updated.length > 0) {
+      const totalDue = updated.reduce((s, h) => s + h.due, 0);
+      setCustomPayAmount(String(totalDue));
+    } else {
+      setCustomPayAmount("");
+    }
+  };
+
+  const computedAllocations = useMemo(() => {
+    if (!selectedHeads.length) return [];
+    const maxDue = selectedHeads.reduce((s, h) => s + h.due, 0);
+    const enteredAmount = Math.min(Number(customPayAmount) || 0, maxDue);
+    let remainingPay = enteredAmount;
+    return selectedHeads.map(item => {
+      const allocated = Math.min(remainingPay, item.due);
+      const balanceDueAfter = Math.max(0, item.due - allocated);
+      remainingPay = Math.max(0, remainingPay - allocated);
+      return {
+        ...item,
+        allocatedAmount: allocated,
+        balanceDueAfter,
+        isFullyCovered: allocated >= item.due
+      };
+    });
+  }, [selectedHeads, customPayAmount]);
+
+  const handleMultiHeadPay = async () => {
+    const amount = Number(customPayAmount);
+    if (!amount || amount < 1) { setError("Enter a valid amount"); return; }
+    const totalMax = selectedHeads.reduce((s, h) => s + h.due, 0);
+    if (amount > totalMax) { setError(`Cannot pay more than ${formatCurrency(totalMax)}`); return; }
+
+    setError("");
+    setProcessing(true);
+    try {
+      const allocationsToPass = computedAllocations
+        .filter(a => a.allocatedAmount > 0)
+        .map(a => ({
+          feeHead: a.head,
+          head: a.head,
+          amount: a.allocatedAmount,
+          allocatedAmount: a.allocatedAmount,
+          academicYear: a.academicYear || "",
+          semester: a.semester || ""
+        }));
+
+      const createSession = httpsCallable(functions, "createPaymentSession");
+      const returnUrl = window.location.origin + window.location.pathname;
+      const result = await createSession({
+        amount,
+        feeHead: allocationsToPass.map(a => a.feeHead).join(" + "),
+        academicYear: selectedHeads[0]?.academicYear || "",
+        returnUrl,
+        phone: studentData?.phone || studentData?.mobile || "",
+        studentId: studentData?.id || studentData?.uid || "",
+        studentEmail: studentData?.email || "",
+        studentName: studentData?.displayName || studentData?.studentName || studentData?.name || "",
+        programme: studentData?.programme || "UG",
+        batch: studentData?.batch || "2026-2030",
+        department: studentData?.department || "",
+        regNo: studentData?.regNo || studentData?.examNumber || "",
+        allocations: allocationsToPass
+      });
+
+      const { paymentUrl, orderId } = result.data;
+      if (orderId) {
+        localStorage.setItem("pending_student_fee_order_id", orderId);
+      }
+      ignoreBeforeUnloadRef.current = true;
+      window.location.href = paymentUrl;
+    } catch (err) {
+      console.error("Multi-head payment session error:", err);
+      const msg = err.code === "unavailable"
+        ? "Payment gateway is temporarily down. Please try again in a few minutes."
+        : err.code === "unauthenticated"
+          ? "Your session has expired. Please log in again."
+          : err.message || "Payment could not be initiated. Please try again.";
+      setError(msg);
+      setToast({ show: true, message: msg, type: "error" });
+    } finally {
+      setProcessing(false);
+    }
   };
 
   const handlePayClick = async () => {
@@ -974,10 +1352,20 @@ export default function Fees() {
         feeHead: payModal.feeHead,
         academicYear: payModal.academicYear || "",
         returnUrl,
-        phone: studentData?.phone || "",
+        phone: studentData?.phone || studentData?.mobile || "",
+        studentId: studentData?.id || studentData?.uid || "",
+        studentEmail: studentData?.email || "",
+        studentName: studentData?.displayName || studentData?.studentName || studentData?.name || "",
+        programme: studentData?.programme || "UG",
+        batch: studentData?.batch || "2026-2030",
+        department: studentData?.department || "",
+        regNo: studentData?.regNo || studentData?.examNumber || "",
       });
 
       const { paymentUrl, orderId } = result.data;
+      if (orderId) {
+        localStorage.setItem("pending_student_fee_order_id", orderId);
+      }
       setPayModal({ ...payModal, open: false });
       ignoreBeforeUnloadRef.current = true;
       window.location.href = paymentUrl;
@@ -1099,6 +1487,7 @@ export default function Fees() {
                     <th className="px-4 py-3 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest border border-slate-200">Sem</th>
                     <th className="px-4 py-3 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest border border-slate-200">Fee Head</th>
                     <th className="px-4 py-3 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest border border-slate-200">Amount</th>
+                    <th className="px-3 py-3 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest border border-slate-200 w-16">Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1147,6 +1536,11 @@ export default function Fees() {
                             >
                               <div className="flex items-center gap-2 flex-wrap">
                                 <span>{cfg.head || 'Fee'}</span>
+                                {cfg.isOpeningDue && (
+                                  <span className="inline-flex items-center text-[10px] font-black text-amber-800 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+                                    Previous Year Due ({cfg.academicYear})
+                                  </span>
+                                )}
                                 {cfg._transport && (
                                   <span className="inline-flex items-center gap-1 text-[10px] font-bold text-sky-700 bg-sky-50 px-2 py-0.5 rounded-full border border-sky-200">
                                     <Bus size={10} />
@@ -1196,6 +1590,17 @@ export default function Fees() {
                                 formatCurrency(cfg.amount)
                               )}
                             </td>
+                            <td className="px-3 py-3 text-center border border-slate-200">
+                              {isFullyPaid ? null : (
+                                <input
+                                  type="checkbox"
+                                  checked={selectedHeads.some(s => s.id === cfg.id)}
+                                  onChange={(e) => handleToggleHead(cfg, remainingForThisHead, yearGroup.academicYear, semGroup.semester, e.target.checked)}
+                                  className="w-4 h-4 text-[#120c7a] rounded border-slate-300 focus:ring-2 focus:ring-blue-500 cursor-pointer accent-[#120c7a]"
+                                  title={`Select ${cfg.head} (Due: ${formatCurrency(remainingForThisHead)})`}
+                                />
+                              )}
+                            </td>
                           </tr>
                         );
                         return tr;
@@ -1222,6 +1627,7 @@ export default function Fees() {
                                 formatCurrency(semTotal)
                               )}
                             </td>
+                            <td className="border border-slate-200" />
                           </tr>
                         );
                       }
@@ -1243,20 +1649,144 @@ export default function Fees() {
                         formatCurrency(pending)
                       )}
                     </td>
+                    <td className="border border-slate-200" />
                   </tr>
                 </tbody>
               </table>
               </div>
+
+              {/* Selected Heads Checkout / Partial Payment Card */}
+              {selectedHeads.length > 0 && (
+                <div className="mt-6 bg-gradient-to-br from-blue-50/90 via-indigo-50/50 to-slate-50 border-2 border-[#120c7a]/20 rounded-2xl p-5 shadow-lg space-y-4 animate-in fade-in zoom-in-95 duration-200">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-blue-200/60 pb-3">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-xl bg-[#120c7a] text-white flex items-center justify-center shadow-md">
+                        <IndianRupee size={16} />
+                      </div>
+                      <div>
+                        <h4 className="font-extrabold text-slate-800 text-sm">Pay Selected Dues ({selectedHeads.length} Selected)</h4>
+                        <p className="text-[11px] text-slate-500 font-medium">Select one or more fee heads to pay together with custom partial payment</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => { setSelectedHeads([]); setCustomPayAmount(""); }}
+                      className="text-xs font-bold text-slate-500 hover:text-red-600 px-2.5 py-1 rounded-lg hover:bg-red-50 transition-colors"
+                    >
+                      Clear Selection
+                    </button>
+                  </div>
+
+                  {/* Selected heads list & amount adjustment */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">
+                        Paying Amount (₹)
+                      </label>
+                      <div className="relative">
+                        <IndianRupee size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                          type="number"
+                          value={customPayAmount}
+                          onChange={(e) => {
+                            let val = e.target.value;
+                            const maxDue = selectedHeads.reduce((s, h) => s + h.due, 0);
+                            if (val !== "") {
+                              const num = Number(val);
+                              if (maxDue > 0 && num > maxDue) {
+                                val = String(maxDue);
+                                setError(`Amount cannot exceed selected dues of ${formatCurrency(maxDue)}`);
+                              } else {
+                                setError("");
+                              }
+                            }
+                            setCustomPayAmount(val);
+                          }}
+                          min="1"
+                          max={selectedHeads.reduce((s, h) => s + h.due, 0) || undefined}
+                          className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl font-black text-slate-800 outline-none focus:ring-4 focus:ring-blue-100 focus:border-[#120c7a] transition-all text-base"
+                          placeholder="Enter amount to pay"
+                        />
+                      </div>
+                      <p className="text-[10px] text-slate-400 mt-1">
+                        Total Due of Selected Heads: <span className="font-bold text-slate-700">{formatCurrency(selectedHeads.reduce((s, h) => s + h.due, 0))}</span>
+                      </p>
+                    </div>
+
+                    <div className="flex items-end gap-2.5">
+                      <button
+                        type="button"
+                        onClick={handlePrintDueDemandBill}
+                        className="py-3 px-4 bg-white border-2 border-[#120c7a] text-[#120c7a] hover:bg-blue-50/50 text-xs sm:text-sm font-black rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-xs cursor-pointer shrink-0"
+                        title="Print official single sheet demand voucher for selected dues"
+                      >
+                        <Printer size={16} />
+                        <span className="hidden sm:inline">Print Due Bill (Single Sheet)</span>
+                        <span className="sm:hidden">Print Bill</span>
+                      </button>
+                      <button
+                        onClick={handleMultiHeadPay}
+                        disabled={processing || !customPayAmount || Number(customPayAmount) <= 0}
+                        className="flex-1 py-3 bg-[#120c7a] text-white text-sm font-black rounded-xl hover:bg-blue-900 disabled:opacity-50 transition-all flex items-center justify-center gap-2 shadow-lg shadow-[#120c7a]/25 cursor-pointer"
+                      >
+                        {processing ? <Loader2 size={18} className="animate-spin" /> : <ExternalLink size={18} />}
+                        Pay {customPayAmount ? formatCurrency(Number(customPayAmount)) : ""} via HDFC SmartGateway
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Allocation breakdown preview */}
+                  {computedAllocations.length > 0 && (
+                    <div className="bg-white/80 border border-blue-200/80 rounded-xl p-3.5 space-y-2">
+                      <p className="text-xs font-extrabold text-blue-900 flex items-center justify-between border-b border-blue-100 pb-1.5">
+                        <span>Allocation across checked heads:</span>
+                        <span className="text-emerald-700 font-mono">Paying: {formatCurrency(Number(customPayAmount) || 0)}</span>
+                      </p>
+                      <div className="space-y-1.5">
+                        {computedAllocations.map((alloc, idx) => (
+                          <div key={alloc.id || idx} className="flex items-center justify-between text-xs text-slate-700 bg-slate-50/60 px-3 py-1.5 rounded-lg border border-slate-100">
+                            <span className="font-semibold">{idx + 1}. {alloc.head} (Due: {formatCurrency(alloc.due)}):</span>
+                            <span className="font-mono text-right">
+                              <span className="text-emerald-700 font-bold">{formatCurrency(alloc.allocatedAmount)}</span>
+                              {alloc.balanceDueAfter > 0 ? (
+                                <span className="text-amber-600 font-bold ml-2 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 text-[10px]">
+                                  {formatCurrency(alloc.balanceDueAfter)} will remain Due
+                                </span>
+                              ) : (
+                                <span className="text-emerald-600 font-bold ml-2 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 text-[10px]">
+                                  Fully Settled ✓
+                                </span>
+                              )}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
 
         <div className="bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100">
-          <div className="bg-[#120c7a] px-6 py-3 flex items-center gap-3">
-            <Receipt size={20} className="text-white" />
-            <h2 className="text-white font-bold text-lg">Payment History</h2>
+          <div className="bg-[#120c7a] px-6 py-3.5 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <Receipt size={20} className="text-white" />
+              <h2 className="text-white font-bold text-lg">Payment History</h2>
+            </div>
+            {selectedHistoryPayments.length > 0 && (
+              <button
+                type="button"
+                onClick={handlePrintConsolidatedHistory}
+                className="px-4 py-1.5 bg-white text-[#120c7a] hover:bg-blue-50 text-xs font-black rounded-xl transition-all flex items-center gap-1.5 shadow-sm cursor-pointer"
+                title="Print consolidated receipt for selected payments on single sheet"
+              >
+                <Printer size={14} />
+                <span>Print Consolidated Receipt ({selectedHistoryPayments.length} Selected)</span>
+              </button>
+            )}
           </div>
-          {payments.length === 0 && appPayments.length === 0 ? (
+          {allHistoryPayments.length === 0 ? (
             <div className="py-12 text-center">
               <Receipt size={36} className="mx-auto text-slate-200 mb-2" />
               <p className="text-sm font-medium text-slate-400">No payments recorded.</p>
@@ -1267,6 +1797,18 @@ export default function Fees() {
               <table className="w-full border-collapse">
                 <thead>
                   <tr className="border-b border-slate-200">
+                    <th className="px-3 py-3 text-center w-10">
+                      <input
+                        type="checkbox"
+                        checked={
+                          allHistoryPayments.filter(isSuccessfulPayment).length > 0 &&
+                          selectedHistoryPayments.length === allHistoryPayments.filter(isSuccessfulPayment).length
+                        }
+                        onChange={(e) => handleSelectAllHistoryPayments(e.target.checked)}
+                        className="w-4 h-4 text-[#120c7a] rounded border-slate-300 focus:ring-2 focus:ring-blue-500 cursor-pointer accent-[#120c7a]"
+                        title="Select All Paid Receipts"
+                      />
+                    </th>
                     <th className="px-3 py-3 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Date</th>
                     <th className="px-3 py-3 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Receipt / Order</th>
                     <th className="px-3 py-3 text-left text-[10px] font-black text-slate-400 uppercase tracking-widest">Head</th>
@@ -1275,28 +1817,64 @@ export default function Fees() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {[...payments, ...appPayments]
-                    .sort((a, b) => {
-                      const da = a.createdAt?.toDate?.() || new Date(a.createdAt || 0);
-                      const db2 = b.createdAt?.toDate?.() || new Date(b.createdAt || 0);
-                      return db2 - da;
-                    })
-                    .map((p, i) => {
+                  {allHistoryPayments.map((p, i) => {
                     const isPaid = isSuccessfulPayment(p);
                     const st = isPaid ? PAYMENT_STATUS.SUCCESS : (PAYMENT_STATUS[p.status] || PAYMENT_STATUS.PENDING);
+                    const effDate = getEffectivePaymentDate(p);
+                    const isAppPayment = Boolean(
+                      p._source === "Application" ||
+                      p.isApplicationFee === true ||
+                      p.source === "admission_enquiry" ||
+                      (typeof p.id === "string" && p.id.startsWith("enq_pay_")) ||
+                      (typeof p.receiptNo === "string" && p.receiptNo.startsWith("REC-APP-")) ||
+                      (typeof p.orderId === "string" && p.orderId.startsWith("APP "))
+                    );
+                    const isNetkampus = Boolean(
+                      p.isLegacySettlement ||
+                      p.settlementSource === "Netkampus" ||
+                      (p.mode || "").toLowerCase().includes("netkampus") ||
+                      (p.remarks || "").toLowerCase().includes("netkampus")
+                    );
+                    const pKey = p.id || p.orderId || p.receiptNo;
                     return (
                       <tr key={p.id || i} className="hover:bg-slate-50 transition-colors">
+                        <td className="px-3 py-3 text-center">
+                          {isPaid && !isNetkampus ? (
+                            <input
+                              type="checkbox"
+                              checked={selectedHistoryPayments.includes(pKey)}
+                              onChange={() => handleToggleSelectHistoryPayment(pKey)}
+                              className="w-4 h-4 text-[#120c7a] rounded border-slate-300 focus:ring-2 focus:ring-blue-500 cursor-pointer accent-[#120c7a]"
+                              title="Select for Consolidated Print"
+                            />
+                          ) : null}
+                        </td>
                         <td className="px-3 py-3 text-xs font-bold text-slate-600">
-                          <span className="block">{formatDate(p.createdAt)}</span>
-                          {p.createdAt && <span className="text-[10px] text-slate-400">{formatTime(p.createdAt)}</span>}
+                          <span className="block">{formatDate(effDate)}</span>
+                          {effDate && <span className="text-[10px] text-slate-400">{formatTime(effDate)}</span>}
                         </td>
                         <td className="px-3 py-3">
-                          <span className="text-xs font-mono font-bold text-slate-700 block">{p.receiptNo || p.orderId || '-'}</span>
-                          {p.gatewayResponse?.rrn && (
-                            <span className="text-[10px] text-slate-400 font-mono">RRN: {p.gatewayResponse.rrn}</span>
-                          )}
-                          {p._source === "Application" && (
-                            <span className="text-[9px] font-bold text-blue-500">Application</span>
+                          {isNetkampus ? (
+                            <div>
+                              <span className="px-2 py-0.5 bg-purple-50 text-purple-700 border border-purple-200 rounded-md text-[10px] font-black inline-block">
+                                Settled by Netkampus
+                              </span>
+                              {(p.refNo || p.transactionId) && (
+                                <span className="text-[10px] text-slate-400 font-mono block mt-0.5">
+                                  Txn: {p.refNo || p.transactionId}
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            <>
+                              <span className="text-xs font-mono font-bold text-slate-700 block">{p.receiptNo || p.orderId || '-'}</span>
+                              {p.gatewayResponse?.rrn && (
+                                <span className="text-[10px] text-slate-400 font-mono">RRN: {p.gatewayResponse.rrn}</span>
+                              )}
+                              {isAppPayment && (
+                                <span className="text-[9px] font-bold text-blue-500 block">Application</span>
+                              )}
+                            </>
                           )}
                         </td>
                         <td className="px-3 py-3 text-xs font-bold text-slate-600">{p.feeHead || '-'}</td>
@@ -1322,10 +1900,10 @@ export default function Fees() {
                             </div>
                           ) : (
                             <div className="flex items-center justify-center gap-2">
-                              <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${st.bg} ${st.color} ${st.border} border`}>
-                                {st.label}
+                              <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${isNetkampus ? "bg-purple-50 text-purple-700 border-purple-200 border" : `${st.bg} ${st.color} ${st.border} border`}`}>
+                                {isNetkampus ? "Settled by Netkampus" : st.label}
                               </span>
-                              {isPaid && (
+                              {isPaid && !isNetkampus && (
                                 <button
                                   onClick={() => setReceiptModal({ open: true, payment: p })}
                                   className="p-1 hover:bg-slate-100 rounded text-slate-500 hover:text-[#120c7a] transition-all"
@@ -1525,154 +2103,13 @@ export default function Fees() {
         );
       })()}
 
-      {/* Receipt Modal */}
-      {receiptModal.open && receiptModal.payment && (() => {
-        const p = receiptModal.payment;
-        const resolvedName = p.studentName || studentData?.name || auth.currentUser?.displayName || "Student";
-        const resolvedEmail = p.studentEmail || studentData?.email || auth.currentUser?.email || "";
-        const resolvedReg = studentData?.regNo || studentData?.admissionNo || "—";
-        const resolvedDept = studentData?.department ? formatDepartmentDisplay(studentData.department, studentData.programme) : "—";
-        const txId = p.gatewayResponse?.txnId || p.gatewayResponse?.epgTxnId || "—";
-        const rrn = p.gatewayResponse?.rrn || "—";
-        const authCode = p.gatewayResponse?.authCode || "—";
-
-        return (
-          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[120] flex items-center justify-center p-4 animate-in fade-in duration-200" id="receipt-modal-backdrop" onClick={() => setReceiptModal({ open: false, payment: null })}>
-            <style>{`
-              @media print {
-                body * {
-                  visibility: hidden !important;
-                }
-                #printable-receipt, #printable-receipt * {
-                  visibility: visible !important;
-                }
-                #printable-receipt {
-                  position: absolute;
-                  left: 0;
-                  top: 0;
-                  width: 100%;
-                  margin: 0;
-                  padding: 20px;
-                  box-shadow: none !important;
-                  border: none !important;
-                }
-                #receipt-modal-backdrop {
-                  background: none !important;
-                  backdrop-filter: none !important;
-                }
-                .no-print {
-                  display: none !important;
-                }
-              }
-            `}</style>
-            
-            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh] transform animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
-              <div className="px-6 py-4 border-b border-zinc-100 flex items-center justify-between no-print">
-                <h3 className="font-bold text-zinc-800 flex items-center gap-2">
-                  <Receipt className="text-[#120c7a]" size={20} />
-                  <span>Payment Receipt</span>
-                </h3>
-                <button
-                  onClick={() => setReceiptModal({ open: false, payment: null })}
-                  className="p-2 hover:bg-zinc-100 rounded-xl"
-                ><X size={18} /></button>
-              </div>
-
-              <div className="p-8 overflow-y-auto flex-1 space-y-8">
-                {/* Print Content Wrapper */}
-                <div id="printable-receipt" className="bg-white p-4 md:p-6 border border-slate-200 rounded-2xl shadow-sm space-y-5 md:space-y-6 relative overflow-hidden">
-                  {/* Centered Watermark Stamp */}
-                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none z-0">
-                    <span className="text-emerald-500/[0.04] font-black text-6xl md:text-8xl uppercase tracking-[0.25em] -rotate-12 border-8 border-emerald-500/[0.04] rounded-3xl px-8 py-4">
-                      PAID
-                    </span>
-                  </div>
-
-                  {/* Receipt Header */}
-                  <div className="flex flex-col items-center text-center border-b border-slate-100 pb-5 md:pb-6 relative z-10">
-                    <img src="/logo.png" className="h-14 md:h-16 w-auto object-contain mb-2 md:mb-3" alt="Logo" />
-                    <div>
-                      <h4 className="font-black text-slate-800 text-base md:text-lg uppercase tracking-wide">Fee Receipt</h4>
-                      <p className="text-xs md:text-sm text-slate-400">Official Fee Receipt | HDFC SmartGateway secure payment</p>
-                      <p className="text-[10px] md:text-xs text-slate-400 mt-1 font-semibold">Receipt Date: {formatDate(p.createdAt)} {p.createdAt && formatTime(p.createdAt)}</p>
-                    </div>
-                  </div>
-
-                  {/* Student & Transaction Info Grid */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-y-4 md:gap-y-0 md:gap-x-8 text-xs md:text-sm relative z-10">
-                    <div className="space-y-0.5">
-                      <p className="text-slate-400 font-bold uppercase tracking-wider text-[10px] md:text-xs">Student Details</p>
-                      <p className="font-bold text-slate-800 mt-1">{resolvedName}</p>
-                      <p className="text-slate-500 break-all">{resolvedEmail}</p>
-                      <p className="text-slate-500">Reg/Adm No: {resolvedReg}</p>
-                      <p className="text-slate-500 leading-tight">Dept: {resolvedDept}</p>
-                    </div>
-                    <div className="space-y-0.5">
-                      <p className="text-slate-400 font-bold uppercase tracking-wider text-[10px] md:text-xs">Receipt Information</p>
-                      <p className="font-bold text-slate-800 mt-1 break-all">Receipt No: <span className="font-mono">{p.receiptNo || p.orderId}</span></p>
-                      <p className="text-slate-500">Mode: <span className="font-semibold capitalize">{p.mode ? (p.mode === "online" ? "Online (SmartGateway)" : p.mode) : "Online (SmartGateway)"}</span></p>
-                      <p className="text-slate-500 break-all">Txn ID: <span className="font-mono">{txId}</span></p>
-                      {rrn && rrn !== "—" && <p className="text-slate-500 break-all">Bank RRN: <span className="font-mono">{rrn}</span></p>}
-                    </div>
-                  </div>
-
-                  {/* Fee Item Table */}
-                  <div className="mt-4 md:mt-6 border border-slate-200 rounded-xl overflow-hidden relative z-10">
-                    <table className="w-full text-xs md:text-sm table-fixed">
-                      <thead>
-                        <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 font-bold text-[10px] md:text-xs">
-                          <th className="px-3 py-2.5 md:px-4 md:py-3 text-left w-1/2">Fee Item</th>
-                          <th className="px-3 py-2.5 md:px-4 md:py-3 text-left w-1/3">Mode</th>
-                          <th className="px-3 py-2.5 md:px-4 md:py-3 text-right">Amount</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 text-slate-700 text-[11px] md:text-sm">
-                        <tr>
-                          <td className="px-3 py-3 md:px-4 md:py-4 font-bold break-words">{p.feeHead || "Semester Fee"}</td>
-                          <td className="px-3 py-3 md:px-4 md:py-4 font-semibold text-slate-400 break-words">{p.mode ? (p.mode === "online" ? "Online (SmartGateway)" : p.mode.charAt(0).toUpperCase() + p.mode.slice(1)) : "Online (SmartGateway)"}</td>
-                          <td className="px-3 py-3 md:px-4 md:py-4 text-right font-black text-slate-800">
-                            {formatCurrency(p.chargedAmount || p.amount)}
-                          </td>
-                        </tr>
-                        <tr className="bg-slate-50/50 font-black text-slate-800 text-xs md:text-base">
-                          <td colSpan={2} className="px-3 py-2.5 md:px-4 md:py-3 text-right">Total Paid</td>
-                          <td className="px-3 py-2.5 md:px-4 md:py-3 text-right text-[#120c7a] font-black">
-                            {formatCurrency(p.chargedAmount || p.amount)}
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {/* Verification footer */}
-                  <div className="border-t border-slate-100 pt-5 flex flex-col md:flex-row md:items-center justify-between gap-2 relative z-10">
-                    <div className="flex items-center gap-1.5 text-[10px] md:text-xs text-slate-400">
-                      <CheckCircle2 size={12} className="text-emerald-500 shrink-0" />
-                      <span>Computer generated receipt. No signature required.</span>
-                    </div>
-                    {authCode && authCode !== "—" && (
-                      <span className="text-[10px] md:text-xs font-mono text-slate-400 font-bold break-all">AUTH CODE: {authCode}</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              <div className="px-6 py-4 border-t border-zinc-100 flex justify-end gap-3 bg-zinc-50 no-print">
-                <button
-                  onClick={() => setReceiptModal({ open: false, payment: null })}
-                  className="px-5 py-2.5 text-xs font-bold text-zinc-500 hover:bg-zinc-100 rounded-xl"
-                >Close</button>
-                <button
-                  onClick={() => window.print()}
-                  className="px-6 py-2.5 bg-[#120c7a] text-white text-xs font-bold rounded-xl hover:bg-blue-900 flex items-center gap-1.5 shadow-lg shadow-[#120c7a]/20 transition-all"
-                >
-                  Print Receipt
-                </button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+      {/* Official Voucher Receipt Modal */}
+      <OfficialFeeReceiptModal
+        open={receiptModal.open}
+        onClose={() => setReceiptModal({ open: false, payment: null })}
+        payment={receiptModal.payment}
+        studentData={studentData}
+      />
 
       {/* Fullscreen Secure Payment Processing Overlay */}
       {processing && (

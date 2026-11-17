@@ -330,7 +330,12 @@ export default function PoAttainment() {
         const ciaSnap = await getDocs(ciaRef);
         const ciaConfigs = {};
         ciaSnap.forEach(doc_ => {
-          ciaConfigs[doc_.id] = doc_.data();
+          const d = doc_.data();
+          ciaConfigs[doc_.id] = d;
+          if (d.examName) {
+            ciaConfigs[d.examName] = d;
+            ciaConfigs[d.examName.toLowerCase()] = d;
+          }
         });
         
         const subToSem = {};
@@ -424,8 +429,11 @@ export default function PoAttainment() {
                         );
                         const isIndirect = !!(
                           m.isIndirectAssessment ||
-                          (m.qpaper_name && ciaConfigs[m.qpaper_name]?.isIndirectAssessment) ||
-                          (m.exam && ciaConfigs[m.exam]?.isIndirectAssessment)
+                          m.is_indirect ||
+                          m.isIndirect ||
+                          (m.qpaper_name && (ciaConfigs[m.qpaper_name]?.isIndirectAssessment || ciaConfigs[m.qpaper_name]?.isIndirect)) ||
+                          (m.exam && (ciaConfigs[m.exam]?.isIndirectAssessment || ciaConfigs[m.exam]?.isIndirect)) ||
+                          /indirect|survey|exit|ces/i.test(String(m.exam || m.exam_name || m.qpaper_name || d.id || ''))
                         );
                         return { key: d.id, data, isUniversity, isIndirect };
                       });
@@ -443,8 +451,11 @@ export default function PoAttainment() {
                         );
                         const isIndirect = !!(
                           m.isIndirectAssessment ||
-                          (m.qpaper_name && ciaConfigs[m.qpaper_name]?.isIndirectAssessment) ||
-                          (m.exam && ciaConfigs[m.exam]?.isIndirectAssessment)
+                          m.is_indirect ||
+                          m.isIndirect ||
+                          (m.qpaper_name && (ciaConfigs[m.qpaper_name]?.isIndirectAssessment || ciaConfigs[m.qpaper_name]?.isIndirect)) ||
+                          (m.exam && (ciaConfigs[m.exam]?.isIndirectAssessment || ciaConfigs[m.exam]?.isIndirect)) ||
+                          /indirect|survey|exit|ces/i.test(String(m.exam || m.exam_name || m.qpaper_name || d.id || ''))
                         );
                         children = [{ key: '_legacy', data: coAttData, isUniversity, isIndirect }];
                       } else {
@@ -459,8 +470,11 @@ export default function PoAttainment() {
                           );
                           const isIndirect = !!(
                             m.isIndirectAssessment ||
-                            (m.qpaper_name && ciaConfigs[m.qpaper_name]?.isIndirectAssessment) ||
-                            (m.exam && ciaConfigs[m.exam]?.isIndirectAssessment)
+                            m.is_indirect ||
+                            m.isIndirect ||
+                            (m.qpaper_name && (ciaConfigs[m.qpaper_name]?.isIndirectAssessment || ciaConfigs[m.qpaper_name]?.isIndirect)) ||
+                            (m.exam && (ciaConfigs[m.exam]?.isIndirectAssessment || ciaConfigs[m.exam]?.isIndirect)) ||
+                            /indirect|survey|exit|ces/i.test(String(m.exam || m.exam_name || m.qpaper_name || e.key || ''))
                           );
                           return { key: e.key, data: e.data, isUniversity, isIndirect };
                         });
@@ -553,22 +567,30 @@ export default function PoAttainment() {
                    
                    coKeys.forEach(co => {
                      const directLevel = coAttLevels[co] || 0;
-                     let indirectVal = 0;
-                     let indirectSub = 0;
+                     const studentIndirectScores = {};
                      indirectChildren.forEach(child => {
                        const studs = child.data.students || {};
                        const maxMarksMap = child.data.co_max_marks || {};
                        const mm = Number(maxMarksMap[co] ?? maxMarksMap[co.toLowerCase()] ?? maxMarksMap[co.toUpperCase()] ?? 3);
-                       Object.values(studs).forEach(s => {
+                       Object.entries(studs).forEach(([regKey, s]) => {
+                         if (s?.absent) return;
                          const rawVal = s?.[co] ?? s?.[co.toLowerCase()] ?? s?.[co.toUpperCase()];
                          if (rawVal !== undefined && rawVal !== null) {
-                           indirectVal += mm > 0 ? (Number(rawVal) / mm) * 3 : 0;
-                           indirectSub++;
+                           const normalized = mm > 0 ? Math.min(3, (Number(rawVal) / mm) * 3) : Math.min(3, Number(rawVal));
+                           if (studentIndirectScores[regKey] === undefined || normalized > studentIndirectScores[regKey]) {
+                             studentIndirectScores[regKey] = normalized;
+                           }
                          }
                        });
                      });
-                     const indirectMean = indirectSub > 0 ? indirectVal / indirectSub : 0;
-                     const finalLevel = (directLevel * (diSplit.direct / 100)) + (indirectMean * (diSplit.indirect / 100));
+                     const indirectScores = Object.values(studentIndirectScores);
+                     const indirectMean = indirectScores.length > 0 
+                       ? (indirectScores.reduce((sum, v) => sum + v, 0) / indirectScores.length) 
+                       : 0;
+                     const hasIndirect = indirectChildren.length > 0 && indirectScores.length > 0;
+                     const finalLevel = hasIndirect
+                       ? (directLevel * (diSplit.direct / 100)) + (indirectMean * (diSplit.indirect / 100))
+                       : directLevel;
                      finalCoLevels[co] = Number(finalLevel.toFixed(2));
                    });
 

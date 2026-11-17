@@ -31,6 +31,74 @@ const sanitizeKey = (key) => {
   return String(key).replace(/[.#$[\]]/g, '_');
 };
 
+const parseSubjectCodeKey = (val) => {
+  if (!val) return '';
+  if (typeof val === 'object') {
+    val = val.code || val.CODE || val.subjectCode || val.courseCode || '';
+  }
+  let str = String(val).trim();
+  if (!str || str.startsWith('{') || str.startsWith('[') || str.includes('OBJECT')) return '';
+  if (str.includes(' - ')) {
+    str = str.split(' - ')[0].trim();
+  }
+  return str.split(/\s+/)[0].trim().toUpperCase();
+};
+
+const yearStartOf = (s) => String(s || '').match(/(19|20)\d{2}/)?.[0] || '';
+
+const extractMarksDocMeta = (d) => {
+  if (!d) return {};
+  const data = typeof d.data === 'function' ? d.data() : (d || {});
+  const m = data._meta || {};
+  const qm = data.qpaper_meta || {};
+
+  return {
+    programme: data.programme || m.programme || qm.programme || '',
+    department: data.department || m.department || qm.department || '',
+    batch: data.batch || m.batch || qm.batch || '',
+    academicYear: data.academic_year || m.academic_year || qm.academic_year || data.academicYear || '',
+    semesterLabel: data.semester_label || qm.semester_label || m.semester_label || data.semester || m.semester || qm.semester || '',
+    section: data.section || qm.section || m.section || '',
+    subject: data.subject || qm.subject || m.subject || '',
+    exam: data.exam || m.exam || qm.exam || qm.qpaper_name || '',
+    examName: data.exam_name || m.exam_name || qm.exam_name || '',
+    isUniversity: !!(data.is_university || m.is_university || data.isUniversity || m.isUniversity),
+    isIndirectAssessment: !!(data.is_indirect || m.is_indirect || data.isIndirectAssessment || m.isIndirectAssessment),
+    students: data.students || {}
+  };
+};
+
+const matchesMarksSelection = (docMeta, { programme, department, batch, academicYear, semester, subject, section }) => {
+  const norm = (s) => (s || '').toString().toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  if (programme && docMeta.programme && norm(docMeta.programme) !== norm(programme)) return false;
+  if (department && docMeta.department && norm(docMeta.department) !== norm(department)) return false;
+  if (batch && docMeta.batch) {
+    const y1 = yearStartOf(docMeta.batch), y2 = yearStartOf(batch);
+    if (y1 && y2) { if (y1 !== y2) return false; }
+    else if (norm(docMeta.batch) !== norm(batch)) return false;
+  }
+  if (academicYear && docMeta.academicYear) {
+    const y1 = yearStartOf(docMeta.academicYear), y2 = yearStartOf(academicYear);
+    if (y1 && y2) { if (y1 !== y2) return false; }
+    else if (norm(docMeta.academicYear) !== norm(academicYear)) return false;
+  }
+  if (semester && docMeta.semesterLabel) {
+    const m1 = String(docMeta.semesterLabel).match(/(\d+)/);
+    const m2 = String(semester).match(/(\d+)/);
+    if (m1 && m2 && m1[1] !== m2[1]) return false;
+  }
+  if (section && docMeta.section && docMeta.section !== 'all' && norm(docMeta.section) !== norm(section)) return false;
+
+  if (subject && docMeta.subject) {
+    const selectedSubCode = parseSubjectCodeKey(subject);
+    const docSubCode = parseSubjectCodeKey(docMeta.subject);
+    if (selectedSubCode && docSubCode && selectedSubCode !== docSubCode) return false;
+  }
+
+  return true;
+};
+
 export default function CoPoMapping() {
   const { departments: PROGRAMME_DEPARTMENTS, durations } = useDepartments();
   const { getRegulationForBatch } = useRegulations();
@@ -109,14 +177,15 @@ export default function CoPoMapping() {
   
   const [showSuccess, setShowSuccess] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
-  const [mappingCutoff, setMappingCutoff] = useState("");
+  const [mappingCutoff, setMappingCutoff] = useState(50);
   const [mappingThresholds, setMappingThresholds] = useState([
     { level: 3, min: 71, max: 100 },
     { level: 2, min: 61, max: 70 },
     { level: 1, min: 51, max: 60 },
     { level: 0, min: 0, max: 50 },
   ]);
-  const [mappingDirectIndirectSplit, setMappingDirectIndirectSplit] = useState({ direct: 100, indirect: 0 });
+  const [mappingPercentageSplit, setMappingPercentageSplit] = useState({ internal: 40, university: 60 });
+  const [mappingDirectIndirectSplit, setMappingDirectIndirectSplit] = useState({ direct: 80, indirect: 20 });
 
   const [finalOverallAtt, setFinalOverallAtt] = useState({});
   // eslint-disable-next-line no-unused-vars
@@ -227,7 +296,12 @@ export default function CoPoMapping() {
         const snap = await getDocs(collection(db, 'cia_configs'));
         const data = {};
         snap.forEach(doc => {
-          data[doc.id] = doc.data();
+          const d = doc.data();
+          data[doc.id] = d;
+          if (d.examName) {
+            data[d.examName] = d;
+            data[d.examName.toLowerCase()] = d;
+          }
         });
         setCiaConfigs(data);
       } catch (err) {
@@ -415,18 +489,45 @@ export default function CoPoMapping() {
         setCoList(cos);
         
         // Fetch Summary
-        if (summaryKey) { // summaryKey is the document ID
-          const summaryRef = doc(db, 'mapping_summary', summaryKey); // Firestore doc reference
-          const summarySnap = await getDoc(summaryRef); // Use getDoc for Firestore
-          const summaryData = summarySnap.data() || {}; // Use .data() for Firestore documents
+        if (summaryKey) {
+          const summaryRef = doc(db, 'mapping_summary', summaryKey);
+          const summarySnap = await getDoc(summaryRef);
+          let summaryData = summarySnap.data() || {};
+
+          // Fallback if section-specific key does not have thresholds or split configured
+          if ((!summaryData.thresholds || !summaryData.directIndirectSplit || !summaryData.percentageSplit) && section) {
+            const progKey = formatProgrammeKey(programme);
+            const noSecKey = `${sanitizeKey(batch)}_${progKey}_${sanitizeKey(regulation)}_${sanitizeKey(subject)}_${sanitizeKey(academicYear)}_${sanitizeKey(semester)}`;
+            const fallbackSnap = await getDoc(doc(db, 'mapping_summary', noSecKey));
+            if (fallbackSnap.exists()) {
+              const fbData = fallbackSnap.data() || {};
+              summaryData = { ...fbData, ...summaryData };
+              if (!summaryData.thresholds && fbData.thresholds) summaryData.thresholds = fbData.thresholds;
+              if (!summaryData.directIndirectSplit && fbData.directIndirectSplit) summaryData.directIndirectSplit = fbData.directIndirectSplit;
+              if (!summaryData.percentageSplit && fbData.percentageSplit) summaryData.percentageSplit = fbData.percentageSplit;
+              if (summaryData.cutoff === undefined && fbData.cutoff !== undefined) summaryData.cutoff = fbData.cutoff;
+            }
+          }
           
           setSummary(summaryData.summary || {});
-          if (summaryData.cutoff !== undefined) setMappingCutoff(summaryData.cutoff);
-          if (summaryData.thresholds) setMappingThresholds(summaryData.thresholds);
+          if (summaryData.cutoff !== undefined && summaryData.cutoff !== "" && summaryData.cutoff !== null) {
+            setMappingCutoff(Number(summaryData.cutoff));
+          } else {
+            setMappingCutoff(50);
+          }
+          if (summaryData.thresholds && Array.isArray(summaryData.thresholds) && summaryData.thresholds.length > 0) {
+            setMappingThresholds(summaryData.thresholds);
+          }
+          if (summaryData.percentageSplit) {
+            setMappingPercentageSplit({
+              internal: Number(summaryData.percentageSplit.internal ?? 40),
+              university: Number(summaryData.percentageSplit.university ?? 60)
+            });
+          }
           if (summaryData.directIndirectSplit) {
             setMappingDirectIndirectSplit({
-              direct: Number(summaryData.directIndirectSplit.direct || 100),
-              indirect: Number(summaryData.directIndirectSplit.indirect || 0)
+              direct: Number(summaryData.directIndirectSplit.direct ?? 80),
+              indirect: Number(summaryData.directIndirectSplit.indirect ?? 20)
             });
           }
         }
@@ -449,47 +550,165 @@ export default function CoPoMapping() {
     }
 
     setLoadingFinal(true);
-    const coAttainmentDocId = [batch, programme, department, subject, academicYear, semester].map(sanitizeKey).join('_') + (section ? `_${sanitizeKey(section)}` : '');
+    let isCancelled = false;
 
-    // One-time root doc read (legacy format fallback)
-    const rootDataPromise = getDoc(doc(db, 'co_attainment', coAttainmentDocId)).then(s => s.data()).catch(() => null);
+    const subCode = parseSubjectCodeKey(subject);
+    const targetSubjects = Array.from(new Set([subject, subCode].filter(Boolean)));
+    const targetSections = section ? [section, ''] : [''];
 
-    // Real-time listener for exams subcollection (new format from MarkEntry)
-    const unsub = onSnapshot(collection(db, 'co_attainment', coAttainmentDocId, 'exams'), async (snap) => {
-      const rootData = await rootDataPromise;
+    const candidateDocIds = [];
+    targetSubjects.forEach(sub => {
+      targetSections.forEach(sec => {
+        const id = [batch, programme, department, sub, academicYear, semester].map(sanitizeKey).join('_') + (sec ? `_${sanitizeKey(sec)}` : '');
+        if (!candidateDocIds.includes(id)) candidateDocIds.push(id);
+      });
+    });
+
+    const primaryDocId = candidateDocIds[0] || [batch, programme, department, subject, academicYear, semester].map(sanitizeKey).join('_') + (section ? `_${sanitizeKey(section)}` : '');
+
+    const unsub = onSnapshot(collection(db, 'co_attainment', primaryDocId, 'exams'), async (snap) => {
+      if (isCancelled) return;
 
       let children = [];
+      const seenExamKeys = new Set();
 
-      snap.forEach(eDoc => {
-        const eData = eDoc.data();
+      const parseChildDoc = (docSnap, isLegacy = false) => {
+        const eData = typeof docSnap.data === 'function' ? docSnap.data() : docSnap.data;
+        if (!eData) return null;
         const m = eData._meta || {};
-        let label = m.exam || m.qpaper_name || eDoc.id;
+        let label = m.exam_name || m.exam || m.qpaper_name || docSnap.id;
         if (m.exam && ciaConfigs[m.exam]?.examName) label = ciaConfigs[m.exam].examName;
         if (m.qpaper_name && ciaConfigs[m.qpaper_name]?.examName) label = ciaConfigs[m.qpaper_name].examName;
 
         const isUniversity = !!(
           m.is_university ||
+          m.isUniversity ||
           (m.qpaper_name && ciaConfigs[m.qpaper_name] && (ciaConfigs[m.qpaper_name].is_university || ciaConfigs[m.qpaper_name].isUniversity)) ||
-          String(m.exam || '').toLowerCase().includes('uni')
+          (m.exam && ciaConfigs[m.exam] && (ciaConfigs[m.exam].is_university || ciaConfigs[m.exam].isUniversity)) ||
+          String(m.exam || '').toLowerCase().includes('uni') ||
+          String(m.exam_name || '').toLowerCase().includes('uni') ||
+          String(label || '').toLowerCase().includes('uni')
         );
-        const isIndirect = !!(m.isIndirectAssessment || (m.qpaper_name && ciaConfigs[m.qpaper_name]?.isIndirectAssessment) || (m.exam && ciaConfigs[m.exam]?.isIndirectAssessment));
-        children.push({ key: eDoc.id, data: eData, isUniversity, isIndirect, label });
-      });
 
-      // Add legacy root doc data if exists
-      if (rootData?.co_max_marks || rootData?.students) {
-        const m = rootData._meta || {};
-        const isUniversity = !!(
-          m.is_university ||
-          (m.qpaper_name && ciaConfigs[m.qpaper_name] && (ciaConfigs[m.qpaper_name].is_university || ciaConfigs[m.qpaper_name].isUniversity)) ||
-          String(m.exam || '').toLowerCase().includes('uni')
-        );
         const isIndirect = !!(
           m.isIndirectAssessment ||
-          (m.qpaper_name && ciaConfigs[m.qpaper_name]?.isIndirectAssessment) ||
-          (m.exam && ciaConfigs[m.exam]?.isIndirectAssessment)
+          m.is_indirect ||
+          m.isIndirect ||
+          (m.qpaper_name && (ciaConfigs[m.qpaper_name]?.isIndirectAssessment || ciaConfigs[m.qpaper_name]?.isIndirect)) ||
+          (m.exam && (ciaConfigs[m.exam]?.isIndirectAssessment || ciaConfigs[m.exam]?.isIndirect)) ||
+          (m.exam_name && (ciaConfigs[m.exam_name]?.isIndirectAssessment || ciaConfigs[m.exam_name]?.isIndirect)) ||
+          /indirect|survey|exit|ces/i.test(String(label || m.exam || m.exam_name || docSnap.id || '')) ||
+          Object.values(ciaConfigs || {}).some(cfg => 
+            (cfg?.isIndirectAssessment || cfg?.isIndirect) && (
+              cfg?.examName === m.exam ||
+              cfg?.examName === m.exam_name ||
+              cfg?.examName === label ||
+              (cfg?.examName && String(label || m.exam || '').toLowerCase().includes(String(cfg.examName).toLowerCase()))
+            )
+          )
         );
-        children.push({ key: '_legacy', data: rootData, isUniversity, isIndirect, label: m.exam || 'Legacy' });
+
+        return { key: docSnap.id, data: eData, isUniversity, isIndirect, label };
+      };
+
+      // Add exams from primary collection snapshot
+      snap.forEach(eDoc => {
+        const parsed = parseChildDoc(eDoc);
+        if (parsed) {
+          const normKey = String(parsed.label || parsed.key).toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (!seenExamKeys.has(normKey)) {
+            seenExamKeys.add(normKey);
+            children.push(parsed);
+          }
+        }
+      });
+
+      // If primary doc was empty or missing indirect, probe other candidate IDs
+      for (const candId of candidateDocIds) {
+        if (candId === primaryDocId) continue;
+        const hasIndirectChild = children.some(c => c.isIndirect);
+        if (children.length > 0 && hasIndirectChild) break;
+        try {
+          const candExamsSnap = await getDocs(collection(db, 'co_attainment', candId, 'exams'));
+          candExamsSnap.forEach(eDoc => {
+            const parsed = parseChildDoc(eDoc);
+            if (parsed) {
+              const normKey = String(parsed.label || parsed.key).toLowerCase().replace(/[^a-z0-9]/g, '');
+              if (!seenExamKeys.has(normKey)) {
+                seenExamKeys.add(normKey);
+                children.push(parsed);
+              }
+            }
+          });
+        } catch (_) {}
+      }
+
+      // Root doc check
+      try {
+        const rootSnap = await getDoc(doc(db, 'co_attainment', primaryDocId));
+        if (rootSnap.exists()) {
+          const rData = rootSnap.data();
+          if (rData?.co_max_marks || rData?.students) {
+            const parsed = parseChildDoc({ id: '_legacy', data: rData }, true);
+            if (parsed) {
+              const normKey = String(parsed.label || parsed.key).toLowerCase().replace(/[^a-z0-9]/g, '');
+              if (!seenExamKeys.has(normKey)) {
+                seenExamKeys.add(normKey);
+                children.push(parsed);
+              }
+            }
+          }
+        }
+      } catch (_) {}
+
+      // Fallback: check `marks` collection for any exams not already present (especially indirect survey)
+      try {
+        const mSnap = await getDocs(collection(db, 'marks'));
+        mSnap.forEach(d => {
+          const docMeta = extractMarksDocMeta(d);
+          if (!matchesMarksSelection(docMeta, { programme, department, batch, academicYear, semester, subject, section })) return;
+          const data = d.data() || {};
+          const students = data.students || {};
+          const label = docMeta.examName || docMeta.exam || d.id;
+          const normLabel = String(label).toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (seenExamKeys.has(normLabel)) return;
+
+          const isIndirect = docMeta.isIndirectAssessment || /indirect|survey|exit|ces/i.test(String(label));
+          const isUni = docMeta.isUniversity || /university|ese|end\s*sem/i.test(String(label));
+
+          const studentCoMarks = {};
+          Object.entries(students).forEach(([reg, sData]) => {
+            if (reg.startsWith('_') || !sData) return;
+            const entry = { name: sData.name || '' };
+            Object.keys(sData).forEach(k => {
+              if (/^CO\d+/i.test(k)) {
+                const val = Number(sData[k]);
+                if (!isNaN(val)) entry[k.trim().toUpperCase()] = val;
+              }
+            });
+            studentCoMarks[reg] = entry;
+          });
+
+          const coMax = {};
+          ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].forEach(co => {
+            coMax[co] = isIndirect ? 3 : (data.co_max_marks?.[co] || 100);
+          });
+
+          seenExamKeys.add(normLabel);
+          children.push({
+            key: d.id,
+            data: {
+              _meta: { ...data._meta, exam: label, exam_name: label, is_indirect: isIndirect, is_university: isUni },
+              students: studentCoMarks,
+              co_max_marks: data.co_max_marks || coMax
+            },
+            isUniversity: isUni,
+            isIndirect,
+            label
+          });
+        });
+      } catch (err) {
+        console.warn('Marks fallback error in CoPoMapping:', err);
       }
 
       if (children.length === 0) {
@@ -505,72 +724,136 @@ export default function CoPoMapping() {
         return tb - ta;
       });
 
-      // Collect ALL unique CO keys from all internal children
+      // Separate into internal, university, and indirect assessments
       const internalChildren = children.filter(c => !c.isUniversity && !c.isIndirect);
-      const directChildren = internalChildren.length > 0 ? internalChildren : children;
+      const uniChild = children.find(c => c.isUniversity);
+      const indirectChildren = children.filter(c => c.isIndirect);
 
-      const allCoKeysSet = new Set();
-      directChildren.forEach(child => {
-        Object.keys(child.data.co_max_marks || {}).forEach(k => {
-          allCoKeysSet.add(k.toUpperCase());
-        });
-        Object.values(child.data.students || {}).forEach(marks => {
-          Object.keys(marks || {}).forEach(k => {
-            if (/^CO\d+/i.test(k)) allCoKeysSet.add(k.toUpperCase());
+      if (internalChildren.length === 0 && !uniChild) {
+        setFinalOverallAtt({});
+        setLoadingFinal(false);
+        return;
+      }
+
+      const split = mappingPercentageSplit || { internal: 40, university: 60 };
+      const pctI = (split.internal || 100) / 100;
+      const pctU = (split.university || 0) / 100;
+
+      // 1. Direct cumulative internal marks & cumulative max marks per student
+      const totalInternal = {};
+      const totalIMax = {};
+
+      if (internalChildren.length > 0) {
+        internalChildren.forEach(child => {
+          Object.entries(child.data.students || {}).forEach(([reg, sdata]) => {
+            if (!totalInternal[reg]) totalInternal[reg] = { name: sdata.name || '' };
+            Object.entries(sdata).forEach(([k, v]) => {
+              if (/^CO\d+/i.test(k) && typeof v === 'number') {
+                totalInternal[reg][k.toUpperCase()] = (totalInternal[reg][k.toUpperCase()] || 0) + v;
+              }
+            });
+          });
+          Object.entries(child.data.co_max_marks || {}).forEach(([k, v]) => {
+            totalIMax[k.toUpperCase()] = (totalIMax[k.toUpperCase()] || 0) + Number(v || 0);
           });
         });
+      }
+
+      const studentRegs = new Set([
+        ...Object.keys(totalInternal),
+        ...Object.keys(uniChild?.data.students || {})
+      ]);
+      const consolidationStudentTotals = {};
+      const uMax = {};
+      Object.entries(uniChild?.data.co_max_marks || {}).forEach(([k, v]) => {
+        uMax[k.toUpperCase()] = Number(v || 0);
       });
 
-      const coKeysLocal = Array.from(allCoKeysSet).sort((a, b) => {
+      studentRegs.forEach(reg => {
+        const iData = totalInternal[reg] || {};
+        const uData = uniChild?.data.students?.[reg] || {};
+        const entry = { name: iData.name || uData.name || '' };
+
+        const coKeys = Array.from(new Set([
+          ...Object.keys(iData).filter(k => /^CO\d+/i.test(k)),
+          ...Object.keys(uData).filter(k => /^CO\d+/i.test(k)).map(k => k.toUpperCase())
+        ]));
+
+        coKeys.forEach(k => {
+          const iv = Number(iData[k] || 0);
+          const uv = Number(uData[k] || uData[k.toLowerCase()] || 0);
+
+          let im = Number(totalIMax[k] || 0);
+          let um = Number(uMax[k] || 0);
+
+          const observedIMax = Math.max(0, ...Object.values(totalInternal).map(s => Number(s[k] || 0)));
+          if (im <= 1 || (observedIMax > 0 && im < observedIMax)) {
+            if (observedIMax <= 20.5) im = 20;
+            else if (observedIMax <= 25) im = 25;
+            else if (observedIMax <= 50) im = 50;
+            else if (observedIMax <= 100) im = 100;
+            else im = Math.ceil(observedIMax);
+          }
+
+          const observedUMax = Math.max(0, ...Object.values(uniChild?.data.students || {}).map(s => Number(s[k] || s[k.toLowerCase()] || 0)));
+          if (um <= 1 || (observedUMax > 0 && um < observedUMax)) {
+            if (observedUMax <= 50) um = 50;
+            else if (observedUMax <= 100) um = 100;
+            else um = Math.ceil(observedUMax);
+          }
+
+          const iv_pct = im > 0 ? (iv / im) * 100 : 0;
+          const uv_pct = um > 0 ? (uv / um) * 100 : 0;
+
+          const finalPct = uniChild 
+            ? Math.round((iv_pct * pctI) + (uv_pct * pctU))
+            : Math.round(iv_pct);
+          entry[k] = Math.min(100, Math.max(0, finalPct));
+        });
+        consolidationStudentTotals[reg] = entry;
+      });
+
+      // 2. Direct Attainment per CO
+      const allCoKeys = Array.from(new Set([
+        ...Object.keys(totalIMax),
+        ...Object.keys(uMax)
+      ])).sort((a, b) => {
         const na = Number(a.replace(/[^0-9]/g, '')) || 0;
         const nb = Number(b.replace(/[^0-9]/g, '')) || 0;
         return na - nb;
       });
 
-      const attainmentStats = {};
-      coKeysLocal.forEach(co => {
-        const mergedStudentMarks = {};
-        let totalMaxMark = 0;
+      const effectiveCutoff = Number(mappingCutoff) > 0 ? Number(mappingCutoff) : 50;
+      const effectiveThresholds = mappingThresholds.length > 0 ? mappingThresholds : [
+        { min: 71, max: 100, level: 3 },
+        { min: 61, max: 70, level: 2 },
+        { min: 51, max: 60, level: 1 },
+        { min: 0, max: 50, level: 0 }
+      ];
 
-        directChildren.forEach(child => {
-          const cmm = child.data.co_max_marks || {};
-          const childMaxKey = Object.keys(cmm).find(k => k.toUpperCase() === co) || co;
-          const childMax = Number(cmm[childMaxKey] || 0);
-          totalMaxMark += childMax;
-          Object.entries(child.data.students || {}).forEach(([studentId, marks]) => {
-            const markKey = Object.keys(marks || {}).find(k => k.toUpperCase() === co);
-            const mark = Number((markKey ? marks[markKey] : marks?.[co]) || 0);
-            mergedStudentMarks[studentId] = (mergedStudentMarks[studentId] || 0) + mark;
-          });
-        });
+      const directAttainmentStats = {};
+      const studentTotalValues = Object.values(consolidationStudentTotals);
+      const totalStudents = studentTotalValues.length;
 
-        // If co_max_marks has 0 for this CO but students have marks, derive max from data
-        if (totalMaxMark === 0) {
-          const maxMark = Math.max(0, ...Object.values(mergedStudentMarks));
-          if (maxMark > 0) totalMaxMark = maxMark;
-        }
-
+      allCoKeys.forEach(co => {
         let countGreaterEqual = 0;
         let countLess = 0;
-        const totalStudents = Object.keys(mergedStudentMarks).length;
 
-        Object.values(mergedStudentMarks).forEach(total => {
-          if (totalMaxMark > 0) {
-            const markPct = (total / totalMaxMark) * 100;
-            if (markPct >= Number(mappingCutoff || 0)) {
-              countGreaterEqual++;
-            } else {
-              countLess++;
-            }
+        studentTotalValues.forEach(s => {
+          const markPct = s[co] || 0;
+          if (markPct >= effectiveCutoff) {
+            countGreaterEqual++;
+          } else {
+            countLess++;
           }
         });
 
         const percentage = totalStudents > 0 ? (countGreaterEqual / totalStudents) * 100 : 0;
         let attainmentLevel = 0;
-        const threshold = (mappingThresholds || []).find(t => percentage >= t.min && percentage <= t.max);
+        const threshold = effectiveThresholds.find(t => percentage >= t.min && percentage <= t.max);
         if (threshold) attainmentLevel = threshold.level;
 
-        attainmentStats[co] = {
+        directAttainmentStats[co] = {
           countGreaterEqual,
           countLess,
           percentage: percentage.toFixed(2),
@@ -578,38 +861,45 @@ export default function CoPoMapping() {
         };
       });
 
-      // Compute indirect mean
-      const indirectChildren = children.filter(c => c.isIndirect);
-      const stats = {};
-      const diSplit = mappingDirectIndirectSplit || { direct: 100, indirect: 0 };
-      const pctDirectTotal = (diSplit.direct || 100) / 100;
-      const pctIndirectTotal = (diSplit.indirect || 0) / 100;
+      // 3. Indirect Attainment Mean per CO
+      const diSplit = mappingDirectIndirectSplit || { direct: 80, indirect: 20 };
+      const pctDirectTotal = (diSplit.direct || 80) / 100;
+      const pctIndirectTotal = (diSplit.indirect || 20) / 100;
 
-      coKeysLocal.forEach(co => {
-        const directLevel = attainmentStats[co]?.attainmentLevel || 0;
+      const finalStats = {};
+      allCoKeys.forEach(co => {
+        const directLevel = directAttainmentStats[co]?.attainmentLevel || 0;
 
-        let indirectTotalVal = 0;
-        let totalIndirectSubmissions = 0;
+        const studentIndirectScores = {};
         indirectChildren.forEach(child => {
           const studs = child.data.students || {};
           const maxMarksMap = child.data.co_max_marks || {};
           const mm = Number(maxMarksMap[co] ?? maxMarksMap[co.toLowerCase()] ?? maxMarksMap[co.toUpperCase()] ?? 3);
-          Object.values(studs).forEach(s => {
+          Object.entries(studs).forEach(([regKey, s]) => {
+            if (s?.absent) return;
             const rawVal = s?.[co] ?? s?.[co.toLowerCase()] ?? s?.[co.toUpperCase()];
-            if (rawVal !== undefined && rawVal !== null) {
+            if (rawVal !== undefined && rawVal !== null && rawVal !== '') {
               const raw = Number(rawVal);
-              const normalized = mm > 0 ? (raw / mm) * 3 : 0;
-              indirectTotalVal += normalized;
-              totalIndirectSubmissions++;
+              if (!isNaN(raw)) {
+                const normalized = mm > 0 ? Math.min(3, (raw / mm) * 3) : Math.min(3, raw);
+                if (studentIndirectScores[regKey] === undefined || normalized > studentIndirectScores[regKey]) {
+                  studentIndirectScores[regKey] = normalized;
+                }
+              }
             }
           });
         });
 
-        const indirectMean = totalIndirectSubmissions > 0 ? (indirectTotalVal / totalIndirectSubmissions) : 0;
-        const finalLevel = (directLevel * pctDirectTotal) + (indirectMean * pctIndirectTotal);
+        const indirectScores = Object.values(studentIndirectScores);
+        const indirectMean = indirectScores.length > 0 
+          ? (indirectScores.reduce((sum, v) => sum + v, 0) / indirectScores.length) 
+          : 0;
+        const hasIndirect = indirectChildren.length > 0 && indirectScores.length > 0;
+        const finalLevel = hasIndirect 
+          ? (directLevel * pctDirectTotal) + (indirectMean * pctIndirectTotal)
+          : directLevel;
 
-        const coKeyU = String(co).toUpperCase();
-        stats[coKeyU] = {
+        finalStats[co] = {
           directLevel,
           indirectMean: Number(indirectMean.toFixed(2)),
           finalLevel: Number(finalLevel.toFixed(2)),
@@ -618,7 +908,7 @@ export default function CoPoMapping() {
         };
       });
 
-      setFinalOverallAtt(stats);
+      setFinalOverallAtt(finalStats);
       setLoadingFinal(false);
     }, (error) => {
       console.error('Error listening to co_attainment:', error);
@@ -626,8 +916,11 @@ export default function CoPoMapping() {
       setLoadingFinal(false);
     });
 
-    return () => unsub();
-  }, [batch, programme, department, subject, academicYear, semester, section, mappingDirectIndirectSplit, mappingThresholds, mappingCutoff, ciaConfigs]);
+    return () => {
+      isCancelled = true;
+      unsub();
+    };
+  }, [batch, programme, department, subject, academicYear, semester, section, mappingDirectIndirectSplit, mappingPercentageSplit, mappingThresholds, mappingCutoff, ciaConfigs]);
 
   const calculateMappingGrade = (marked, total) => {
     if (!total || total === 0) return 0;
@@ -686,10 +979,10 @@ export default function CoPoMapping() {
       return contrib;
     });
 
-    const nonZeroContrib = contributions.filter(c => c > 0);
-    const poAvgNum = nonZeroContrib.length > 0 ? (nonZeroContrib.reduce((a, b) => a + b, 0) / nonZeroContrib.length) : 0;
+    const mappedContribs = coCodes.map((_, idx) => mappingGrades[idx] > 0 ? contributions[idx] : null).filter(v => v !== null);
+    const poAvgNum = mappedContribs.length > 0 ? (mappedContribs.reduce((a, b) => a + b, 0) / mappedContribs.length) : 0;
     const hasFirstAverage = mappingAvgNum > 0;
-    const hasSecondAverage = nonZeroContrib.length > 0;
+    const hasSecondAverage = mappedContribs.length > 0;
     const hasAnyMappedCo = markedCounts.some(mc => mc > 0);
     const mappedCoHasData = coCodes.some((co, idx) => markedCounts[idx] > 0 && finalOverallAtt && finalOverallAtt[co] !== undefined);
     const poAvgStr = hasSecondAverage ? poAvgNum.toFixed(2) : (hasAnyMappedCo ? '0.00' : '');

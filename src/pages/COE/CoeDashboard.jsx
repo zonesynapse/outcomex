@@ -12,12 +12,14 @@ import {
   Upload, Copy, Eye, Lock, FileCheck, Layers, BookOpen, AlertCircle,
   Trash2, RefreshCw, Search, ExternalLink, Sparkles, ArrowLeft, Landmark, Plus, Edit3, Mail, Calendar,
   Shield, QrCode, Key, ShieldCheck, AlertTriangle, ChevronRight, Split,
-  Package, Table as TableIcon, LineChart, BookMarked, Grid, FileCode2
+  Package, Table as TableIcon, LineChart, BookMarked, Grid, FileCode2,
+  FileCheck2, Share2, UserCheck, Download, Clock, Save
 } from "lucide-react";
 import Layout from "../../components/Layout";
 import { uploadFile } from "../../utils/fileUpload";
 import { getEmbeddableDocumentUrl } from "../../utils/documentEmbedUtils";
 import AppointmentOrderCopyModal from "../../components/AppointmentOrderCopyModal";
+import ScrutinyReportModal from "../../components/ScrutinyReportModal";
 import {
   formatPermittedMaterialsNotice,
   getPermittedMaterialsList,
@@ -1668,6 +1670,217 @@ export default function CoeDashboard() {
   };
 
   // --------------------------------------------------------------------------
+  // TAB 6: QUESTION PAPER SCRUTINY BOARD
+  // --------------------------------------------------------------------------
+  const [scrutinyMembers, setScrutinyMembers] = useState([]);
+  const [loadingScrutinyMembers, setLoadingScrutinyMembers] = useState(true);
+  const [scrutinyReports, setScrutinyReports] = useState([]);
+  const [showAddScrutinyModal, setShowAddScrutinyModal] = useState(false);
+  const [editingScrutinyMember, setEditingScrutinyMember] = useState(null);
+
+  // Form Fields for Scrutiny Member
+  const [scrutinyName, setScrutinyName] = useState("");
+  const [scrutinyEmail, setScrutinyEmail] = useState("");
+  const [scrutinyPhone, setScrutinyPhone] = useState("");
+  const [scrutinyDept, setScrutinyDept] = useState("");
+  const [scrutinyDesignation, setScrutinyDesignation] = useState("Associate Professor");
+  const [scrutinyAffiliation, setScrutinyAffiliation] = useState("");
+  const [scrutinyPassword, setScrutinyPassword] = useState("");
+  const [allocatedQpIds, setAllocatedQpIds] = useState([]);
+  const [allocatedQpSets, setAllocatedQpSets] = useState({}); // { [assId]: "both" | "setA" | "setB" }
+  const [savingScrutinyMember, setSavingScrutinyMember] = useState(false);
+  const [scrutinySearchTerm, setScrutinySearchTerm] = useState("");
+  const [qpAllocationSearch, setQpAllocationSearch] = useState("");
+
+  // Report Modal view
+  const [selectedScrutinyReport, setSelectedScrutinyReport] = useState(null);
+  const [selectedScrutinyAssignment, setSelectedScrutinyAssignment] = useState(null);
+  const [copiedMemberId, setCopiedMemberId] = useState(null);
+
+  useEffect(() => {
+    const unsubMembers = onSnapshot(collection(db, "coe_scrutiny_members"), (snap) => {
+      const list = [];
+      snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+      setScrutinyMembers(list);
+      setLoadingScrutinyMembers(false);
+    });
+
+    const unsubReports = onSnapshot(collection(db, "coe_scrutiny_reports"), (snap) => {
+      const list = [];
+      snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+      setScrutinyReports(list);
+    });
+
+    return () => {
+      unsubMembers();
+      unsubReports();
+    };
+  }, []);
+
+  const openAddScrutinyModal = (member = null) => {
+    if (member) {
+      setEditingScrutinyMember(member);
+      setScrutinyName(member.name || "");
+      setScrutinyEmail(member.email || "");
+      setScrutinyPhone(member.phone || "");
+      setScrutinyDept(member.department || "");
+      setScrutinyDesignation(member.designation || "Associate Professor");
+      setScrutinyAffiliation(member.affiliation || "");
+      setScrutinyPassword(member.password || "");
+      setAllocatedQpIds(Array.isArray(member.allocatedQpIds) ? member.allocatedQpIds : []);
+      setAllocatedQpSets(member.allocatedQpSets && typeof member.allocatedQpSets === "object" ? { ...member.allocatedQpSets } : {});
+    } else {
+      setEditingScrutinyMember(null);
+      setScrutinyName("");
+      setScrutinyEmail("");
+      setScrutinyPhone("");
+      setScrutinyDept("");
+      setScrutinyDesignation("Associate Professor");
+      setScrutinyAffiliation("");
+      // Generate clean random 8-character password
+      const randPass = "SC@" + Math.random().toString(36).substring(2, 7).toUpperCase();
+      setScrutinyPassword(randPass);
+      setAllocatedQpIds([]);
+      setAllocatedQpSets({});
+    }
+    setQpAllocationSearch("");
+    setShowAddScrutinyModal(true);
+  };
+
+  const handleToggleQpAllocation = (assId, defaultSet = "both") => {
+    setAllocatedQpIds((prev) => {
+      if (prev.includes(assId)) {
+        setAllocatedQpSets((sPrev) => {
+          const next = { ...sPrev };
+          delete next[assId];
+          return next;
+        });
+        return prev.filter((id) => id !== assId);
+      } else {
+        if (prev.length >= 10) {
+          alert("Maximum Allocation Limit Reached!\n\nA maximum of 10 Question Papers can be allocated per Scrutiny Committee Member.");
+          return prev;
+        }
+        setAllocatedQpSets((sPrev) => ({
+          ...sPrev,
+          [assId]: defaultSet
+        }));
+        return [...prev, assId];
+      }
+    });
+  };
+
+  const handleSelectSetForQp = (assId, setChoice) => {
+    setAllocatedQpIds((prev) => {
+      if (!prev.includes(assId)) {
+        if (prev.length >= 10) {
+          alert("Maximum Allocation Limit Reached!\n\nA maximum of 10 Question Papers can be allocated per Scrutiny Committee Member.");
+          return prev;
+        }
+        return [...prev, assId];
+      }
+      return prev;
+    });
+    setAllocatedQpSets((prev) => ({
+      ...prev,
+      [assId]: setChoice
+    }));
+  };
+
+  const handleSaveScrutinyMember = async (e) => {
+    e.preventDefault();
+    if (!scrutinyName.trim() || !scrutinyEmail.trim() || !scrutinyPassword.trim()) {
+      alert("Please fill in Member Name, Email Address, and Access Password.");
+      return;
+    }
+    if (allocatedQpIds.length > 10) {
+      alert("Cannot allocate more than 10 Question Papers to one scrutiny member.");
+      return;
+    }
+
+    setSavingScrutinyMember(true);
+    try {
+      const memberId = editingScrutinyMember?.id || "sc_" + Date.now();
+      const payload = {
+        name: scrutinyName.trim(),
+        email: scrutinyEmail.trim().toLowerCase(),
+        phone: scrutinyPhone.trim(),
+        department: scrutinyDept.trim(),
+        designation: scrutinyDesignation.trim(),
+        affiliation: scrutinyAffiliation.trim() || "Scrutiny Committee Member",
+        password: scrutinyPassword.trim(),
+        allocatedQpIds: allocatedQpIds,
+        allocatedQpSets: allocatedQpSets,
+        examSession: selectedExamSession || "Nov./Dec. 2026",
+        updatedAt: serverTimestamp()
+      };
+
+      if (!editingScrutinyMember) {
+        payload.createdAt = serverTimestamp();
+      }
+
+      await setDoc(doc(db, "coe_scrutiny_members", memberId), payload, { merge: true });
+
+      // Update allocated assignments with scrutiny metadata
+      for (const assId of allocatedQpIds) {
+        try {
+          const chosenSet = allocatedQpSets[assId] || "both";
+          await updateDoc(doc(db, "coe_setter_assignments", assId), {
+            scrutinyAllocatedTo: scrutinyName.trim(),
+            scrutinyMemberId: memberId,
+            scrutinyMemberAffiliation: scrutinyAffiliation.trim() || "Scrutiny Committee Member",
+            scrutinyAllocatedAt: new Date().toISOString(),
+            [`scrutinyAllocations.${memberId}`]: {
+              allocatedSets: chosenSet,
+              memberName: scrutinyName.trim(),
+              allocatedAt: new Date().toISOString()
+            }
+          });
+        } catch (e) { }
+      }
+
+      setShowAddScrutinyModal(false);
+      alert("Scrutiny Committee Member successfully saved!");
+    } catch (err) {
+      console.error("Save scrutiny member error:", err);
+      alert("Failed to save Scrutiny Member: " + err.message);
+    } finally {
+      setSavingScrutinyMember(false);
+    }
+  };
+
+  const handleDeleteScrutinyMember = async (memberId) => {
+    if (!window.confirm("Are you sure you want to remove this Scrutiny Committee Member?")) return;
+    try {
+      await deleteDoc(doc(db, "coe_scrutiny_members", memberId));
+    } catch (err) {
+      alert("Failed to remove member: " + err.message);
+    }
+  };
+
+  const handleCopyScrutinyLink = (member) => {
+    const link = `${window.location.origin}/coe-scrutiny-workbench?memberId=${member.id}`;
+    navigator.clipboard.writeText(link);
+    setCopiedMemberId(member.id);
+    setTimeout(() => setCopiedMemberId(null), 2500);
+  };
+
+  const handleShareWhatsAppScrutinyLink = (member) => {
+    const link = `${window.location.origin}/coe-scrutiny-workbench?memberId=${member.id}`;
+    const text = `*OFFICE OF THE CONTROLLER OF EXAMINATIONS*\n*C.K. College of Engineering & Technology (Autonomous)*\n\nDear Prof. ${member.name},\n\nYou have been nominated as a member of the *Question Paper Scrutiny Committee* for the Autonomous End Semester Examinations (${selectedExamSession || 'Nov./Dec. 2026'}).\n\n*Your Scrutiny Portal Link:* ${link}\n*Official Email:* ${member.email}\n*Confidential Password:* ${member.password}\n\nPlease access the link, review the allocated question papers, and submit your Scrutiny Report along with the 11-point verification checklist.\n\n_Office of the COE, CKCET_`;
+    const url = `https://wa.me/${(member.phone || '').replace(/[^0-9]/g, '')}?text=${encodeURIComponent(text)}`;
+    window.open(url, "_blank");
+  };
+
+  const getScrutinyReportForAssignment = (assignmentId, memberId) => {
+    return (
+      scrutinyReports.find(
+        (r) => r.assignmentId === assignmentId && (!memberId || r.memberId === memberId)
+      ) || scrutinyReports.find((r) => r.assignmentId === assignmentId) || null
+    );
+  };
+
+  // --------------------------------------------------------------------------
   // RENDER: 2FA SECURITY GATE MODAL (If 2FA is not yet verified for this session)
   // --------------------------------------------------------------------------
   if (!is2FaVerified) {
@@ -2036,6 +2249,21 @@ export default function CoeDashboard() {
             <span className={`ml-1 text-[10px] px-2 py-0.5 rounded-full font-black ${activeTab === "guidelines" ? "bg-white/20 text-white" : "bg-zinc-100 text-zinc-600"
               }`}>
               {filteredGuidelines.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab("scrutiny")}
+            className={`flex items-center gap-2 px-5 py-3 rounded-xl text-xs font-extrabold transition-all cursor-pointer ${activeTab === "scrutiny"
+              ? "bg-[#120c7a] text-white shadow-md"
+              : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100"
+              }`}
+          >
+            <ShieldCheck className="h-4 w-4 text-amber-300" />
+            <span>QP Scrutiny Board</span>
+            <span className={`ml-1 text-[10px] px-2 py-0.5 rounded-full font-black ${activeTab === "scrutiny" ? "bg-amber-400 text-black" : "bg-zinc-100 text-zinc-600"
+              }`}>
+              {scrutinyMembers.length}
             </span>
           </button>
         </div>
@@ -4021,6 +4249,759 @@ Contact: 94884 93434`}
               )}
             </div>
           </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* TAB 6: QUESTION PAPER SCRUTINY BOARD */}
+        {/* ========================================================================= */}
+        {activeTab === "scrutiny" && (
+          <div className="space-y-6">
+            
+            {/* Scrutiny Metrics Strip */}
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+              <div className="p-5 rounded-3xl bg-white border border-zinc-200/80 shadow-xs flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] font-black text-zinc-400 uppercase tracking-wider block">
+                    Scrutiny Members
+                  </span>
+                  <h3 className="text-2xl font-black text-[#120c7a] mt-1">{scrutinyMembers.length}</h3>
+                </div>
+                <div className="w-12 h-12 rounded-2xl bg-indigo-50 text-[#120c7a] flex items-center justify-center shrink-0">
+                  <ShieldCheck className="h-6 w-6" />
+                </div>
+              </div>
+
+              <div className="p-5 rounded-3xl bg-white border border-zinc-200/80 shadow-xs flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] font-black text-zinc-400 uppercase tracking-wider block">
+                    Papers Allocated
+                  </span>
+                  <h3 className="text-2xl font-black text-zinc-900 mt-1">
+                    {scrutinyMembers.reduce((acc, m) => acc + (Array.isArray(m.allocatedQpIds) ? m.allocatedQpIds.length : 0), 0)}
+                  </h3>
+                </div>
+                <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-700 flex items-center justify-center shrink-0">
+                  <Layers className="h-6 w-6" />
+                </div>
+              </div>
+
+              <div className="p-5 rounded-3xl bg-white border border-zinc-200/80 shadow-xs flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] font-black text-zinc-400 uppercase tracking-wider block">
+                    Scrutiny Completed
+                  </span>
+                  <h3 className="text-2xl font-black text-emerald-600 mt-1">
+                    {scrutinyReports.filter((r) => r.status === "submitted").length}
+                  </h3>
+                </div>
+                <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0">
+                  <CheckCircle2 className="h-6 w-6" />
+                </div>
+              </div>
+
+              <div className="p-5 rounded-3xl bg-white border border-zinc-200/80 shadow-xs flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] font-black text-zinc-400 uppercase tracking-wider block">
+                    Pending Inspection
+                  </span>
+                  <h3 className="text-2xl font-black text-amber-600 mt-1">
+                    {Math.max(
+                      0,
+                      scrutinyMembers.reduce((acc, m) => acc + (Array.isArray(m.allocatedQpIds) ? m.allocatedQpIds.length : 0), 0) -
+                      scrutinyReports.filter((r) => r.status === "submitted").length
+                    )}
+                  </h3>
+                </div>
+                <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-700 flex items-center justify-center shrink-0">
+                  <Clock className="h-6 w-6" />
+                </div>
+              </div>
+            </div>
+
+            {/* Action Bar */}
+            <div className="bg-white rounded-3xl border border-zinc-200/80 p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3 flex-1 max-w-md">
+                <div className="relative w-full">
+                  <Search className="h-4 w-4 text-zinc-400 absolute left-3.5 top-3" />
+                  <input
+                    type="text"
+                    value={scrutinySearchTerm}
+                    onChange={(e) => setScrutinySearchTerm(e.target.value)}
+                    placeholder="Search member name, email, department, or subject code..."
+                    className="w-full pl-9 pr-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-semibold text-zinc-800 placeholder-zinc-400 focus:outline-none focus:border-[#120c7a] focus:bg-white transition-all"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => openAddScrutinyModal()}
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#120c7a] to-[#2b1fb0] hover:from-[#0e0a61] hover:to-[#22188c] text-white text-xs font-black flex items-center gap-2 shadow-md transition-all cursor-pointer"
+                >
+                  <UserPlus className="h-4 w-4 text-amber-300" />
+                  <span>+ Add Scrutiny Member &amp; Allocate QPs</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Scrutiny Committee Members Cards List */}
+            {loadingScrutinyMembers ? (
+              <div className="bg-white rounded-3xl border border-zinc-200 p-12 text-center">
+                <div className="h-8 w-8 rounded-full border-4 border-indigo-200 border-t-[#120c7a] animate-spin mx-auto mb-3" />
+                <p className="text-xs font-bold text-zinc-500">Loading Scrutiny Committee members...</p>
+              </div>
+            ) : scrutinyMembers.length === 0 ? (
+              <div className="bg-white rounded-3xl border border-zinc-200 p-12 text-center space-y-3">
+                <div className="w-14 h-14 rounded-2xl bg-indigo-50 text-[#120c7a] flex items-center justify-center mx-auto">
+                  <ShieldCheck className="h-7 w-7" />
+                </div>
+                <h3 className="font-black text-sm text-zinc-900">No Scrutiny Committee Members Added Yet</h3>
+                <p className="text-xs text-zinc-500 max-w-md mx-auto leading-relaxed">
+                  Click "+ Add Scrutiny Member &amp; Allocate QPs" above to register internal or external committee members and assign up to 10 submitted question papers for confidential scrutiny.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => openAddScrutinyModal()}
+                  className="px-4 py-2 rounded-xl bg-[#120c7a] text-white text-xs font-bold inline-flex items-center gap-2 shadow-sm cursor-pointer"
+                >
+                  <Plus className="h-4 w-4" />
+                  <span>Create First Scrutiny Member</span>
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-5">
+                {scrutinyMembers
+                  .filter((m) => {
+                    if (!scrutinySearchTerm) return true;
+                    const term = scrutinySearchTerm.toLowerCase();
+                    return (
+                      (m.name || "").toLowerCase().includes(term) ||
+                      (m.email || "").toLowerCase().includes(term) ||
+                      (m.department || "").toLowerCase().includes(term) ||
+                      (m.affiliation || "").toLowerCase().includes(term)
+                    );
+                  })
+                  .map((member) => {
+                    const memberAllocatedIds = Array.isArray(member.allocatedQpIds) ? member.allocatedQpIds : [];
+                    const memberAllocatedAssignments = memberAllocatedIds.map((id) =>
+                      assignments.find((a) => a.id === id) || { id, subjectCode: "COURSE", subjectTitle: "Allocated Paper" }
+                    );
+
+                    const completedForMember = memberAllocatedIds.filter(
+                      (id) => getScrutinyReportForAssignment(id, member.id)?.status === "submitted"
+                    ).length;
+
+                    return (
+                      <div
+                        key={member.id}
+                        className="bg-white rounded-3xl border border-zinc-200/90 shadow-xs overflow-hidden"
+                      >
+                        {/* Member Header Row */}
+                        <div className="p-5 bg-gradient-to-r from-slate-50 via-indigo-50/30 to-white border-b border-zinc-200 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                          <div className="flex items-start gap-3.5">
+                            <div className="w-12 h-12 rounded-2xl bg-[#120c7a] text-white flex items-center justify-center font-black text-base shadow-xs shrink-0">
+                              {member.name ? member.name.charAt(0).toUpperCase() : "S"}
+                            </div>
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <h3 className="font-black text-base text-zinc-900">{member.name}</h3>
+                                <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-900 border border-indigo-200">
+                                  {member.designation || "Scrutiny Member"}
+                                </span>
+                                <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-purple-100 text-purple-900 border border-purple-200">
+                                  {member.department || "Engineering"}
+                                </span>
+                              </div>
+                              <p className="text-xs font-semibold text-zinc-600">
+                                {member.affiliation || "Member, Scrutiny Committee"} • Email: <strong>{member.email}</strong> {member.phone ? `• Ph: ${member.phone}` : ""}
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Member Access Controls & Link Sharing */}
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-100 border border-zinc-200 text-xs font-mono">
+                              <Lock className="h-3.5 w-3.5 text-zinc-500" />
+                              <span className="font-bold text-zinc-800">{member.password || "••••••••"}</span>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => handleCopyScrutinyLink(member)}
+                              className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 border transition-all cursor-pointer ${
+                                copiedMemberId === member.id
+                                  ? "bg-emerald-600 text-white border-emerald-600"
+                                  : "bg-white hover:bg-zinc-100 text-zinc-700 border-zinc-300"
+                              }`}
+                              title="Copy personal login link"
+                            >
+                              <Copy className="h-3.5 w-3.5" />
+                              <span>{copiedMemberId === member.id ? "Link Copied! ✓" : "Copy Portal Link"}</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleShareWhatsAppScrutinyLink(member)}
+                              className="px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                              title="Share Scrutiny Portal credentials via WhatsApp"
+                            >
+                              <Share2 className="h-3.5 w-3.5 text-emerald-600" />
+                              <span className="hidden sm:inline">WhatsApp</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => openAddScrutinyModal(member)}
+                              className="p-2 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-700 transition-all cursor-pointer"
+                              title="Edit Member Details or Paper Allocations"
+                            >
+                              <Edit3 className="h-3.5 w-3.5" />
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteScrutinyMember(member.id)}
+                              className="p-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 transition-all cursor-pointer"
+                              title="Remove Scrutiny Member"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Allocated Papers Sub-Section */}
+                        <div className="p-5 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-extrabold text-zinc-700 flex items-center gap-2">
+                              <span>Allocated Question Papers</span>
+                              <span className="px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-800 text-[10px] font-black">
+                                {memberAllocatedIds.length} / 10 Papers
+                              </span>
+                              <span className="text-emerald-700 text-[11px] font-bold">
+                                ({completedForMember} Completed, {memberAllocatedIds.length - completedForMember} Pending)
+                              </span>
+                            </span>
+
+                            <button
+                              type="button"
+                              onClick={() => openAddScrutinyModal(member)}
+                              className="text-xs font-bold text-[#120c7a] hover:underline flex items-center gap-1 cursor-pointer"
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                              <span>Manage / Add More QPs</span>
+                            </button>
+                          </div>
+
+                          {memberAllocatedAssignments.length === 0 ? (
+                            <div className="p-4 rounded-2xl bg-zinc-50 border border-dashed border-zinc-300 text-center text-xs text-zinc-500 font-medium">
+                              No question papers currently allocated to this member. Click "Manage / Add More QPs" to assign papers.
+                            </div>
+                          ) : (
+                            <div className="border border-zinc-200 rounded-2xl overflow-hidden overflow-x-auto">
+                              <table className="w-full text-left text-xs border-collapse">
+                                <thead>
+                                  <tr className="bg-zinc-100/80 text-zinc-700 font-extrabold border-b border-zinc-200">
+                                    <th className="p-3 w-28">Course Code</th>
+                                    <th className="p-3">Course Title</th>
+                                    <th className="p-3 w-40">Department / Reg</th>
+                                    <th className="p-3 w-24 text-center">Sets</th>
+                                    <th className="p-3 w-36 text-center">Scrutiny Status</th>
+                                    <th className="p-3 text-right">Actions &amp; Reports</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-zinc-200">
+                                  {memberAllocatedAssignments.map((ass) => {
+                                    const report = getScrutinyReportForAssignment(ass.id, member.id);
+                                    const isSubmitted = report?.status === "submitted";
+                                    const isDraft = report?.status === "draft";
+                                    const numSets = Number(ass.numSets) || 1;
+
+                                    return (
+                                      <tr key={ass.id} className="hover:bg-slate-50/70 transition-colors">
+                                        <td className="p-3 font-mono font-black text-[#120c7a]">
+                                          {ass.subjectCode || "—"}
+                                        </td>
+
+                                        <td className="p-3 font-bold text-zinc-900">
+                                          <div>{ass.subjectTitle || "Untitled Course"}</div>
+                                          <div className="text-[10px] text-zinc-400 font-normal">
+                                            Setter: {ass.setterName || "External Setter"} ({ass.setterCollege || ""})
+                                          </div>
+                                        </td>
+
+                                        <td className="p-3 text-zinc-600 font-medium">
+                                          <div>{ass.department}</div>
+                                          <div className="text-[10px] text-zinc-400">R-{ass.regulation || "2021"}</div>
+                                        </td>
+
+                                        <td className="p-3 text-center">
+                                          {(() => {
+                                            const allocatedScope = member.allocatedQpSets?.[ass.id] || (numSets === 2 ? "both" : "setA");
+                                            if (allocatedScope === "setA") {
+                                              return (
+                                                <span className="inline-flex items-center gap-1 text-[10px] font-black px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-800 border border-blue-200" title="Only Set A allocated for scrutiny">
+                                                  <span>Set A Only</span>
+                                                </span>
+                                              );
+                                            }
+                                            if (allocatedScope === "setB") {
+                                              return (
+                                                <span className="inline-flex items-center gap-1 text-[10px] font-black px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200" title="Only Set B allocated for scrutiny">
+                                                  <span>Set B Only</span>
+                                                </span>
+                                              );
+                                            }
+                                            return (
+                                              <span className="inline-flex items-center gap-1 text-[10px] font-black px-2.5 py-0.5 rounded-full bg-purple-50 text-purple-800 border border-purple-200" title="Both Set A and Set B allocated">
+                                                <span>Both Sets (A &amp; B)</span>
+                                              </span>
+                                            );
+                                          })()}
+                                        </td>
+
+                                        <td className="p-3 text-center">
+                                          <span className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-extrabold border ${
+                                            isSubmitted
+                                              ? "bg-emerald-50 text-emerald-800 border-emerald-300"
+                                              : isDraft
+                                              ? "bg-blue-50 text-blue-800 border-blue-300"
+                                              : "bg-amber-50 text-amber-800 border-amber-300"
+                                          }`}>
+                                            {isSubmitted ? "Scrutiny Completed ✓" : isDraft ? "Draft in Progress" : "Pending Inspection"}
+                                          </span>
+                                        </td>
+
+                                        <td className="p-3 text-right">
+                                          {report ? (
+                                            <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                                              <button
+                                                type="button"
+                                                onClick={() => {
+                                                  setSelectedScrutinyReport(report);
+                                                  setSelectedScrutinyAssignment({
+                                                    ...ass,
+                                                    allocatedSets: member.allocatedQpSets?.[ass.id] || (numSets === 2 ? "both" : "setA")
+                                                  });
+                                                }}
+                                                className="px-3 py-1.5 rounded-xl bg-[#120c7a] hover:bg-[#1a129e] text-white text-xs font-bold flex items-center gap-1 shadow-2xs transition-all cursor-pointer"
+                                                title="View Q-Wise Scrutiny Report (Image 1) and record Action Taken"
+                                              >
+                                                <FileCheck2 className="h-3.5 w-3.5 text-amber-300" />
+                                                <span>View Report &amp; Action</span>
+                                              </button>
+                                            </div>
+                                          ) : (
+                                            <span className="text-[11px] text-zinc-400 font-semibold italic">
+                                              Awaiting Submission
+                                            </span>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* MODAL: ADD / EDIT SCRUTINY MEMBER & ALLOCATE QUESTION PAPERS (MAX 10) */}
+        {/* ========================================================================= */}
+        {showAddScrutinyModal && (
+          <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 overflow-y-auto">
+            <div className="bg-white rounded-3xl w-full max-w-6xl max-h-[92vh] flex flex-col shadow-2xl border border-zinc-200 overflow-hidden">
+              
+              {/* Modal Top Header */}
+              <div className="px-6 py-4.5 bg-gradient-to-r from-[#120c7a] via-[#1a129e] to-[#2b1fb0] text-white flex items-center justify-between shrink-0 shadow-sm">
+                <div className="flex items-center gap-3.5">
+                  <div className="w-10 h-10 rounded-2xl bg-white/10 border border-white/20 flex items-center justify-center shadow-inner shrink-0">
+                    <UserCheck className="h-5 w-5 text-amber-300" />
+                  </div>
+                  <div>
+                    <h3 className="font-black text-base sm:text-lg tracking-tight">
+                      {editingScrutinyMember ? "Edit Scrutiny Committee Member & Allocations" : "Add Scrutiny Committee Member & Allocate Papers"}
+                    </h3>
+                    <p className="text-xs text-blue-200 font-medium">
+                      Allocate up to a maximum of 10 submitted question papers for confidential autonomous examination scrutiny.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowAddScrutinyModal(false)}
+                  className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white transition-all cursor-pointer"
+                  title="Close Modal"
+                >
+                  <XCircle className="h-5 w-5" />
+                </button>
+              </div>
+
+              {/* Modal Body - 2 Columns */}
+              <form onSubmit={handleSaveScrutinyMember} className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-6">
+                
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                  
+                  {/* Column 1: Member Profile (Span 5) */}
+                  <div className="lg:col-span-5 space-y-3.5 bg-slate-50/80 p-5 rounded-2xl border border-zinc-200">
+                    <h4 className="font-extrabold text-xs text-zinc-900 uppercase tracking-wider flex items-center gap-2 border-b border-zinc-200 pb-2.5">
+                      <Users className="h-4 w-4 text-[#120c7a]" />
+                      <span>Member Profile &amp; Credentials</span>
+                    </h4>
+
+                    <div>
+                      <label className="block text-xs font-bold text-zinc-700 mb-1">
+                        Full Name with Salutation *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={scrutinyName}
+                        onChange={(e) => setScrutinyName(e.target.value)}
+                        placeholder="e.g. Dr. K. Ramanathan"
+                        className="w-full bg-white border border-zinc-300 rounded-xl px-3.5 py-2.5 text-xs text-zinc-800 font-semibold placeholder-zinc-400 focus:outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 transition-all"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-bold text-zinc-700 mb-1">
+                          Official Email Address *
+                        </label>
+                        <input
+                          type="email"
+                          required
+                          value={scrutinyEmail}
+                          onChange={(e) => setScrutinyEmail(e.target.value)}
+                          placeholder="member@institution.edu.in"
+                          className="w-full bg-white border border-zinc-300 rounded-xl px-3.5 py-2.5 text-xs text-zinc-800 font-semibold placeholder-zinc-400 focus:outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 transition-all"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-zinc-700 mb-1">
+                          Phone / WhatsApp Number
+                        </label>
+                        <input
+                          type="text"
+                          value={scrutinyPhone}
+                          onChange={(e) => setScrutinyPhone(e.target.value)}
+                          placeholder="e.g. 9876543210"
+                          className="w-full bg-white border border-zinc-300 rounded-xl px-3.5 py-2.5 text-xs text-zinc-800 font-semibold placeholder-zinc-400 focus:outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 transition-all"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-bold text-zinc-700 mb-1">
+                          Academic Designation
+                        </label>
+                        <select
+                          value={scrutinyDesignation}
+                          onChange={(e) => setScrutinyDesignation(e.target.value)}
+                          className="w-full bg-white border border-zinc-300 rounded-xl px-3.5 py-2.5 text-xs text-zinc-800 font-semibold focus:outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 transition-all"
+                        >
+                          <option value="Professor">Professor</option>
+                          <option value="Associate Professor">Associate Professor</option>
+                          <option value="Assistant Professor (Sr. Gr.)">Assistant Professor (Sr. Gr.)</option>
+                          <option value="Assistant Professor">Assistant Professor</option>
+                          <option value="Head of Department">Head of Department</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-zinc-700 mb-1">
+                          Department
+                        </label>
+                        <input
+                          type="text"
+                          value={scrutinyDept}
+                          onChange={(e) => setScrutinyDept(e.target.value)}
+                          placeholder="e.g. Mechanical Engineering"
+                          className="w-full bg-white border border-zinc-300 rounded-xl px-3.5 py-2.5 text-xs text-zinc-800 font-semibold placeholder-zinc-400 focus:outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 transition-all"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-zinc-700 mb-1">
+                        College / University Affiliation
+                      </label>
+                      <input
+                        type="text"
+                        value={scrutinyAffiliation}
+                        onChange={(e) => setScrutinyAffiliation(e.target.value)}
+                        placeholder="e.g. Government College of Technology, Coimbatore"
+                        className="w-full bg-white border border-zinc-300 rounded-xl px-3.5 py-2.5 text-xs text-zinc-800 font-semibold placeholder-zinc-400 focus:outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 transition-all"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-zinc-700 mb-1">
+                        Confidential Access Key / Password *
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          required
+                          value={scrutinyPassword}
+                          onChange={(e) => setScrutinyPassword(e.target.value)}
+                          placeholder="Enter password"
+                          className="w-full bg-white border border-zinc-300 rounded-xl px-3.5 py-2.5 text-xs text-zinc-800 font-mono font-bold placeholder-zinc-400 focus:outline-none focus:border-[#120c7a] focus:ring-2 focus:ring-[#120c7a]/10 transition-all"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setScrutinyPassword("SC@" + Math.random().toString(36).substring(2, 7).toUpperCase())}
+                          className="px-3.5 py-2.5 rounded-xl bg-zinc-200/90 hover:bg-zinc-300 text-zinc-800 text-xs font-bold shrink-0 cursor-pointer transition-colors"
+                          title="Generate new password"
+                        >
+                          Regen
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Column 2: Question Paper Allocation (Span 7) */}
+                  <div className="lg:col-span-7 space-y-3.5 flex flex-col">
+                    <div className="flex items-center justify-between border-b border-zinc-200 pb-2.5">
+                      <div className="flex items-center gap-2">
+                        <Layers className="h-4.5 w-4.5 text-[#120c7a]" />
+                        <h4 className="font-extrabold text-xs text-zinc-900 uppercase tracking-wider">
+                          Allocate Question Papers for Inspection
+                        </h4>
+                      </div>
+                      <span className={`text-xs font-black px-3 py-1 rounded-full border shadow-2xs ${
+                        allocatedQpIds.length >= 10
+                          ? "bg-rose-100 text-rose-800 border-rose-300"
+                          : "bg-indigo-50 text-indigo-900 border-indigo-200"
+                      }`}>
+                        {allocatedQpIds.length} / 10 Selected (Max 10)
+                      </span>
+                    </div>
+
+                    <div className="relative">
+                      <Search className="h-4 w-4 text-zinc-400 absolute left-3.5 top-3" />
+                      <input
+                        type="text"
+                        value={qpAllocationSearch}
+                        onChange={(e) => setQpAllocationSearch(e.target.value)}
+                        placeholder="Search by course code, title, department, or external setter..."
+                        className="w-full pl-10 pr-4 py-2.5 bg-zinc-50 border border-zinc-300 rounded-xl text-xs font-medium text-zinc-800 placeholder-zinc-400 focus:outline-none focus:border-[#120c7a] focus:bg-white shadow-2xs transition-all"
+                      />
+                    </div>
+
+                    {/* Scrollable List of Available Submitted QPs */}
+                    <div className="max-h-[460px] min-h-[360px] overflow-y-auto border border-zinc-200 rounded-2xl p-3 bg-slate-50/60 space-y-3">
+                      {filteredSubmittedAssignments.length === 0 ? (
+                        <div className="p-12 text-center text-xs text-zinc-400 font-bold">
+                          No submitted question papers available for allocation.
+                        </div>
+                      ) : (
+                        filteredSubmittedAssignments
+                          .filter((ass) => {
+                            if (!qpAllocationSearch) return true;
+                            const term = qpAllocationSearch.toLowerCase();
+                            return (
+                              (ass.subjectCode || "").toLowerCase().includes(term) ||
+                              (ass.subjectTitle || "").toLowerCase().includes(term) ||
+                              (ass.department || "").toLowerCase().includes(term) ||
+                              (ass.setterName || "").toLowerCase().includes(term)
+                            );
+                          })
+                          .map((ass) => {
+                            const isSelected = allocatedQpIds.includes(ass.id);
+                            const hasTwoSets = Number(ass.numSets) === 2 || Boolean(ass.submittedPaperB || ass.draftPaperB);
+                            const currentChosenSet = allocatedQpSets[ass.id] || "both";
+
+                            return (
+                              <div
+                                key={ass.id}
+                                onClick={() => handleToggleQpAllocation(ass.id)}
+                                className={`p-4 rounded-2xl transition-all cursor-pointer flex flex-col gap-2.5 ${
+                                  isSelected
+                                    ? "bg-indigo-50/90 border-2 border-indigo-600 shadow-sm"
+                                    : "bg-white hover:bg-slate-50/90 border border-zinc-200 shadow-2xs"
+                                }`}
+                              >
+                                {/* Row 1: Header (Code, Badges, Action Button) */}
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                                    <input
+                                      type="checkbox"
+                                      checked={isSelected}
+                                      onChange={() => {}} // Handled by parent click
+                                      className="h-4.5 w-4.5 rounded text-[#120c7a] border-zinc-300 focus:ring-blue-500 cursor-pointer pointer-events-none shrink-0"
+                                    />
+                                    <span className="font-mono text-xs font-black px-2.5 py-0.5 rounded-lg bg-indigo-100 text-[#120c7a] border border-indigo-200 shrink-0">
+                                      {ass.subjectCode}
+                                    </span>
+                                    <span className="text-xs font-bold text-zinc-600 truncate" title={`${ass.department} ${ass.regulation ? `(R-${ass.regulation})` : ""}`}>
+                                      • {ass.department} {ass.regulation ? `(R-${ass.regulation})` : ""}
+                                    </span>
+                                  </div>
+
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    {hasTwoSets && (
+                                      <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-purple-100 text-purple-900 border border-purple-200 shrink-0">
+                                        2 Sets (A &amp; B)
+                                      </span>
+                                    )}
+                                    <span className={`text-[11px] font-black px-3 py-1 rounded-lg transition-all shrink-0 ${
+                                      isSelected
+                                        ? "bg-[#120c7a] text-white shadow-2xs"
+                                        : "bg-zinc-100 hover:bg-[#120c7a] hover:text-white text-zinc-700 border border-zinc-300"
+                                    }`}>
+                                      {isSelected ? "Selected ✓" : "+ Add Paper"}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                {/* Row 2: Prominent Course Title */}
+                                <div className="pl-6.5">
+                                  <h4 className="text-sm font-extrabold text-zinc-900 leading-snug">
+                                    {ass.subjectTitle}
+                                  </h4>
+                                </div>
+
+                                {/* Row 3: Meta Strip (Setter & Session Info filling the card) */}
+                                <div className="pl-6.5 flex items-center justify-between text-[11px] text-zinc-500 font-medium pt-1 border-t border-zinc-100 gap-2">
+                                  <div className="flex items-center gap-1.5 truncate min-w-0 flex-1">
+                                    <span className="text-zinc-400 shrink-0">Setter:</span>
+                                    <strong className="text-zinc-800 font-bold truncate">
+                                      {ass.setterName || "External Setter"}
+                                    </strong>
+                                    {ass.setterCollege && (
+                                      <span className="text-zinc-400 truncate">({ass.setterCollege})</span>
+                                    )}
+                                  </div>
+                                  <span className="shrink-0 text-zinc-400 font-medium">
+                                    {ass.examSession || "Nov./Dec. 2026"}
+                                  </span>
+                                </div>
+
+                                {/* Row 4: Set Allocation Selector if Course has 2 Sets */}
+                                {hasTwoSets && isSelected && (
+                                  <div
+                                    className="mt-1.5 pt-2 border-t border-indigo-200/80 bg-indigo-50/50 p-2.5 rounded-xl border border-indigo-200/60"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    <div className="flex items-center justify-between mb-1.5">
+                                      <span className="text-[11px] font-black uppercase tracking-wider text-[#120c7a] flex items-center gap-1.5">
+                                        <Split className="h-3.5 w-3.5 text-indigo-700" />
+                                        <span>Scrutiny Allocation Scope:</span>
+                                      </span>
+                                      <span className="text-[10px] font-bold text-indigo-900 bg-white px-2 py-0.5 rounded-md border border-indigo-100">
+                                        {currentChosenSet === "both" ? "Both Sets (A & B)" : currentChosenSet === "setA" ? "Set A Only" : "Set B Only"}
+                                      </span>
+                                    </div>
+                                    <div className="grid grid-cols-3 gap-1.5 w-full bg-white p-1 rounded-lg border border-indigo-200 shadow-2xs">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSelectSetForQp(ass.id, "both")}
+                                        className={`w-full py-1.5 px-1 rounded-md text-[11px] font-black transition-all cursor-pointer text-center truncate ${
+                                          currentChosenSet === "both"
+                                            ? "bg-[#120c7a] text-white shadow-xs"
+                                            : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100"
+                                        }`}
+                                        title="Allocate Both Sets (A & B)"
+                                      >
+                                        Both Sets (A &amp; B)
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSelectSetForQp(ass.id, "setA")}
+                                        className={`w-full py-1.5 px-1 rounded-md text-[11px] font-black transition-all cursor-pointer text-center truncate ${
+                                          currentChosenSet === "setA"
+                                            ? "bg-[#120c7a] text-white shadow-xs"
+                                            : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100"
+                                        }`}
+                                        title="Allocate Set A Only"
+                                      >
+                                        Set A Only
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleSelectSetForQp(ass.id, "setB")}
+                                        className={`w-full py-1.5 px-1 rounded-md text-[11px] font-black transition-all cursor-pointer text-center truncate ${
+                                          currentChosenSet === "setB"
+                                            ? "bg-[#120c7a] text-white shadow-xs"
+                                            : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100"
+                                        }`}
+                                        title="Allocate Set B Only"
+                                      >
+                                        Set B Only
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })
+                      )}
+                    </div>
+
+                    <p className="text-[11px] text-zinc-500 font-medium italic">
+                      Tip: You can select up to 10 question papers. The member will inspect each paper individually and submit respective scrutiny reports.
+                    </p>
+                  </div>
+
+                </div>
+
+                {/* Modal Action Buttons */}
+                <div className="pt-4 border-t border-zinc-200 flex items-center justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddScrutinyModal(false)}
+                    className="px-5 py-2.5 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-xs font-bold transition-all cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+
+                  <button
+                    type="submit"
+                    disabled={savingScrutinyMember}
+                    className="px-6 py-2.5 rounded-xl bg-[#120c7a] hover:bg-[#1a129e] text-white text-xs font-extrabold flex items-center gap-2 shadow-md transition-all cursor-pointer disabled:opacity-50"
+                  >
+                    <Save className="h-4 w-4" />
+                    <span>{savingScrutinyMember ? "Saving Member..." : "Save Member & Generate Link"}</span>
+                  </button>
+                </div>
+
+              </form>
+
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* MODAL: VIEW OFFICIAL SCRUTINY REPORT & VERIFICATION CHECKLIST */}
+        {/* ========================================================================= */}
+        {selectedScrutinyReport && (
+          <ScrutinyReportModal
+            report={selectedScrutinyReport}
+            assignment={selectedScrutinyAssignment}
+            isCoeView={true}
+            onClose={() => {
+              setSelectedScrutinyReport(null);
+              setSelectedScrutinyAssignment(null);
+            }}
+            onReportUpdated={(updated) => {
+              setSelectedScrutinyReport(updated);
+              setScrutinyReports((prev) => prev.map((r) => r.id === updated.id ? updated : r));
+            }}
+          />
         )}
 
         {/* Review Submitted Paper Modal */}

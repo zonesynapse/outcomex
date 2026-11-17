@@ -1079,19 +1079,27 @@ export default function Attendance() {
   }, [timetableConfig, attendanceDate, now, computePeriodStart, attendanceData]);
 
   // The selected periods' record that actually holds student markings.
-  // Empty record shells AND shells with zero parseable entries never trigger
-  // false badges/locks.
+  // Considers records with student markings OR valid records created (markedBy / updatedAt / totalHours / topicTaught)
+  // where all students were present (100% attendance).
   const markedPeriodRec = useMemo(() => {
     if (!periods.length) return null;
     const recs = getAttendanceRecords(attendanceData);
     const found = periods
       .map(p => findRecordForPeriod(recs, attendanceDate, p))
       .find(r => {
-        const st = r?.students;
-        if (!st) return false;
-        const vals = Array.isArray(st) ? st : Object.values(st);
-        if (vals.length === 0) return false;
-        return vals.some(v => v !== null && v !== undefined && parseStudentAttendanceVal(v) !== null);
+        if (!r) return false;
+        const st = r.students;
+        if (st) {
+          const vals = Array.isArray(st) ? st : Object.values(st);
+          if (vals.length > 0 && vals.some(v => v !== null && v !== undefined && parseStudentAttendanceVal(v) !== null)) {
+            return true;
+          }
+        }
+        // If all students were present, the record exists and has markedBy / totalHours / updatedAt / topicTaught / isEvent
+        if (r.markedBy || r.updatedAt || r.totalHours || r.topicTaught || r.isEvent) {
+          return true;
+        }
+        return false;
       });
     return found || null;
   }, [periods, attendanceData, attendanceDate, findRecordForPeriod]);
@@ -1404,9 +1412,9 @@ export default function Attendance() {
             .map(([reg, nameVal]) => ({
               reg,
               name: typeof nameVal === 'object' ? (nameVal.name || 'Unknown') : nameVal,
-              hours: 1,
-              status: 'P',
-              percentage: "100.00"
+              hours: 0,
+              status: '',
+              percentage: "0.00"
             }));
           earlyStudentArray.sort((a, b) => String(a.reg).localeCompare(String(b.reg), undefined, { numeric: true, sensitivity: 'base' }));
           setMasterList({ ...rawMaster });
@@ -1573,9 +1581,9 @@ export default function Attendance() {
           .map(([reg, nameVal]) => ({
             reg,
             name: typeof nameVal === 'object' ? (nameVal.name || 'Unknown') : nameVal,
-            hours: 1,
-            status: 'P',
-            percentage: "100.00"
+            hours: 0,
+            status: '',
+            percentage: "0.00"
           }));
 
         // Fallback: namelist doc missing/empty but attendance records hold student
@@ -1607,9 +1615,9 @@ export default function Attendance() {
             studentArray = derivedRegs.map(reg => ({
               reg,
               name: derivedMap[reg] || reg,
-              hours: 1,
-              status: 'P',
-              percentage: "100.00"
+              hours: 0,
+              status: '',
+              percentage: "0.00"
             }));
             if (fetchRunRef.current === runId) setRosterFallback({ count: derivedRegs.length });
           } else if (fetchRunRef.current === runId) {
@@ -1713,13 +1721,15 @@ export default function Attendance() {
     const firstPeriod = periods[0];
     const recordsMap = getAttendanceRecords(attendanceData);
     let dateRecord = findRecordForPeriod(recordsMap, attendanceDate, firstPeriod);
-    // A record shell with zero student entries carries no markings — treat as
-    // unmarked so the roster stays editable and no false badge shows.
+    // Check if record exists for this period. Don't nullify valid records that
+    // have markedBy / updatedAt / totalHours / topicTaught even if recEntryCount is 0 (all present / 0 absentees).
     const recStudentsRaw = dateRecord?.students;
     const recEntryCount = Array.isArray(recStudentsRaw)
       ? recStudentsRaw.length
       : Object.keys(recStudentsRaw || {}).length;
-    if (dateRecord && recEntryCount === 0) dateRecord = null;
+    if (dateRecord && recEntryCount === 0 && !dateRecord.markedBy && !dateRecord.updatedAt && !dateRecord.topicTaught && !dateRecord.totalHours && !dateRecord.isEvent) {
+      dateRecord = null;
+    }
     setCurrentRecordData(dateRecord);
     setRecordNotice(null);
 
@@ -1755,17 +1765,50 @@ export default function Attendance() {
     const order = masterList._order;
 
     const studentArray = Object.entries(masterListObj).map(([reg, name]) => {
-      const rawVal = getStudentData(dateRecord?.students, reg);
-      const parsedVal = parseStudentAttendanceVal(rawVal);
-      const studentExists = parsedVal !== null;
+      let rawVal = getStudentData(dateRecord?.students, reg);
+      let parsedVal = parseStudentAttendanceVal(rawVal);
+
+      // Robust fallback: if ID didn't match directly, try student's name in dateRecord.students
+      if (!parsedVal && dateRecord?.students && typeof dateRecord.students === 'object') {
+        const normName = String(name || '').trim().toLowerCase();
+        if (normName) {
+          for (const [sKey, sVal] of Object.entries(dateRecord.students)) {
+            if (sKey.startsWith('_')) continue;
+            const entryName = typeof sVal === 'object' && sVal !== null ? (sVal.name || sVal.studentName || '') : '';
+            if (entryName && String(entryName).trim().toLowerCase() === normName) {
+              rawVal = sVal;
+              parsedVal = parseStudentAttendanceVal(sVal);
+              break;
+            }
+          }
+        }
+      }
+
       let hours = parsedVal ? parsedVal.hours : 0;
       let stuTopic = parsedVal ? parsedVal.topicTaught : '';
       let stuAid = parsedVal ? parsedVal.teachingAid : '';
       let stuMethod = parsedVal ? parsedVal.teachingMethodology : '';
-      let storedStatus = parsedVal ? parsedVal.status : '';
 
-      // If record exists and student is recorded with a status, use storedStatus; otherwise default to Present 'P' so faculty only needs to toggle absentees
-      let status = (studentExists && storedStatus) ? storedStatus : 'P';
+      // Check if this class was corrupted by the historical bug where ALL students were saved as '-'
+      const allEntries = dateRecord?.students && typeof dateRecord.students === 'object'
+        ? Object.entries(dateRecord.students).filter(([k]) => !k.startsWith('_'))
+        : [];
+      const isCorruptedAllHyphen = allEntries.length > 0 && allEntries.every(([, v]) => {
+        const p = parseStudentAttendanceVal(v);
+        return p?.status === '-' || p?.isNA;
+      });
+
+      // If record exists for this period, show student's recorded status (or 'P' if not marked absent/OD)
+      // If NO record exists for this period, status remains empty ('') so roster shows unmarked by default
+      let status = '';
+      if (dateRecord) {
+        if (parsedVal && !isCorruptedAllHyphen && parsedVal.status) {
+          status = parsedVal.status;
+        } else {
+          // In an already-marked record, enrolled students default to Present 'P'
+          status = 'P';
+        }
+      }
       if (status === 'P' && !hours) {
         hours = totalH;
       }
@@ -2392,9 +2435,12 @@ export default function Attendance() {
         _meta: { totalHours: nextTotal }
       }));
 
-      // Clear period selection and reset state for next attendance entry
-      setPeriod("");
-      setPeriods([]);
+      // Keep periods selected and update currentRecordData so user immediately sees "Already marked"
+      if (periods.length > 0) {
+        const firstP = periods[0];
+        const savedRec = updatedRecords[`${attendanceDate}_P${firstP}`];
+        if (savedRec) setCurrentRecordData(savedRec);
+      }
     } catch (err) { console.error(err); alert("Failed to save records."); }
     setSaving(false);
   };
@@ -2424,6 +2470,12 @@ export default function Attendance() {
       setTopicTaught("");
       setTeachingAid("");
       setTeachingMethodology("");
+      setStudents(prev => prev.map(s => ({
+        ...s,
+        status: '',
+        hours: 0,
+        percentage: "0.00"
+      })));
       alert(`Attendance for ${attendanceDate} (Period ${periodToClear}) cleared.`);
     } catch (err) { console.error(err); alert("Failed to clear attendance."); }
     setSaving(false);
@@ -2635,9 +2687,11 @@ export default function Attendance() {
                       <option value="">Select Period</option>
                       {availablePeriodsWithTiming.map(p => {
                         const isLocked = lockedPeriods.has(p.value) && !periods.includes(p.value);
+                        const recordsMap = getAttendanceRecords(attendanceData);
+                        const isAlreadyMarked = Boolean(findRecordForPeriod(recordsMap, attendanceDate, p.value));
                         return (
                           <option key={p.value} value={p.value} disabled={isLocked}>
-                            {p.label}{isLocked ? ' — Not started' : ''}
+                            {p.label}{isAlreadyMarked ? ' — Already marked' : (isLocked ? ' — Not started' : '')}
                           </option>
                         );
                       })}
@@ -2982,6 +3036,12 @@ export default function Attendance() {
                 <span><span className="inline-block w-2 h-2 rounded-full bg-emerald-500 mr-1.5" />P: <strong className="text-slate-700">{students.filter(s => s.status === 'P').length}</strong></span>
                 <span><span className="inline-block w-2 h-2 rounded-full bg-rose-500 mr-1.5" />A: <strong className="text-slate-700">{students.filter(s => s.status === 'A').length}</strong></span>
                 <span><span className="inline-block w-2 h-2 rounded-full bg-blue-500 mr-1.5" />OD: <strong className="text-slate-700">{students.filter(s => s.status === 'OD').length}</strong></span>
+                {students.some(s => s.status === '-') && (
+                  <span><span className="inline-block w-2 h-2 rounded-full bg-slate-400 mr-1.5" />-: <strong className="text-slate-700">{students.filter(s => s.status === '-').length}</strong></span>
+                )}
+                {students.some(s => s.status === '') && (
+                  <span><span className="inline-block w-2 h-2 rounded-full bg-amber-400 mr-1.5" />Unmarked: <strong className="text-amber-700">{students.filter(s => s.status === '').length}</strong></span>
+                )}
               </div>
             </div>
           )}

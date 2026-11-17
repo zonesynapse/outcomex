@@ -948,6 +948,8 @@ export default function QuestionPaperGenerator() {
       const data = {};
       snap.forEach(d => { data[d.id] = d.data(); });
       setSectionConfigs(data);
+    }, (err) => {
+      console.warn("batch_sections listener note:", err?.message || err);
     });
     return () => unsub();
   }, []);
@@ -1570,9 +1572,23 @@ export default function QuestionPaperGenerator() {
         for (const [cName, cConf] of Object.entries(ctObj._category_config)) {
           if (!cConf || !cConf.exam_marks) continue;
 
-          if (examId && cConf.exam_marks[examId] !== undefined && cConf.exam_marks[examId] !== "") {
-            const markVal = parseInt(cConf.exam_marks[examId], 10);
-            if (!isNaN(markVal) && markVal > 0) return markVal;
+          if (examId) {
+            let markVal = undefined;
+            if (cConf.exam_marks[examId] !== undefined && cConf.exam_marks[examId] !== "") {
+              markVal = parseInt(cConf.exam_marks[examId], 10);
+            } else if (selectedConfig?.id && cConf.exam_marks[selectedConfig.id] !== undefined && cConf.exam_marks[selectedConfig.id] !== "") {
+              markVal = parseInt(cConf.exam_marks[selectedConfig.id], 10);
+            } else {
+              const examNameStr = selectedConfig?.examName || selectedConfig?.exam_name || selectedConfig?.title || selectedConfig?.name || selectedConfig?.exam || examId;
+              const cleanExamNameStr = normClean(examNameStr);
+              for (const [k, v] of Object.entries(cConf.exam_marks)) {
+                if (normClean(k) === cleanExamNameStr && v !== undefined && v !== "") {
+                  markVal = parseInt(v, 10);
+                  break;
+                }
+              }
+            }
+            if (markVal !== undefined && !isNaN(markVal) && markVal > 0) return markVal;
           }
 
           if (selectedCategory && normClean(cName) === normClean(selectedCategory)) {
@@ -1617,6 +1633,8 @@ export default function QuestionPaperGenerator() {
         });
       });
       setCiaConfigs(configsArray);
+    }, (err) => {
+      console.warn("cia_configs listener note:", err?.message || err);
     });
 
     return () => unsubscribe();
@@ -1630,6 +1648,8 @@ export default function QuestionPaperGenerator() {
       const data = {};
       snap.forEach(doc => { data[doc.id] = doc.data(); });
       setQpSetterAssignmentsData(data);
+    }, (err) => {
+      console.warn("qp_setter_assignments listener note:", err?.message || err);
     });
     return () => unsub();
   }, []);
@@ -1639,6 +1659,8 @@ export default function QuestionPaperGenerator() {
       const list = [];
       snap.forEach(doc => { list.push({ id: doc.id, data: doc.data() }); });
       setAllSyllabusDataList(list);
+    }, (err) => {
+      console.warn("syllabus_data listener note:", err?.message || err);
     });
     return () => unsub();
   }, []);
@@ -1901,6 +1923,8 @@ export default function QuestionPaperGenerator() {
       const data = {};
       snap.forEach(doc => { data[doc.id] = doc.data(); });
       setCourseWeightageData(data);
+    }, (err) => {
+      console.warn("course_type_weightage listener note:", err?.message || err);
     });
     return () => unsub();
   }, []);
@@ -1917,6 +1941,8 @@ export default function QuestionPaperGenerator() {
         const keys = Object.keys(data || {});
         if (keys.length) setQbKLDomain(keys[0]);
       }
+    }, (err) => {
+      console.warn("blooms_taxonomy listener note:", err?.message || err);
     });
     return () => unsub();
   }, [qbKLDomain]);
@@ -2213,13 +2239,15 @@ export default function QuestionPaperGenerator() {
         const nameClean = regCleanNorm(cfg.examName || cfg.exam_name || cfg.title || cfg.name || cfg.exam || cfg.label || '');
         if (nameClean.includes('practical') || nameClean.includes('lab') || nameClean.includes('observation')) return "Practical";
         if (nameClean.includes('project')) return "Project";
-        if (nameClean.includes('assignment')) return "Assignment";
-        if (nameClean.includes('activity')) return "Activity";
+        if (nameClean.includes('assignment') || nameClean.includes('activity')) return "Activity";
         if (nameClean.includes('indirect') || nameClean.includes('survey') || nameClean.includes('exit')) return "Indirect Assessment";
         return "Written Test";
       };
       const isRegMatchHelper = (a, b) => {
-        if (!a || !b) return true;
+        if (!a || !b) return false;
+        const sa = sanitizeKey(a);
+        const sb = sanitizeKey(b);
+        if (sa === sb) return true;
         const na = String(a || '').toLowerCase().replace(/[^a-z0-9]/g, '');
         const nb = String(b || '').toLowerCase().replace(/[^a-z0-9]/g, '');
         if (na === nb) return true;
@@ -2230,7 +2258,7 @@ export default function QuestionPaperGenerator() {
       };
       ciaConfigs.forEach(cfg => {
         if (!cfg) return;
-        if (regulation && cfg.regulation && !isRegMatchHelper(cfg.regulation, regulation)) return;
+        if (!isRegMatchHelper(cfg.regulation, regulation)) return;
         const cfgAyNorm = regCleanNorm(cfg.academicYear);
         if (cfgAyNorm && cfgAyNorm !== regCleanNorm(academicYear)) return;
         if (cfg.courseTypes && Array.isArray(cfg.courseTypes) && cfg.courseTypes.length > 0) {
@@ -2384,7 +2412,10 @@ export default function QuestionPaperGenerator() {
 
     const normRegStr = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
     const isRegMatch = (a, b) => {
-      if (!a || !b) return true;
+      if (!a || !b) return false;
+      const sa = sanitizeKey(a);
+      const sb = sanitizeKey(b);
+      if (sa === sb) return true;
       const na = normRegStr(a);
       const nb = normRegStr(b);
       if (na === nb) return true;
@@ -2394,12 +2425,21 @@ export default function QuestionPaperGenerator() {
       return na.includes(nb) || nb.includes(na);
     };
 
+    const isAyMatch = (cfgAy, targetAy) => {
+      const c = String(cfgAy || '').trim();
+      const t = String(targetAy || '').trim();
+      if (!c) return true; // Default exam without specific AY applies across academic years
+      if (!t) return true;
+      return sanitizeKey(c) === sanitizeKey(t) || normClean(c) === normClean(t);
+    };
+
     const isActivityExamName = (configObj, nameClean) =>
       (configObj && (configObj.isActivity || configObj.isGroupActivity)) ||
       nameClean.includes('activity') ||
       nameClean.includes('seminar') ||
       nameClean.includes('group discussion') ||
-      nameClean.includes('value added');
+      nameClean.includes('value added') ||
+      nameClean.includes('assignment');
 
     const doesExamMatchCategory = (cfg, categoryName) => {
       if (!categoryName) return true;
@@ -2408,52 +2448,41 @@ export default function QuestionPaperGenerator() {
       const examNameClean = normClean(cfg?.examName || cfg?.exam_name || cfg?.title || cfg?.name || cfg?.exam || cfg?.label || cfg?.eventTitle || cfg?.eventName || '');
 
       const isActivityExplicit = Boolean(cfg?.isActivity || examNameClean.includes('activity'));
-      const isAssignmentExplicit = Boolean(cfg?.isAssignment && !examNameClean.includes('activity') && !cfg?.isActivity);
+      const isAssignmentExplicit = Boolean(cfg?.isAssignment || examNameClean.includes('assignment'));
       const isPractical = Boolean(cfg?.isPractical || examNameClean.includes('practical') || examNameClean.includes('lab') || examNameClean.includes('observation'));
       const isProject = Boolean(cfg?.isProject || examNameClean.includes('project'));
       const isIndirect = Boolean(cfg?.isIndirectAssessment || examNameClean.includes('indirect') || examNameClean.includes('survey') || examNameClean.includes('exit'));
       const isEse = Boolean(cfg?.isUniversity || examNameClean.includes('ese') || examNameClean.includes('endsemester') || examNameClean.includes('university') || examNameClean.includes('endsem') || examNameClean.includes('external'));
 
-      const isActivity = isActivityExplicit || (Boolean(cfg?.isAssignment) && (examNameClean.includes('activity') || isActivityExamName(cfg, examNameClean)));
-      const isAssignment = isAssignmentExplicit;
+      const isActivityOrAssignment = isActivityExplicit || isAssignmentExplicit || Boolean(cfg?.isGroupActivity || isActivityExamName(cfg, examNameClean));
 
-      // 1. Separate Activity category (e.g. Category = "Activity")
-      if (cn === 'activity' || (cn.includes('activity') && !cn.includes('assignment'))) {
-        return isActivity && !isProject && !isIndirect && !isEse;
+      // 1. Activity / Assignment category
+      if (cn.includes('activity') || cn.includes('assignment')) {
+        return isActivityOrAssignment && !isProject && !isIndirect && !isEse;
       }
 
-      // 2. Separate Assignment category (e.g. Category = "Assignment")
-      if (cn === 'assignment' || (cn.includes('assignment') && !cn.includes('activity'))) {
-        return isAssignment && !isProject && !isIndirect && !isEse;
-      }
-
-      // 3. Combined Activity / Assignment category
-      if (cn.includes('activity') && cn.includes('assignment')) {
-        return (isActivity || isAssignment) && !isProject && !isIndirect && !isEse;
-      }
-
-      // 4. Practical / Lab category
+      // 2. Practical / Lab category
       if (cn.includes('practical') || cn.includes('lab') || cn.includes('observation')) {
         return isPractical && !isEse;
       }
 
-      // 5. Project category
+      // 3. Project category
       if (cn.includes('project')) {
         return isProject && !isEse;
       }
 
-      // 6. Indirect Assessment / Survey category
+      // 4. Indirect Assessment / Survey category
       if (cn.includes('indirect') || cn.includes('survey') || cn.includes('exit')) {
         return isIndirect;
       }
 
-      // 7. ESE / University Exam category
+      // 5. ESE / University Exam category
       if (cn.includes('ese') || cn.includes('endsemester') || cn.includes('university') || cn.includes('endsem')) {
         return isEse;
       }
 
-      // 8. Default: Internal Assessment / Written Test (IA 1, IA 2, IA 3, Model Exam, CIA 1, CIA 2, CIA 3)
-      return !isActivity && !isAssignment && !isPractical && !isProject && !isIndirect && !isEse;
+      // 6. Default: Internal Assessment / Written Test (IA 1, IA 2, IA 3, Model Exam, CIA 1, CIA 2, CIA 3)
+      return !isActivityOrAssignment && !isPractical && !isProject && !isIndirect && !isEse;
     };
 
     const addExam = (id, rawName, type) => {
@@ -2583,32 +2612,35 @@ export default function QuestionPaperGenerator() {
 
           const candidateExamsMap = new Map();
 
-          // 1. Explicitly configured exams in exam_weightage for this category
-          const hasExplicitWeightageExams = cConf.exam_weightage && typeof cConf.exam_weightage === 'object' && Object.keys(cConf.exam_weightage).length > 0;
+          // 1. Any exams explicitly configured in exam_weightage and exam_marks for this category
+          const explicitIds = new Set([
+            ...Object.keys(cConf.exam_weightage || {}),
+            ...Object.keys(cConf.exam_marks || {})
+          ]);
 
-          if (hasExplicitWeightageExams) {
-            Object.keys(cConf.exam_weightage).forEach(id => {
-              let cfg = ciaConfigById.get(id);
-              if (!cfg) {
-                const normId = normClean(id);
-                const candidates = ciaConfigs.filter(c => {
-                  if (!c) return false;
-                  const cName = normClean(c.examName || c.exam_name || c.title || c.name || c.exam || c.label || '');
-                  return cName && cName === normId;
-                });
-                if (candidates.length > 0) {
-                  cfg = candidates.find(c => isRegMatch(c.regulation, regulation));
-                }
+          explicitIds.forEach(id => {
+            let cfg = ciaConfigById.get(id);
+            if (!cfg) {
+              const normId = normClean(id);
+              const candidates = ciaConfigs.filter(c => {
+                if (!c) return false;
+                const cName = normClean(c.examName || c.exam_name || c.title || c.name || c.exam || c.label || '');
+                return cName && cName === normId;
+              });
+              if (candidates.length > 0) {
+                cfg = candidates.find(c => isRegMatch(c.regulation, regulation)) || candidates[0];
               }
-              const resolvedId = cfg ? cfg.id : id;
-              candidateExamsMap.set(resolvedId, { id: resolvedId, config: cfg, rawName: cfg ? null : id });
-            });
-          }
+            }
+            const resolvedId = cfg ? cfg.id : id;
+            candidateExamsMap.set(resolvedId, { id: resolvedId, config: cfg, rawName: cfg ? null : id });
+          });
 
-          // 2. ALSO include all ciaConfigs matching regulation, course type, and category so no configured exams are missed
+          // 2. ALSO include all ciaConfigs matching this Regulation, Course Type, Academic Year, and Category
+          // (This guarantees ALL configured exams in Curriculum table appear, even when percentages are blank like in BEST-of-N)
           ciaConfigs.forEach(cfg => {
             if (!cfg) return;
-            if (regulation && cfg.regulation && !isRegMatch(cfg.regulation, regulation)) return;
+            if (!isRegMatch(cfg.regulation, regulation)) return;
+            if (!isAyMatch(cfg.academicYear, academicYear)) return;
 
             if (cfg.courseTypes && Array.isArray(cfg.courseTypes) && cfg.courseTypes.length > 0) {
               const normSubjType = normClean(subjectCourseType);
@@ -2636,12 +2668,8 @@ export default function QuestionPaperGenerator() {
               : rawName;
 
             if (rn && !isRawFirebaseId(rn)) {
-              // Every exam MUST match the active category based on its CIA Config flags/type.
-              if (resolvedCfg) {
-                if (!doesExamMatchCategory(resolvedCfg, activeCategoryTarget)) return;
-              } else {
-                if (!doesExamMatchCategory({ examName: rn }, activeCategoryTarget)) return;
-              }
+              if (disabledExamIds.has(id) || (resolvedCfg && disabledExamIds.has(resolvedCfg.id))) return;
+              if (disabledExamNames.has(normClean(rn))) return;
 
               addExam(resolvedCfg ? resolvedCfg.id : id, rn, 'weightage');
             }
@@ -2657,7 +2685,8 @@ export default function QuestionPaperGenerator() {
             const resolvedName = cfg.examName || cfg.exam_name || cfg.title || cfg.name || cfg.exam || cfg.label || cfg.eventTitle || cfg.eventName;
             if (!resolvedName || isRawFirebaseId(resolvedName)) return;
             if (!cfg) return;
-            if (regulation && cfg.regulation && !isRegMatch(cfg.regulation, regulation)) return;
+            if (!isRegMatch(cfg.regulation, regulation)) return;
+            if (!isAyMatch(cfg.academicYear, academicYear)) return;
             if (cfg.courseTypes && Array.isArray(cfg.courseTypes) && cfg.courseTypes.length > 0) {
               const normSubjType = normClean(subjectCourseType);
               const hasSubjSpecificCode = normSubjType && (/\d/.test(normSubjType) || normSubjType.includes('lit'));
@@ -2688,7 +2717,8 @@ export default function QuestionPaperGenerator() {
         if (norm(config.department) && norm(config.department) !== selectedDept) return;
         if (norm(config.batch) && norm(config.batch) !== selectedBatch) return;
         if (config.semester && String(config.semester) !== semNum) return;
-        if (regulation && config.regulation && !isRegMatch(config.regulation, regulation)) return;
+        if (!isRegMatch(config.regulation, regulation)) return;
+        if (!isAyMatch(config.academicYear, academicYear)) return;
 
         if (!doesExamMatchCategory(config, activeCategoryTarget)) return;
 
@@ -2749,7 +2779,7 @@ export default function QuestionPaperGenerator() {
       });
     }
 
-    return examList;
+    return examList.sort((a, b) => (a.examName || '').localeCompare(b.examName || '', undefined, { numeric: true, sensitivity: 'base' }));
   }, [ciaConfigs, courseWeightageData, program, department, batch, academicYear, selectedSemester, assessmentType, subjectCourseType, subject, getRegulationForBatch]);
 
   // Fetch ALL saved QPs for this subject and compute combined PO marks
