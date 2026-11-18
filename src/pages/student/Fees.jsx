@@ -9,7 +9,7 @@ import {
   Ban, ShieldAlert, Bus, Users, Printer, FileText,
 } from "lucide-react";
 import { formatBatchDisplay, formatProgrammeKey, formatDepartmentDisplay, formatProgDisplay, sanitizeKey } from "../../lib/utils";
-import { computePaidByConfig, yearStart, normHead } from "../../utils/feeAllocation";
+import { computePaidByConfig, yearStart, normHead, normalizeStandardReceiptNo } from "../../utils/feeAllocation";
 import OfficialFeeReceiptModal from "../../components/OfficialFeeReceiptModal";
 
 const PAYMENT_STATUS = {
@@ -1069,12 +1069,56 @@ export default function Fees() {
 
   // Combined payment history for UI display
   const allHistoryPayments = useMemo(() => {
-    return [...payments, ...unSyncedAppPayments].sort((a, b) => {
+    const parentOrderIds = new Set(
+      payments.filter((p) => p.parentOrderId).map((p) => String(p.parentOrderId).trim().toLowerCase())
+    );
+
+    const resolvedReg = studentData?.regNo || studentData?.examNumber || studentData?.admissionNo || "";
+
+    const processedPayments = payments
+      .filter((p) => !(p.parentOrderId && parentOrderIds.has(String(p.parentOrderId).trim().toLowerCase())))
+      .map((p) => {
+        let rec = { ...p };
+        const allocs = Array.isArray(rec.allocations) && rec.allocations.length > 0
+          ? rec.allocations
+          : Array.isArray(rec.items) && rec.items.length > 1
+            ? rec.items
+            : null;
+
+        if (allocs && allocs.length > 1) {
+          const allocTotal = allocs.reduce((sum, a) => sum + Number(a.allocatedAmount || a.amount || 0), 0);
+          if (allocTotal > 0) {
+            rec.amount = allocTotal;
+            rec.chargedAmount = allocTotal;
+          }
+          rec.feeHead = allocs.map((a) => a.feeHead || a.head).filter(Boolean).join(" + ");
+          rec.items = allocs.map((a) => ({
+            head: a.feeHead || a.head,
+            amount: Number(a.allocatedAmount || a.amount || 0),
+            academicYear: a.academicYear || rec.academicYear,
+            semester: a.semester || rec.semester || "All",
+          }));
+          rec.allocations = allocs;
+        }
+
+        if (rec.receiptNo || rec.orderId) {
+          rec.receiptNo = normalizeStandardReceiptNo(
+            rec.receiptNo || rec.orderId,
+            rec.academicYear,
+            rec.paymentDate || rec.createdAt,
+            resolvedReg
+          );
+        }
+
+        return rec;
+      });
+
+    return [...processedPayments, ...unSyncedAppPayments].sort((a, b) => {
       const da = getEffectivePaymentDate(a);
       const db2 = getEffectivePaymentDate(b);
       return db2.getTime() - da.getTime();
     });
-  }, [payments, unSyncedAppPayments, getEffectivePaymentDate]);
+  }, [payments, unSyncedAppPayments, getEffectivePaymentDate, studentData]);
 
   // Each portal payment reduces exactly ONE config (year-tagged → that year,
   // untagged legacy → oldest due first). Application payments keep the
@@ -1867,7 +1911,7 @@ export default function Fees() {
                             </div>
                           ) : (
                             <>
-                              <span className="text-xs font-mono font-bold text-slate-700 block">{p.receiptNo || p.orderId || '-'}</span>
+                              <span className="text-xs font-mono font-bold text-slate-700 block">{normalizeStandardReceiptNo(p.receiptNo || p.orderId, p.academicYear, p.paymentDate || p.createdAt, studentData?.regNo || studentData?.examNumber) || '-'}</span>
                               {p.gatewayResponse?.rrn && (
                                 <span className="text-[10px] text-slate-400 font-mono">RRN: {p.gatewayResponse.rrn}</span>
                               )}

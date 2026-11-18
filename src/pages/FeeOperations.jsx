@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { auth, db, functions } from "../firebase";
 import { httpsCallable } from "firebase/functions";
-import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, getDoc, setDoc, Timestamp, query, where, getDocs, writeBatch, deleteField } from "firebase/firestore";
+import { collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc, getDoc, setDoc, Timestamp, query, where, getDocs, writeBatch, deleteField, runTransaction, serverTimestamp } from "firebase/firestore";
 import {
   IndianRupee, Plus, Search, Edit3, Trash2, X, CheckCircle2, AlertCircle,
   CreditCard, Building2, Users, Download, Printer,
@@ -36,7 +36,8 @@ import {
   aggregatePaymentsByStudent,
   aggregateConcessionsByStudent,
   aggregateOpeningDuesByStudent,
-  getActiveSemesterConfigs
+  getActiveSemesterConfigs,
+  normalizeStandardReceiptNo
 } from "../utils/feeAllocation";
 import Layout from "../components/Layout";
 import DirectScholarshipSettlementModal from "../components/DirectScholarshipSettlementModal";
@@ -201,21 +202,30 @@ const BRANCHES = ["CSE", "ECE", "EEE", "ME", "CE", "CSBS", "AIML", "DS", "IT", "
 const displayDept = (v) => {
   if (typeof v !== 'string' || !v.trim()) return v || '—';
   let result = v.trim();
+
+  // If it already starts with "Master of" or "Bachelor of", preserve the full name cleanly
+  if (/^(?:PG|UG)?\s*[-–•:]*\s*(Master|Bachelor)\s+of/i.test(result)) {
+    return result.replace(/^(?:PG|UG)\s*[-–•:]*\s*/i, "").replace(/_/g, ' ').replace(/\s{2,}/g, ' ').trim() || '—';
+  }
+
+  // Strip leading standalone PG / UG qualifiers if followed by a degree acronym
+  result = result.replace(/^(?:PG|UG)\s*[-–•:]*\s*/i, "");
+
   result = result
-    .replace(/^B_?Tech_?/gi, "B.Tech. ")
-    .replace(/^B_?E_?/gi, "B.E. ")
-    .replace(/^M_?Tech_?/gi, "M.Tech. ")
-    .replace(/^M_?E_?/gi, "M.E. ")
-    .replace(/^B_?Sc_?/gi, "B.Sc. ")
-    .replace(/^M_?Sc_?/gi, "M.Sc. ")
-    .replace(/^B_?C_?A_?/gi, "B.C.A. ")
-    .replace(/^M_?C_?A_?/gi, "MCA ")
-    .replace(/^B_?B_?A_?/gi, "B.B.A. ")
-    .replace(/^M_?B_?A_?/gi, "MBA ")
-    .replace(/^B_?Com_?/gi, "B.Com. ")
-    .replace(/^M_?Com_?/gi, "M.Com. ")
-    .replace(/^B_?A_?/gi, "B.A. ")
-    .replace(/^M_?A_?/gi, "M.A. ");
+    .replace(/^B[\._\s]*Tech[\._\s]*/gi, "B.Tech. ")
+    .replace(/^B[\._\s]*E[\._\s]*/gi, "B.E. ")
+    .replace(/^M[\._\s]*Tech[\._\s]*/gi, "M.Tech. ")
+    .replace(/^M[\._\s]*E[\._\s]*/gi, "M.E. ")
+    .replace(/^B[\._\s]*Sc[\._\s]*/gi, "B.Sc. ")
+    .replace(/^M[\._\s]*Sc[\._\s]*/gi, "M.Sc. ")
+    .replace(/^B[\._\s]*C[\._\s]*A[\._\s]*/gi, "B.C.A. ")
+    .replace(/^M[\._\s]*C[\._\s]*A[\._\s]*/gi, "MCA ")
+    .replace(/^B[\._\s]*B[\._\s]*A[\._\s]*/gi, "B.B.A. ")
+    .replace(/^M[\._\s]*B[\._\s]*A[\._\s]*/gi, "MBA ")
+    .replace(/^B[\._\s]*Com[\._\s]*/gi, "B.Com. ")
+    .replace(/^M[\._\s]*Com[\._\s]*/gi, "M.Com. ")
+    .replace(/^B[\._\s]+A[\._\s]*/gi, "B.A. ")
+    .replace(/^M[\._\s]+A[\._\s]*/gi, "M.A. ");
   return result.replace(/_/g, ' ').replace(/\s{2,}/g, ' ').trim() || '—';
 };
 
@@ -639,6 +649,7 @@ export default function FeeOperations() {
   const [showOpeningDuesModal, setShowOpeningDuesModal] = useState(false);
   const [showScholarshipSettlementModal, setShowScholarshipSettlementModal] = useState(false);
   const [openingDuesTab, setOpeningDuesTab] = useState("template"); // "template" | "upload" | "preview" | "view"
+  const [openingDuesProg, setOpeningDuesProg] = useState("UG");
   const [selectedBatchForTemplate, setSelectedBatchForTemplate] = useState("");
   const [selectedYearForTemplate, setSelectedYearForTemplate] = useState("2024-2025");
   const [uploadedDuesData, setUploadedDuesData] = useState([]);
@@ -911,6 +922,65 @@ export default function FeeOperations() {
     return "Student";
   }, [selectedStudent, students]);
 
+  // Standardized unique receipt generator: FEE<academic year>-MMDD-XXXX
+  const generateUniqueReceiptNo = async (academicYear, paymentDate = new Date()) => {
+    const d = paymentDate instanceof Date ? paymentDate : (paymentDate?.toDate ? paymentDate.toDate() : new Date(paymentDate || Date.now()));
+    const validDate = isNaN(d.getTime()) ? new Date() : d;
+
+    let ay = String(academicYear || "").trim();
+    if (!ay) {
+      const m = validDate.getMonth() + 1;
+      const y = validDate.getFullYear();
+      ay = m >= 6 ? `${y}-${y + 1}` : `${y - 1}-${y}`;
+    }
+    const cleanAy = ay.replace(/[^A-Za-z0-9-]/g, "");
+    const mm = String(validDate.getMonth() + 1).padStart(2, "0");
+    const dd = String(validDate.getDate()).padStart(2, "0");
+    const mmdd = `${mm}${dd}`;
+
+    const counterKey = `fee_receipt_${cleanAy}_${mmdd}`;
+    const counterRef = doc(db, "system_counters", counterKey);
+
+    let seq = 1;
+    try {
+      seq = await runTransaction(db, async (transaction) => {
+        const cSnap = await transaction.get(counterRef);
+        let nextSeq = 1;
+        if (cSnap.exists()) {
+          nextSeq = (cSnap.data().lastSeq || 0) + 1;
+        }
+        transaction.set(counterRef, {
+          lastSeq: nextSeq,
+          ay: cleanAy,
+          date: mmdd,
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+        return nextSeq;
+      });
+    } catch (err) {
+      console.warn("Counter transaction error, using local fallback sequence:", err);
+      const existingCount = (receipts || []).filter(r => {
+        const rNo = String(r.receiptNo || "");
+        return rNo.startsWith(`FEE${cleanAy}-${mmdd}-`) || rNo.includes(`-${mmdd}-`);
+      }).length;
+      seq = existingCount + 1;
+    }
+
+    let candidateNo = `FEE${cleanAy}-${mmdd}-${String(seq).padStart(4, "0")}`;
+
+    let attempts = 0;
+    while (attempts < 50) {
+      const collidesLocal = (receipts || []).some(r => r.receiptNo === candidateNo) ||
+                            (payments || []).some(p => p.receiptNo === candidateNo);
+      if (!collidesLocal) break;
+      seq++;
+      candidateNo = `FEE${cleanAy}-${mmdd}-${String(seq).padStart(4, "0")}`;
+      attempts++;
+    }
+
+    return candidateNo;
+  };
+
   // Helper to ensure an official receipt exists in fee_receipts for any verified payment
   const ensureReceiptExists = async (paymentData, orderId) => {
     try {
@@ -923,7 +993,18 @@ export default function FeeOperations() {
         existingSnap = await getDocs(query(collection(db, "fee_receipts"), where("orderId", "==", targetOrderId)));
       }
       if (existingSnap.empty && paymentData.receiptNo) {
-        existingSnap = await getDocs(query(collection(db, "fee_receipts"), where("receiptNo", "==", paymentData.receiptNo)));
+        const candidateSnap = await getDocs(query(collection(db, "fee_receipts"), where("receiptNo", "==", paymentData.receiptNo)));
+        if (!candidateSnap.empty) {
+          const cData = candidateSnap.docs[0].data();
+          const pReg = (paymentData.regNo || paymentData.examNumber || "").trim().toLowerCase();
+          const cReg = (cData.regNo || cData.examNumber || "").trim().toLowerCase();
+          const pUid = (paymentData.uid || paymentData.studentId || "").trim().toLowerCase();
+          const cUid = (cData.uid || cData.studentId || "").trim().toLowerCase();
+          const isSameStudent = (pReg && cReg && pReg === cReg) || (pUid && cUid && pUid === cUid) || (!pReg && !cReg);
+          if (isSameStudent || cData.orderId === targetOrderId || cData.refNo === targetOrderId) {
+            existingSnap = candidateSnap;
+          }
+        }
       }
 
       // Resolve clean student name
@@ -958,10 +1039,10 @@ export default function FeeOperations() {
         return { id: existDoc.id, ...existData, studentName: targetStudentName };
       }
 
-      const receiptNo = paymentData.receiptNo || `FEE${new Date().getFullYear()}-${String(Date.now()).slice(-5)}`;
+      const pDate = paymentData.paymentDate || Timestamp.now();
+      const receiptNo = paymentData.receiptNo || (await generateUniqueReceiptNo(paymentData.academicYear, pDate));
       const studentUid = paymentData.uid || paymentData.studentId || targetStudent?.id || "";
       const examNo = paymentData.examNumber || paymentData.regNo || targetStudent?.regNo || "";
-      const pDate = paymentData.paymentDate || Timestamp.now();
       const amt = Number(paymentData.chargedAmount || paymentData.amount || 0);
 
       const receiptRecord = {
@@ -1460,6 +1541,232 @@ export default function FeeOperations() {
     return subscribeAppPaymentsForStudent(selectedStudent, setAppPayments);
   }, [selectedStudent]);
 
+  // Global startup self-healing: Generic dynamic aggregation of multi-head allocations, collision resolution, and standard receipt normalization
+  useEffect(() => {
+    if (!payments || payments.length === 0) return;
+    const healCollidingReceipts = async () => {
+      try {
+        const exactStdFmt = /^FEE\d{4}(-\d{4})?-\d{4}-\d{4}$/;
+
+        // 0. Generic Anomaly Repair: Detects and heals corrupted composite fee payments lacking an allocations array
+        for (const p of payments) {
+          if (!isSuccessfulPayment(p) || p.parentOrderId) continue;
+          const hasCompositeHead = String(p.feeHead || "").includes(" + ");
+          const hasNoAllocations = !Array.isArray(p.allocations) || p.allocations.length === 0;
+
+          if (hasCompositeHead && hasNoAllocations) {
+            const pReg = String(p.regNo || p.examNumber || p.studentId || p.uid || "").trim();
+            const otherValidPayment = payments.find(other =>
+              other.id !== p.id &&
+              isSuccessfulPayment(other) &&
+              String(other.regNo || other.examNumber || other.studentId || other.uid || "").trim() === pReg &&
+              Array.isArray(other.allocations) && other.allocations.length > 0
+            );
+
+            if (otherValidPayment) {
+              const coveredHeads = new Set((otherValidPayment.allocations || []).map(a => normHead(a.feeHead || a.head)));
+              const studentFees = (feeConfigs || []).filter(f => {
+                const isProg = isProgMatch(f.programme, p.programme);
+                const isDept = !f.department || f.department.toLowerCase() === "all" || isDeptMatchRegistry(f.department, getCanonicalDept(p.department));
+                const batchMatch = !f.batch || f.batch.toLowerCase() === "all" || isBatchMatch(f.batch, p.batch);
+                return isProg && isDept && batchMatch;
+              });
+              const uncoveredFees = studentFees.filter(f => !coveredHeads.has(normHead(f.head)));
+
+              if (uncoveredFees.length === 1) {
+                const targetFee = uncoveredFees[0];
+                const correctedAmt = Number(targetFee.amount || 0);
+                const correctedHead = targetFee.head;
+                const targetReceiptNo = normalizeStandardReceiptNo(p.receiptNo, p.academicYear || targetFee.academicYear || "2026-2027", p.verifiedAt || p.paymentDate || p.createdAt, pReg);
+
+                console.log("Generic anomaly repair: Restoring corrupted payment:", p.id, "to", correctedHead, correctedAmt);
+                await updateDoc(doc(db, "fee_payments", p.id), {
+                  amount: correctedAmt,
+                  chargedAmount: correctedAmt,
+                  feeHead: correctedHead,
+                  semester: targetFee.semester || p.semester || "All",
+                  receiptNo: targetReceiptNo
+                }).catch(() => {});
+
+                const recId = p.receiptDocId || `REC_${p.id}`;
+                await setDoc(doc(db, "fee_receipts", recId), {
+                  id: recId,
+                  orderId: p.orderId || p.id,
+                  uid: p.uid || p.studentId || pReg,
+                  studentId: p.studentId || pReg,
+                  examNumber: p.examNumber || pReg,
+                  regNo: pReg,
+                  studentName: p.studentName || "",
+                  amount: correctedAmt,
+                  status: "active",
+                  mode: p.mode || "gateway",
+                  feeHead: correctedHead,
+                  academicYear: p.academicYear || targetFee.academicYear || "2026-2027",
+                  refNo: p.orderId || p.id,
+                  receiptNo: targetReceiptNo,
+                  paymentDate: p.verifiedAt || p.paymentDate || p.createdAt || Timestamp.now(),
+                  items: [{ head: correctedHead, amount: correctedAmt, semester: targetFee.semester || "All", academicYear: p.academicYear || targetFee.academicYear || "2026-2027" }]
+                }, { merge: true }).catch(() => {});
+              }
+            }
+          }
+        }
+
+        // 1. Generic Dynamic Multi-Head Fee Allocation Aggregation
+        // Automatically aggregates total amount and items for any payment with multiple allocations
+        for (const p of payments) {
+          if (!isSuccessfulPayment(p) || p.parentOrderId) continue;
+
+          if (Array.isArray(p.allocations) && p.allocations.length > 0) {
+            const allocTotal = p.allocations.reduce((sum, a) => sum + Number(a.allocatedAmount || a.amount || 0), 0);
+            const combinedHead = p.allocations.map(a => a.feeHead || a.head).filter(Boolean).join(" + ") || p.feeHead || "College Fee";
+            const items = p.allocations.map(a => ({
+              head: a.feeHead || a.head || "Fee",
+              amount: Number(a.allocatedAmount || a.amount || 0),
+              academicYear: a.academicYear || p.academicYear || "2026-2027",
+              semester: a.semester || p.semester || "All"
+            }));
+
+            const pReg = String(p.regNo || p.examNumber || p.studentId || p.uid || "").trim();
+            const targetReceiptNo = normalizeStandardReceiptNo(p.receiptNo, p.academicYear || "2026-2027", p.verifiedAt || p.paymentDate || p.createdAt, pReg);
+
+            if (allocTotal > 0 && (Number(p.amount) < allocTotal || (p.allocations.length > 1 && p.feeHead !== combinedHead) || (targetReceiptNo && p.receiptNo !== targetReceiptNo))) {
+              console.log("Dynamically syncing multi-head allocation for payment:", p.id, allocTotal, combinedHead);
+              await updateDoc(doc(db, "fee_payments", p.id), {
+                amount: allocTotal,
+                chargedAmount: allocTotal,
+                feeHead: combinedHead,
+                ...(targetReceiptNo ? { receiptNo: targetReceiptNo } : {})
+              }).catch(() => {});
+
+              const recId = p.receiptDocId || `REC_${p.id}`;
+              await setDoc(doc(db, "fee_receipts", recId), {
+                id: recId,
+                orderId: p.orderId || p.id,
+                uid: p.uid || p.studentId || pReg,
+                studentId: p.studentId || pReg,
+                examNumber: p.examNumber || pReg,
+                regNo: pReg,
+                studentName: p.studentName || "",
+                amount: allocTotal,
+                status: "active",
+                mode: p.mode || "gateway",
+                feeHead: combinedHead,
+                academicYear: p.academicYear || "2026-2027",
+                refNo: p.orderId || p.id,
+                receiptNo: targetReceiptNo || p.receiptNo,
+                paymentDate: p.verifiedAt || p.paymentDate || p.createdAt || Timestamp.now(),
+                createdAt: Timestamp.now(),
+                items: items
+              }, { merge: true }).catch(() => {});
+            }
+          }
+        }
+
+        // 2. Generic Receipt Collision Detection & Disambiguation
+        // Groups payments by receipt number. If different students share the same receipt number, dynamically disambiguates subsequent students.
+        const paymentsByReceipt = {};
+        for (const p of payments) {
+          if (!isSuccessfulPayment(p) || !p.receiptNo) continue;
+          const rNo = String(p.receiptNo).trim();
+          if (!rNo || rNo.startsWith("REC-") || rNo.startsWith("DEM-")) continue;
+          if (!paymentsByReceipt[rNo]) paymentsByReceipt[rNo] = [];
+          paymentsByReceipt[rNo].push(p);
+        }
+
+        for (const [rNo, list] of Object.entries(paymentsByReceipt)) {
+          if (list.length <= 1) continue;
+          const candidateGroups = {};
+          for (const p of list) {
+            const candKey = String(p.regNo || p.examNumber || p.studentId || p.uid || p.studentName || "").trim().toLowerCase();
+            if (!candidateGroups[candKey]) candidateGroups[candKey] = [];
+            candidateGroups[candKey].push(p);
+          }
+          const candKeys = Object.keys(candidateGroups);
+          if (candKeys.length > 1) {
+            // Real collision between different students!
+            for (let cIdx = 1; cIdx < candKeys.length; cIdx++) {
+              const collidingPayments = candidateGroups[candKeys[cIdx]];
+              for (const collP of collidingPayments) {
+                const collReg = String(collP.regNo || collP.examNumber || collP.uid || collP.studentId || "").trim();
+                const baseStd = normalizeStandardReceiptNo(collP.receiptNo, collP.academicYear, collP.paymentDate || collP.createdAt || collP.verifiedAt, collReg);
+                const parts = baseStd.split("-");
+                const lastNum = parseInt(parts[parts.length - 1], 10) || 1;
+                const disambiguatedNo = `${parts.slice(0, -1).join("-")}-${String(lastNum + cIdx).padStart(4, "0")}`;
+
+                console.log("Dynamically disambiguating colliding receipt:", collP.id, "from", rNo, "to", disambiguatedNo);
+                await updateDoc(doc(db, "fee_payments", collP.id), {
+                  receiptNo: disambiguatedNo,
+                  receiptDocId: `REC_${collP.id}`
+                }).catch(() => {});
+
+                const recDocRef = doc(db, "fee_receipts", `REC_${collP.id}`);
+                const recSnap = await getDoc(recDocRef).catch(() => null);
+                if (!recSnap || !recSnap.exists()) {
+                  await setDoc(recDocRef, {
+                    id: `REC_${collP.id}`,
+                    orderId: collP.orderId || collP.id,
+                    uid: collP.uid || collP.studentId || collReg,
+                    studentId: collP.studentId || collReg,
+                    examNumber: collP.examNumber || collReg,
+                    regNo: collReg,
+                    studentName: collP.studentName || "",
+                    amount: Number(collP.chargedAmount || collP.amount || 0),
+                    status: "active",
+                    mode: collP.mode || "gateway",
+                    feeHead: collP.feeHead || "Fee",
+                    academicYear: collP.academicYear || "2026-2027",
+                    remarks: collP.remarks || `Payment ${collP.id}`,
+                    refNo: collP.orderId || collP.id,
+                    receiptNo: disambiguatedNo,
+                    paymentDate: collP.verifiedAt || collP.paymentDate || collP.createdAt || Timestamp.now(),
+                    createdAt: Timestamp.now(),
+                    cancelledAt: null,
+                    reason: null,
+                    reprintCount: 0,
+                    items: Array.isArray(collP.allocations) && collP.allocations.length > 0
+                      ? collP.allocations.map(a => ({ head: a.feeHead || a.head || "Fee", amount: Number(a.allocatedAmount || a.amount || 0) }))
+                      : [{ head: collP.feeHead || "Fee", amount: Number(collP.chargedAmount || collP.amount || 0) }]
+                  }, { merge: true }).catch(() => {});
+                } else {
+                  await updateDoc(recDocRef, { receiptNo: disambiguatedNo }).catch(() => {});
+                }
+              }
+            }
+          }
+        }
+
+        // 3. Generic Standardization of Any Legacy Receipt Number (e.g. FEE2026-XXXXX -> FEE<AY>-MMDD-XXXX)
+        for (const p of payments) {
+          if (!isSuccessfulPayment(p) || !p.receiptNo) continue;
+          const rNo = String(p.receiptNo).trim();
+          if (
+            rNo &&
+            !rNo.startsWith("REC-ESE-") &&
+            !rNo.startsWith("REC-PHOTO-") &&
+            !rNo.startsWith("REC-APP-") &&
+            !rNo.startsWith("DEM-") &&
+            !exactStdFmt.test(rNo)
+          ) {
+            const pReg = String(p.regNo || p.examNumber || p.uid || p.studentId || "").trim();
+            const stdReceiptNo = normalizeStandardReceiptNo(rNo, p.academicYear, p.paymentDate || p.createdAt || p.verifiedAt, pReg);
+            if (stdReceiptNo && stdReceiptNo !== rNo) {
+              await updateDoc(doc(db, "fee_payments", p.id), { receiptNo: stdReceiptNo }).catch(() => {});
+              const recId = p.receiptDocId || `REC_${p.id}`;
+              const recDocSnap = await getDoc(doc(db, "fee_receipts", recId)).catch(() => null);
+              if (recDocSnap && recDocSnap.exists()) {
+                await updateDoc(doc(db, "fee_receipts", recId), { receiptNo: stdReceiptNo }).catch(() => {});
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("Global healCollidingReceipts error:", err);
+      }
+    };
+    healCollidingReceipts();
+  }, [payments, feeConfigs]);
+
   // Auto-clean orphaned duplicate pending payments, repair corrupted student names, and clean up duplicate receipts
   useEffect(() => {
     if (!selectedStudent) return;
@@ -1721,7 +2028,7 @@ export default function FeeOperations() {
     }
     setSaving(true);
     try {
-      const receiptNo = `FEE${new Date().getFullYear()}-${String(receipts.length + 1).padStart(5, "0")}`;
+      const receiptNo = await generateUniqueReceiptNo(paymentForm.academicYear, paymentForm.paymentDate);
       const examNo = selectedStudent.regNo || selectedStudent.examNumber || selectedStudent.id;
       const studentUid = selectedStudent.id || selectedStudent.uid || examNo;
       const pDate = Timestamp.fromDate(new Date(paymentForm.paymentDate || new Date()));
@@ -2053,7 +2360,7 @@ export default function FeeOperations() {
 
     setVerifyingOrderId(orderId);
     try {
-      const receiptNo = p.receiptNo || `FEE${new Date().getFullYear()}-${String(receipts.length + 1).padStart(5, "0")}`;
+      const receiptNo = p.receiptNo || (await generateUniqueReceiptNo(p.academicYear, p.paymentDate));
       const updatePayload = {
         status: "SUCCESS",
         receiptNo,
@@ -2128,13 +2435,6 @@ export default function FeeOperations() {
       (s.email || "").toLowerCase().includes(q) ||
       (s.examNumber || "").toLowerCase().includes(q);
   }).slice(0, 10);
-
-  // Set default batch for template download
-  useEffect(() => {
-    if (!selectedBatchForTemplate && allAvailableBatches.length > 0) {
-      setSelectedBatchForTemplate(allAvailableBatches[0]);
-    }
-  }, [allAvailableBatches, selectedBatchForTemplate]);
 
   // Download Opening Dues Excel Template for selected Batch & Academic Year
   const handleDownloadOpeningDuesTemplate = () => {
@@ -2391,12 +2691,12 @@ export default function FeeOperations() {
     return false;
   }, [PROGRAMME_DEPARTMENTS, durations]);
 
-  // Reactive Batches strictly filtered by programme duration (UG: 4-yr batches, PG: 2-yr batches)
-  const netkampusBatches = useMemo(() => {
-    if (!netkampusProg) return [];
-    const progKey = formatProgrammeKey(netkampusProg);
-    const targetProg = netkampusProg.trim().toUpperCase();
-    const expectedDuration = Number(durations[progKey] || durations[netkampusProg] || (targetProg === "PG" ? 2 : 4));
+  // Generic Programme Batches Resolver (strictly filtered by programme duration: UG: 4-yr, PG: 2-yr)
+  const getProgrammeBatches = useCallback((prog) => {
+    if (!prog) return [];
+    const progKey = formatProgrammeKey(prog);
+    const targetProg = prog.trim().toUpperCase();
+    const expectedDuration = Number(durations[progKey] || durations[prog] || (targetProg === "PG" ? 2 : 4));
     const set = new Set();
 
     const isMatchingBatch = (b) => {
@@ -2428,7 +2728,7 @@ export default function FeeOperations() {
 
     // 3. Batches from enrolled students matching this programme
     students.forEach(s => {
-      if (isStudentInProgramme(s, netkampusProg)) {
+      if (isStudentInProgramme(s, prog)) {
         const b = (s.batch || s._profile_data?.batch || "").trim();
         if (b && isMatchingBatch(b)) {
           set.add(b);
@@ -2436,15 +2736,26 @@ export default function FeeOperations() {
       }
     });
 
+    // 4. Batches from allAvailableBatches matching the expected duration
+    if (Array.isArray(allAvailableBatches)) {
+      allAvailableBatches.forEach(b => {
+        if (isMatchingBatch(b)) set.add(b);
+      });
+    }
+
     // Fallback if none found, using getRecentBatches(expectedDuration)
     if (set.size === 0) {
       getRecentBatches(expectedDuration).forEach(b => set.add(b));
     }
 
     return Array.from(set).sort((a, b) => b.localeCompare(a));
-  }, [netkampusProg, feeConfigs, students, getActiveBatches, durations, isStudentInProgramme]);
+  }, [feeConfigs, students, getActiveBatches, durations, isStudentInProgramme, allAvailableBatches]);
 
-  // Set default batch when programme changes
+  // Reactive Batches for Netkampus and Opening Dues
+  const netkampusBatches = useMemo(() => getProgrammeBatches(netkampusProg), [getProgrammeBatches, netkampusProg]);
+  const openingDuesBatches = useMemo(() => getProgrammeBatches(openingDuesProg), [getProgrammeBatches, openingDuesProg]);
+
+  // Set default batch when programme changes for Netkampus
   useEffect(() => {
     if (netkampusBatches.length > 0) {
       if (!netkampusBatch || !netkampusBatches.includes(netkampusBatch)) {
@@ -2455,7 +2766,18 @@ export default function FeeOperations() {
     }
   }, [netkampusBatches, netkampusBatch]);
 
-  // Reactive Academic Years derived from batch start year and configured programme duration
+  // Set default batch when programme changes for Opening Dues
+  useEffect(() => {
+    if (openingDuesBatches.length > 0) {
+      if (!selectedBatchForTemplate || !openingDuesBatches.includes(selectedBatchForTemplate)) {
+        setSelectedBatchForTemplate(openingDuesBatches[0]);
+      }
+    } else {
+      setSelectedBatchForTemplate("");
+    }
+  }, [openingDuesBatches, selectedBatchForTemplate]);
+
+  // Reactive Academic Years derived from batch start year and configured programme duration for Netkampus
   const netkampusYears = useMemo(() => {
     if (!netkampusBatch) return ["2024-2025", "2025-2026"];
     const [start] = netkampusBatch.split("-").map(Number);
@@ -2471,14 +2793,45 @@ export default function FeeOperations() {
     return years.length ? years : ["2024-2025", "2025-2026"];
   }, [netkampusBatch, netkampusProg, durations]);
 
-  // Reset academic year to the starting year whenever batch changes
+  // Reset academic year to the starting year whenever batch changes for Netkampus
   useEffect(() => {
     if (netkampusYears.length > 0) {
-      setNetkampusYear(netkampusYears[0]);
+      if (!netkampusYear || !netkampusYears.includes(netkampusYear)) {
+        setNetkampusYear(netkampusYears[0]);
+      }
     } else {
       setNetkampusYear("");
     }
-  }, [netkampusBatch, netkampusYears]);
+  }, [netkampusBatch, netkampusYears, netkampusYear]);
+
+  // Reactive Academic Years derived from batch start year and configured programme duration for Opening Dues
+  const openingDuesYears = useMemo(() => {
+    if (!selectedBatchForTemplate) return ["2024-2025", "2025-2026"];
+    const [start] = selectedBatchForTemplate.split("-").map(Number);
+    const progKey = formatProgrammeKey(openingDuesProg);
+    const targetProg = (openingDuesProg || "").trim().toUpperCase();
+    const duration = Number(durations[progKey] || durations[openingDuesProg] || (targetProg === "PG" ? 2 : 4));
+    const years = [];
+    if (start && duration) {
+      // Include immediate preceding academic year (for opening dues)
+      years.push(`${start - 1}-${start}`);
+      for (let i = 0; i < duration; i++) {
+        years.push(`${start + i}-${start + i + 1}`);
+      }
+    }
+    return years.length ? years : ["2024-2025", "2025-2026"];
+  }, [selectedBatchForTemplate, openingDuesProg, durations]);
+
+  // Set default academic year when batch or years change for Opening Dues
+  useEffect(() => {
+    if (openingDuesYears.length > 0) {
+      if (!selectedYearForTemplate || !openingDuesYears.includes(selectedYearForTemplate)) {
+        setSelectedYearForTemplate(openingDuesYears[0]);
+      }
+    } else {
+      setSelectedYearForTemplate("");
+    }
+  }, [selectedBatchForTemplate, openingDuesYears, selectedYearForTemplate]);
 
   // Configured Fee Heads for the selected Programme, Batch & Academic Year
   const netkampusTemplateHeads = useMemo(() => {
@@ -2903,12 +3256,68 @@ export default function FeeOperations() {
 
     // 1. Process verified payments from fee_payments
     const successfulPayments = payments.filter(p => matchesStudent(p) && isSuccessfulPayment(p));
+    const parentOrderIds = new Set(
+      successfulPayments.filter(p => p.parentOrderId).map(p => String(p.parentOrderId).trim().toLowerCase())
+    );
+
     successfulPayments.forEach(p => {
-      const ids = getTxnIdentifiers(p);
+      // If this record is a child allocation, skip it if the parent order is present
+      if (p.parentOrderId && parentOrderIds.has(String(p.parentOrderId).trim().toLowerCase())) {
+        return;
+      }
+
+      let payRecord = { ...p };
+
+      // Generic anomaly check: Composite fee head without allocations when another genuine multi-head payment exists
+      const hasComposite = String(payRecord.feeHead || "").includes(" + ");
+      const hasNoAllocs = !Array.isArray(payRecord.allocations) || payRecord.allocations.length === 0;
+      if (hasComposite && hasNoAllocs) {
+        const genuineMultiPayment = successfulPayments.find(other =>
+          other.id !== payRecord.id &&
+          Array.isArray(other.allocations) &&
+          other.allocations.length > 1
+        );
+        if (genuineMultiPayment) {
+          const coveredHeads = new Set((genuineMultiPayment.allocations || []).map(a => normHead(a.feeHead || a.head)));
+          const uncoveredFees = fees.filter(f => !coveredHeads.has(normHead(f.head)));
+          if (uncoveredFees.length === 1) {
+            const targetFee = uncoveredFees[0];
+            payRecord.feeHead = targetFee.head;
+            payRecord.amount = Number(targetFee.amount || 0);
+            payRecord.chargedAmount = Number(targetFee.amount || 0);
+            payRecord.semester = targetFee.semester || payRecord.semester || "All";
+            payRecord.academicYear = targetFee.academicYear || payRecord.academicYear || "2026-2027";
+            payRecord.items = [{ head: targetFee.head, amount: Number(targetFee.amount || 0), semester: targetFee.semester || "All", academicYear: targetFee.academicYear || "2026-2027" }];
+          }
+        }
+      }
+
+      const allocs = (Array.isArray(payRecord.allocations) && payRecord.allocations.length > 0)
+        ? payRecord.allocations
+        : (Array.isArray(payRecord.items) && payRecord.items.length > 1)
+          ? payRecord.items
+          : null;
+      if (allocs && allocs.length > 1) {
+        const allocTotal = allocs.reduce((sum, a) => sum + Number(a.allocatedAmount || a.amount || 0), 0);
+        if (allocTotal > 0) {
+          payRecord.amount = allocTotal;
+          payRecord.chargedAmount = allocTotal;
+        }
+        payRecord.feeHead = allocs.map(a => a.feeHead || a.head).filter(Boolean).join(" + ");
+        payRecord.items = allocs.map(a => ({
+          head: a.feeHead || a.head,
+          amount: Number(a.allocatedAmount || a.amount || 0),
+          academicYear: a.academicYear || payRecord.academicYear,
+          semester: a.semester || payRecord.semester || "All"
+        }));
+        payRecord.allocations = allocs;
+      }
+
+      const ids = getTxnIdentifiers(payRecord);
       const isDupe = ids.some(id => seenTxnIds.has(id));
       if (!isDupe) {
         ids.forEach(id => seenTxnIds.add(id));
-        unifiedStudentPayments.push({ ...p });
+        unifiedStudentPayments.push(payRecord);
       }
     });
 
@@ -2932,6 +3341,15 @@ export default function FeeOperations() {
         // Enrich existing payment with receipt metadata — DO NOT duplicate payment!
         if (!existingPayment.receiptNo && r.receiptNo) {
           existingPayment.receiptNo = r.receiptNo;
+        }
+        const rAmt = Number(r.amount || 0);
+        if (rAmt > Number(existingPayment.amount || 0)) {
+          existingPayment.amount = rAmt;
+          existingPayment.chargedAmount = rAmt;
+        }
+        if (Array.isArray(r.items) && r.items.length > 0 && (!existingPayment.items || existingPayment.items.length < r.items.length)) {
+          existingPayment.items = r.items;
+          existingPayment.feeHead = r.items.map(it => it.head).filter(Boolean).join(" + ");
         }
         existingPayment.receiptDoc = r;
         existingPayment.receiptId = r.id;
@@ -3103,9 +3521,21 @@ export default function FeeOperations() {
       if (s.registerNumber) map.set(String(s.registerNumber).toLowerCase(), s);
       if (s.examNumber) map.set(String(s.examNumber).toLowerCase(), s);
       if (s.rollNo) map.set(String(s.rollNo).toLowerCase(), s);
-      if (s.studentName) map.set(String(s.studentName).toLowerCase(), s);
-      if (s.displayName) map.set(String(s.displayName).toLowerCase(), s);
-      if (s.name) map.set(String(s.name).toLowerCase(), s);
+      if (s.studentName) {
+        map.set(String(s.studentName).toLowerCase(), s);
+        const stripped = String(s.studentName).toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (stripped) map.set(stripped, s);
+      }
+      if (s.displayName) {
+        map.set(String(s.displayName).toLowerCase(), s);
+        const stripped = String(s.displayName).toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (stripped) map.set(stripped, s);
+      }
+      if (s.name) {
+        map.set(String(s.name).toLowerCase(), s);
+        const stripped = String(s.name).toLowerCase().replace(/[^a-z0-9]/g, "");
+        if (stripped) map.set(stripped, s);
+      }
       if (s.email) map.set(String(s.email).toLowerCase(), s);
       if (s.emailId) map.set(String(s.emailId).toLowerCase(), s);
       if (s._profile_data?.emailId) map.set(String(s._profile_data.emailId).toLowerCase(), s);
@@ -3116,15 +3546,20 @@ export default function FeeOperations() {
   }, [students]);
 
   const combinedReceiptList = useMemo(() => {
-    // 1. Build lookup maps of fee_receipts by receiptNo, orderId, id, and composite key
-    const activeReceiptsByNo = new Map();
+    // 1. Build lookup maps of fee_receipts by orderId, id, composite candidate key, and composite fee key
+    const activeReceiptsByOrder = new Map();
+    const activeReceiptsByCandidateReceipt = new Map();
     const activeReceiptsById = new Map();
     const activeReceiptsByComp = new Map();
 
     receipts.forEach(r => {
       if (String(r.status || "").toLowerCase() === "cancelled") return; // Skip cancelled receipts
-      if (r.receiptNo) activeReceiptsByNo.set(r.receiptNo.trim().toLowerCase(), r);
-      if (r.orderId) activeReceiptsByNo.set(r.orderId.trim().toLowerCase(), r);
+      const oId = (r.orderId || r.refNo || "").trim().toLowerCase();
+      const rNo = (r.receiptNo || "").trim().toLowerCase();
+      const sReg = (r.regNo || r.examNumber || r.rollNo || r.studentId || "").trim().toLowerCase();
+
+      if (oId) activeReceiptsByOrder.set(oId, r);
+      if (rNo && sReg) activeReceiptsByCandidateReceipt.set(`${rNo}_${sReg}`, r);
       activeReceiptsById.set(r.id, r);
 
       const pDate = getPaymentDateObj(r);
@@ -3137,8 +3572,55 @@ export default function FeeOperations() {
     const seenReceiptIds = new Set();
     const matchedReceiptKeys = new Set();
 
+    // Comprehensive Helper to resolve student profile across studentLookup & userLookup
+    const resolveStudentMeta = (reg, name, sId, email, docId) => {
+      const kReg = (reg || "").trim().toLowerCase();
+      const kName = (name || "").trim().toLowerCase();
+      const cleanName = kName ? kName.replace(/[^a-z0-9]/g, "") : "";
+      const kId = (sId || "").trim().toLowerCase();
+      const kEmail = (email || "").trim().toLowerCase();
+      const kDoc = (docId || "").trim().toLowerCase();
+      const cleanUid = kDoc.startsWith("ese_") ? kDoc.replace("ese_", "") : "";
+
+      let found = (kReg ? studentLookup.get(kReg) : null) ||
+        (kEmail ? studentLookup.get(kEmail) : null) ||
+        (kId ? studentLookup.get(kId) : null) ||
+        (cleanUid ? studentLookup.get(cleanUid) : null) ||
+        (kName ? studentLookup.get(kName) : null) ||
+        (cleanName ? studentLookup.get(cleanName) : null);
+
+      if (found) return found;
+
+      const userMeta = (kReg ? userLookup.get(kReg) : null) ||
+        (kEmail ? userLookup.get(kEmail) : null) ||
+        (kId ? userLookup.get(kId) : null) ||
+        (cleanUid ? userLookup.get(cleanUid) : null) ||
+        (kDoc ? userLookup.get(kDoc) : null) ||
+        (kName ? userLookup.get(kName) : null) ||
+        (cleanName ? userLookup.get(cleanName) : null);
+
+      if (userMeta) {
+        if (userMeta.regNo) {
+          const sByReg = studentLookup.get(String(userMeta.regNo).trim().toLowerCase());
+          if (sByReg) return sByReg;
+        }
+        if (userMeta.displayName || userMeta.studentName || userMeta.name) {
+          const uName = (userMeta.displayName || userMeta.studentName || userMeta.name).toLowerCase();
+          const uClean = uName.replace(/[^a-z0-9]/g, "");
+          const sByName = studentLookup.get(uName) || (uClean ? studentLookup.get(uClean) : null);
+          if (sByName) return sByName;
+        }
+        return userMeta;
+      }
+      return null;
+    };
+
     // 2. Map all SUCCESS / verified payments from fee_payments (The single source of truth for all fee collections)
-    const list = payments.filter(p => isSuccessfulPayment(p)).map(p => {
+    const parentOrderIds = new Set(
+      payments.filter(p => isSuccessfulPayment(p) && p.parentOrderId).map(p => String(p.parentOrderId).trim().toLowerCase())
+    );
+
+    const list = payments.filter(p => isSuccessfulPayment(p) && !(p.parentOrderId && parentOrderIds.has(String(p.parentOrderId).trim().toLowerCase()))).map(p => {
       const rNoKey = (p.receiptNo || "").trim().toLowerCase();
       const oIdKey = (p.orderId || "").trim().toLowerCase();
 
@@ -3147,10 +3629,12 @@ export default function FeeOperations() {
       const amt = Number(p.chargedAmount || p.amount || 0);
       const compKey = `${(p.studentId || p.uid || p.studentName || "").trim().toLowerCase()}_${(p.feeHead || "").trim().toLowerCase()}_${amt}_${dateStr}`;
 
+      const candKey = (p.regNo || p.examNumber || p.rollNo || p.studentId || p.uid || "").trim().toLowerCase();
       const matchedReceipt =
-        (rNoKey ? activeReceiptsByNo.get(rNoKey) : null) ||
-        (oIdKey ? activeReceiptsByNo.get(oIdKey) : null) ||
+        (oIdKey ? activeReceiptsByOrder.get(oIdKey) : null) ||
         activeReceiptsById.get(p.id) ||
+        (p.orderId ? activeReceiptsById.get(`REC_${p.orderId}`) : null) ||
+        (rNoKey && candKey ? activeReceiptsByCandidateReceipt.get(`${rNoKey}_${candKey}`) : null) ||
         activeReceiptsByComp.get(compKey);
 
       if (matchedReceipt?.id) {
@@ -3161,14 +3645,31 @@ export default function FeeOperations() {
       if (p.receiptNo) matchedReceiptKeys.add(p.receiptNo.trim().toLowerCase());
       if (p.orderId) matchedReceiptKeys.add(p.orderId.trim().toLowerCase());
 
-      const sIdKey = (p.studentId || p.uid || matchedReceipt?.studentId || "").trim().toLowerCase();
-      const exKey = (p.regNo || p.examNumber || matchedReceipt?.regNo || matchedReceipt?.examNumber || p.rollNo || "").trim().toLowerCase();
-      const nameKey = (p.studentName || matchedReceipt?.studentName || "").trim().toLowerCase();
+      let regNo = (p.regNo || p.examNumber || matchedReceipt?.regNo || matchedReceipt?.examNumber || p.rollNo || "").trim();
+      if (!regNo || !/4207\d{8}/.test(regNo)) {
+        const scanFields = [p.appId, p.id, p.orderId, p.refNo, p.remarks, p.studentEmail, p.email, p.studentRegNo, p.regNo];
+        for (const f of scanFields) {
+          if (typeof f === "string" && f) {
+            const m = f.match(/(?:^|[^0-9])(4207\d{8})(?:[^0-9]|$)/);
+            if (m) {
+              regNo = m[1];
+              break;
+            }
+          }
+        }
+      }
 
-      const matchedStudent =
-        (sIdKey ? studentLookup.get(sIdKey) : null) ||
-        (exKey ? studentLookup.get(exKey) : null) ||
-        (nameKey ? studentLookup.get(nameKey) : null);
+      const sMeta = resolveStudentMeta(
+        regNo,
+        p.studentName || matchedReceipt?.studentName,
+        p.studentId || p.uid || matchedReceipt?.studentId,
+        p.studentEmail || p.email,
+        p.id
+      );
+
+      const resolvedReg = (regNo && regNo !== "—")
+        ? regNo
+        : (sMeta?.regNo || sMeta?.registerNumber || sMeta?.examNumber || p.rollNo || p.studentId || "—");
 
       const resolvedMode = getPaymentMode(p);
       const isGateway = resolvedMode === "gateway";
@@ -3184,26 +3685,88 @@ export default function FeeOperations() {
                 ? "Cheque"
                 : "Online";
 
-      const receiptNo = p.receiptNo || matchedReceipt?.receiptNo || p.orderId || p.id;
-      const orderId = p.orderId || matchedReceipt?.orderId || p.id;
-      const studentName = p.studentName || matchedReceipt?.studentName || matchedStudent?.displayName || matchedStudent?.studentName || matchedStudent?.name || "Student";
-      const resolvedReg = (p.regNo && p.regNo !== "—")
-        ? p.regNo
-        : (p.examNumber && p.examNumber !== "—")
-          ? p.examNumber
-          : (matchedReceipt?.regNo || matchedReceipt?.examNumber || matchedStudent?.regNo || matchedStudent?.registerNumber || matchedStudent?.examNumber || p.rollNo || p.studentId || "—");
-      const department = (p.department && p.department !== "—")
-        ? p.department
-        : (matchedReceipt?.department || matchedStudent?.department || "—");
-      const batch = deriveBatch(p.batch || matchedReceipt?.batch || matchedStudent?.batch, resolvedReg, department);
-      const semester = p.semester || p.sem || matchedReceipt?.semester || matchedReceipt?.sem || matchedStudent?.semester || matchedStudent?.currentSemester || "";
-      const feeHead = p.feeHead || matchedReceipt?.feeHead || "Fee";
       const paymentDate = p.verifiedAt || p.createdAt || p.paymentDate || matchedReceipt?.paymentDate;
       const ay = p.academicYear || matchedReceipt?.academicYear || getPaymentAcademicYear(p, semesterConfigs);
+
+      // Multi-head allocation & amount resolution:
+      let effectiveHead = p.feeHead;
+      let effectiveAmountBase = amt;
+      let effectiveSemester = p.semester;
+      let effectiveItemsBase = null;
+
+      const hasComposite = String(p.feeHead || "").includes(" + ");
+      const hasNoAllocs = !Array.isArray(p.allocations) || p.allocations.length === 0;
+      if (hasComposite && hasNoAllocs) {
+        const otherValidPayment = payments.find(other =>
+          other.id !== p.id &&
+          isSuccessfulPayment(other) &&
+          String(other.regNo || other.examNumber || other.studentId || other.uid || "").trim() === resolvedReg &&
+          Array.isArray(other.allocations) && other.allocations.length > 0
+        );
+        if (otherValidPayment) {
+          const coveredHeads = new Set((otherValidPayment.allocations || []).map(a => normHead(a.feeHead || a.head)));
+          const studentFees = (feeConfigs || []).filter(f => {
+            const isProg = isProgMatch(f.programme, p.programme);
+            const isDept = !f.department || f.department.toLowerCase() === "all" || isDeptMatchRegistry(f.department, getCanonicalDept(p.department));
+            const batchMatch = !f.batch || f.batch.toLowerCase() === "all" || isBatchMatch(f.batch, p.batch);
+            return isProg && isDept && batchMatch;
+          });
+          const uncoveredFees = studentFees.filter(f => !coveredHeads.has(normHead(f.head)));
+          if (uncoveredFees.length === 1) {
+            const targetFee = uncoveredFees[0];
+            effectiveHead = targetFee.head;
+            effectiveAmountBase = Number(targetFee.amount || 0);
+            effectiveSemester = targetFee.semester || p.semester || "All";
+            effectiveItemsBase = [{ head: targetFee.head, amount: effectiveAmountBase, semester: effectiveSemester, academicYear: ay }];
+          }
+        }
+      }
+
+      const allocTotal = !effectiveItemsBase && Array.isArray(p.allocations) && p.allocations.length > 0
+        ? p.allocations.reduce((sum, a) => sum + Number(a.allocatedAmount || a.amount || 0), 0)
+        : 0;
+
+      const receiptTotal = effectiveItemsBase ? effectiveAmountBase : Number(matchedReceipt?.amount || 0);
+      const effectiveAmount = effectiveItemsBase
+        ? effectiveAmountBase
+        : receiptTotal > 0
+          ? receiptTotal
+          : (allocTotal > 0 ? allocTotal : effectiveAmountBase);
+
+      const effectiveItems = effectiveItemsBase
+        ? effectiveItemsBase
+        : (Array.isArray(matchedReceipt?.items) && matchedReceipt.items.length > 0)
+          ? matchedReceipt.items
+          : (Array.isArray(p.allocations) && p.allocations.length > 0)
+            ? p.allocations.map(a => ({
+                head: a.feeHead || a.head,
+                amount: Number(a.allocatedAmount || a.amount || 0),
+                academicYear: a.academicYear || ay,
+                semester: a.semester || p.semester || "All"
+              }))
+            : (Array.isArray(p.items) && p.items.length > 0)
+              ? p.items
+              : [{ head: effectiveHead || "Fee", amount: effectiveAmount, academicYear: ay, semester: effectiveSemester || "All" }];
+
+      const combinedHead = effectiveItemsBase
+        ? effectiveHead
+        : effectiveItems.length > 1
+          ? effectiveItems.map(it => it.head).filter(Boolean).join(" + ")
+          : (effectiveHead || matchedReceipt?.feeHead || "Fee");
+
+      const rawReceiptNo = p.receiptNo || matchedReceipt?.receiptNo || p.orderId || p.id;
+      const receiptNo = normalizeStandardReceiptNo(rawReceiptNo, ay, paymentDate, resolvedReg);
+      const orderId = p.orderId || matchedReceipt?.orderId || p.id;
+      const studentName = p.studentName || matchedReceipt?.studentName || sMeta?.displayName || sMeta?.studentName || sMeta?.name || "Student";
+      const rawDept = (p.department && p.department !== "—" ? p.department : sMeta?.department) || matchedReceipt?.department || "—";
+      const department = displayDept(rawDept);
+      const batch = deriveBatch(p.batch || matchedReceipt?.batch || sMeta?.batch, resolvedReg, department);
+      const semester = p.semester || p.sem || matchedReceipt?.semester || matchedReceipt?.sem || sMeta?.semester || sMeta?.currentSemester || "";
 
       return {
         id: p.id,
         receiptNo,
+        rawReceiptNo,
         orderId,
         studentId: p.uid || p.studentId || matchedReceipt?.studentId,
         studentName,
@@ -3212,10 +3775,10 @@ export default function FeeOperations() {
         department,
         batch,
         semester,
-        feeHead,
+        feeHead: combinedHead,
         mode: displayMode,
         rawMode: resolvedMode,
-        amount: amt,
+        amount: effectiveAmount,
         status: matchedReceipt?.status || "active",
         paymentDate,
         academicYear: ay,
@@ -3226,7 +3789,20 @@ export default function FeeOperations() {
         accountName: "College Account #76980",
         accountShort: "#76980 College",
         isCoe: false,
-        rawRecord: { ...(p || {}), ...(matchedReceipt || {}) }
+        items: effectiveItems,
+        allocations: p.allocations || effectiveItems,
+        rawRecord: {
+          ...(p || {}),
+          ...(matchedReceipt || {}),
+          receiptNo,
+          amount: effectiveAmount,
+          chargedAmount: effectiveAmount,
+          feeHead: combinedHead,
+          items: effectiveItems,
+          allocations: p.allocations || effectiveItems,
+          regNo: resolvedReg,
+          examNumber: resolvedReg
+        }
       };
     });
 
@@ -3239,14 +3815,31 @@ export default function FeeOperations() {
       if (rNoKey && matchedReceiptKeys.has(rNoKey)) return;
       if (oIdKey && matchedReceiptKeys.has(oIdKey)) return;
 
-      const sIdKey = (r.studentId || r.uid || "").trim().toLowerCase();
-      const exKey = (r.regNo || r.examNumber || r.rollNo || "").trim().toLowerCase();
-      const nameKey = (r.studentName || "").trim().toLowerCase();
+      let regNo = (r.regNo || r.examNumber || r.rollNo || "").trim();
+      if (!regNo || !/4207\d{8}/.test(regNo)) {
+        const scanFields = [r.appId, r.id, r.orderId, r.refNo, r.remarks, r.studentEmail, r.email, r.studentRegNo, r.regNo];
+        for (const f of scanFields) {
+          if (typeof f === "string" && f) {
+            const m = f.match(/(?:^|[^0-9])(4207\d{8})(?:[^0-9]|$)/);
+            if (m) {
+              regNo = m[1];
+              break;
+            }
+          }
+        }
+      }
 
-      const matchedStudent =
-        (sIdKey ? studentLookup.get(sIdKey) : null) ||
-        (exKey ? studentLookup.get(exKey) : null) ||
-        (nameKey ? studentLookup.get(nameKey) : null);
+      const sMeta = resolveStudentMeta(
+        regNo,
+        r.studentName,
+        r.studentId || r.uid,
+        r.studentEmail || r.email,
+        r.id
+      );
+
+      const resolvedReg = (regNo && regNo !== "—")
+        ? regNo
+        : (sMeta?.regNo || sMeta?.registerNumber || sMeta?.examNumber || r.rollNo || r.studentId || "—");
 
       const resolvedMode = getPaymentMode(r);
       const isGateway = resolvedMode === "gateway";
@@ -3262,27 +3855,28 @@ export default function FeeOperations() {
                 ? "Cheque"
                 : "Online";
 
-      const receiptNo = r.receiptNo || r.orderId || r.id;
-      const orderId = r.orderId || r.receiptNo || r.id;
-      const studentName = r.studentName || matchedStudent?.displayName || matchedStudent?.studentName || matchedStudent?.name || "Student";
-      const resolvedReg = (r.regNo && r.regNo !== "—")
-        ? r.regNo
-        : (r.examNumber && r.examNumber !== "—")
-          ? r.examNumber
-          : (matchedStudent?.regNo || matchedStudent?.registerNumber || matchedStudent?.examNumber || r.rollNo || r.studentId || "—");
-      const department = (r.department && r.department !== "—")
-        ? r.department
-        : (matchedStudent?.department || "—");
-      const batch = deriveBatch(r.batch || matchedStudent?.batch, resolvedReg, department);
-      const semester = r.semester || r.sem || matchedStudent?.semester || matchedStudent?.currentSemester || "";
-      const feeHead = r.feeHead || r.items?.[0]?.head || "Fee";
       const paymentDate = r.paymentDate || r.createdAt;
       const ay = r.academicYear || getPaymentAcademicYear(r, semesterConfigs);
+      const rawReceiptNo = r.receiptNo || r.orderId || r.id;
+      const receiptNo = normalizeStandardReceiptNo(rawReceiptNo, ay, paymentDate, resolvedReg);
+      const orderId = r.orderId || r.receiptNo || r.id;
+      const studentName = r.studentName || sMeta?.displayName || sMeta?.studentName || sMeta?.name || "Student";
+      const rawDept = (r.department && r.department !== "—" ? r.department : sMeta?.department) || "—";
+      const department = displayDept(rawDept);
+      const batch = deriveBatch(r.batch || sMeta?.batch, resolvedReg, department);
+      const semester = r.semester || r.sem || sMeta?.semester || sMeta?.currentSemester || "";
       const amt = Number(r.amount) || 0;
+      const rItems = (Array.isArray(r.items) && r.items.length > 0)
+        ? r.items
+        : [{ head: r.feeHead || "Fee", amount: amt, academicYear: ay, semester: semester || "All" }];
+      const combinedHead = rItems.length > 1
+        ? rItems.map(it => it.head).filter(Boolean).join(" + ")
+        : (r.feeHead || "Fee");
 
       list.push({
         id: r.id,
         receiptNo,
+        rawReceiptNo,
         orderId,
         studentId: r.studentId || r.uid,
         studentName,
@@ -3291,11 +3885,11 @@ export default function FeeOperations() {
         department,
         batch,
         semester,
-        feeHead,
+        feeHead: combinedHead,
         mode: displayMode,
         rawMode: resolvedMode,
         amount: amt,
-        status: r.status || "active",
+        status: "active",
         paymentDate,
         academicYear: ay,
         isOnline: isGateway || resolvedMode === "online",
@@ -3305,7 +3899,9 @@ export default function FeeOperations() {
         accountName: "College Account #76980",
         accountShort: "#76980 College",
         isCoe: false,
-        rawRecord: r
+        items: rItems,
+        allocations: r.allocations || rItems,
+        rawRecord: { ...(r || {}), receiptNo, feeHead: combinedHead, amount: amt, items: rItems, regNo: resolvedReg, examNumber: resolvedReg }
       });
     });
 
@@ -3313,40 +3909,6 @@ export default function FeeOperations() {
     // ESE registration Fee, Photocopy Fee, Revaluation Fee, Review Fee
     const coeItems = [];
     const seenCoeKeys = new Set();
-
-    // Helper to resolve student profile from studentLookup & userLookup
-    const resolveStudentMeta = (reg, name, sId, email, docId) => {
-      const kReg = (reg || "").trim().toLowerCase();
-      const kName = (name || "").trim().toLowerCase();
-      const kId = (sId || "").trim().toLowerCase();
-      const kEmail = (email || "").trim().toLowerCase();
-      const kDoc = (docId || "").trim().toLowerCase();
-      const cleanUid = kDoc.startsWith("ese_") ? kDoc.replace("ese_", "") : "";
-
-      let found = (kReg ? studentLookup.get(kReg) : null) ||
-        (kEmail ? studentLookup.get(kEmail) : null) ||
-        (kId ? studentLookup.get(kId) : null) ||
-        (cleanUid ? studentLookup.get(cleanUid) : null) ||
-        (kName ? studentLookup.get(kName) : null);
-
-      if (found) return found;
-
-      const userMeta = (kReg ? userLookup.get(kReg) : null) ||
-        (kEmail ? userLookup.get(kEmail) : null) ||
-        (kId ? userLookup.get(kId) : null) ||
-        (cleanUid ? userLookup.get(cleanUid) : null) ||
-        (kDoc ? userLookup.get(kDoc) : null) ||
-        (kName ? userLookup.get(kName) : null);
-
-      if (userMeta) {
-        if (userMeta.regNo) {
-          const sByReg = studentLookup.get(String(userMeta.regNo).trim().toLowerCase());
-          if (sByReg) return sByReg;
-        }
-        return userMeta;
-      }
-      return null;
-    };
 
     // A. ese_fee_registrations & ese_fee_payments ("ESE registration Fee")
     const combinedEseList = [...eseRegistrations, ...eseFeePayments];
@@ -3860,13 +4422,13 @@ export default function FeeOperations() {
     fullList.forEach(item => {
       const rNo = (item.receiptNo || "").trim().toLowerCase();
       const oId = (item.orderId || item.refNo || "").trim().toLowerCase();
-      const regNo = (item.examNumber || item.studentId || item.studentName || "").trim().toLowerCase();
+      const regNo = (item.examNumber || item.regNo || item.studentId || item.studentName || "").trim().toLowerCase();
       const feeHead = (item.feeHead || "").trim().toLowerCase();
       const amt = Number(item.amount) || 0;
 
       const keysToCheck = [];
-      if (rNo) keysToCheck.push(`r_${rNo}`);
       if (oId) keysToCheck.push(`o_${oId}`);
+      if (rNo && regNo) keysToCheck.push(`r_${rNo}_${regNo}`);
       if (regNo && feeHead && amt > 0) {
         keysToCheck.push(`comp_${regNo}_${feeHead}_${amt}`);
       }
@@ -3874,14 +4436,19 @@ export default function FeeOperations() {
       const duplicate = keysToCheck.some(k => seenReceiptKeys.has(k));
       if (duplicate) {
         // Enrich existing item if this one has better department or academic year
-        const existing = uniqueReceipts.find(u =>
-          (rNo && (u.receiptNo || "").trim().toLowerCase() === rNo) ||
-          (oId && (u.orderId || u.refNo || "").trim().toLowerCase() === oId) ||
-          (regNo && feeHead && amt > 0 &&
-           (u.examNumber || u.studentId || u.studentName || "").trim().toLowerCase() === regNo &&
-           (u.feeHead || "").trim().toLowerCase() === feeHead &&
-           Number(u.amount) === amt)
-        );
+        const existing = uniqueReceipts.find(u => {
+          const uReg = (u.examNumber || u.regNo || u.studentId || u.studentName || "").trim().toLowerCase();
+          const isSameStudent = !regNo || !uReg || uReg === regNo;
+          if (!isSameStudent) return false;
+          return (
+            (oId && (u.orderId || u.refNo || "").trim().toLowerCase() === oId) ||
+            (rNo && (u.receiptNo || "").trim().toLowerCase() === rNo) ||
+            (regNo && feeHead && amt > 0 &&
+             uReg === regNo &&
+             (u.feeHead || "").trim().toLowerCase() === feeHead &&
+             Number(u.amount) === amt)
+          );
+        });
         if (existing) {
           if ((!existing.department || existing.department === "—" || existing.department.includes("_")) && item.department && item.department !== "—") {
             existing.department = displayDept(item.department);
@@ -3917,7 +4484,16 @@ export default function FeeOperations() {
 
     // Check if query is an exact match for ANY candidate's roll / reg / exam / application number
     const hasExactCandidate = list.some(r => {
-      const ids = [r.examNumber, r.regNo, r.rollNo, r.rawRecord?.applicationNo];
+      const ids = [
+        r.examNumber,
+        r.regNo,
+        r.rollNo,
+        r.studentId,
+        r.rawRecord?.regNo,
+        r.rawRecord?.examNumber,
+        r.rawRecord?.studentRegNo,
+        r.rawRecord?.applicationNo
+      ];
       return ids.some(id => id && String(id).trim().toLowerCase() === q);
     });
 
@@ -3925,7 +4501,16 @@ export default function FeeOperations() {
       // The user entered an exact candidate identifier (e.g., "2026052" or "420724106036"):
       // Strictly isolate to that specific candidate's fee records only.
       return list.filter(r => {
-        const ids = [r.examNumber, r.regNo, r.rollNo, r.rawRecord?.applicationNo];
+        const ids = [
+          r.examNumber,
+          r.regNo,
+          r.rollNo,
+          r.studentId,
+          r.rawRecord?.regNo,
+          r.rawRecord?.examNumber,
+          r.rawRecord?.studentRegNo,
+          r.rawRecord?.applicationNo
+        ];
         return ids.some(id => id && String(id).trim().toLowerCase() === q);
       });
     }
@@ -5706,7 +6291,7 @@ export default function FeeOperations() {
                                           className="font-mono font-bold text-[#120c7a] hover:underline text-left block"
                                           title="View / Print Receipt"
                                         >
-                                          {p.receiptNo || p.orderId || "—"}
+                                          {normalizeStandardReceiptNo(p.receiptNo || p.orderId, p.academicYear, p.paymentDate || p.createdAt) || "—"}
                                         </button>
                                         {p.gatewayResponse?.rrn && (
                                           <span className="text-[10px] text-zinc-400 font-mono">RRN: {p.gatewayResponse.rrn}</span>
@@ -6811,56 +7396,85 @@ export default function FeeOperations() {
                       <HelpCircle size={15} /> How Opening Dues Template Works:
                     </p>
                     <ul className="list-disc pl-5 space-y-1 text-amber-800">
-                      <li>Choose a senior student batch (e.g. <b>2024-2028</b> or <b>2025-2029</b>) and previous academic year.</li>
+                      <li>Choose <b>Programme</b> (UG / PG) ➔ <b>Batch</b> (e.g. 2024-2028) ➔ <b>Academic Year</b> (e.g. 2024-2025).</li>
                       <li>The template automatically includes columns for all <b>{activeHeadsList.length} configured Fee Heads</b>: <i>{activeHeadsList.slice(0, 5).join(", ")}{activeHeadsList.length > 5 ? `, and ${activeHeadsList.length - 5} more` : ""}</i>.</li>
                       <li>All registered students in this batch will be pre-filled so you only need to enter the due amounts for students with arrears.</li>
                       <li>Leave <b>0</b> or blank for students who have already settled past dues.</li>
                     </ul>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-zinc-50 border border-zinc-200 p-5 rounded-2xl">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 bg-zinc-50 border border-zinc-200 p-5 rounded-2xl">
+                    {/* 1. Programme Selection */}
                     <div>
                       <label className="text-[10px] font-bold text-zinc-500 uppercase block mb-1.5">
-                        Select Student Batch
+                        1. Select Programme
+                      </label>
+                      <select
+                        value={openingDuesProg}
+                        onChange={e => {
+                          const p = e.target.value;
+                          setOpeningDuesProg(p);
+                          setSelectedBatchForTemplate("");
+                          setSelectedYearForTemplate("");
+                        }}
+                        className="w-full px-3 py-2.5 bg-white border border-zinc-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-600"
+                      >
+                        {netkampusAvailableProgs.map(p => (
+                          <option key={p} value={p}>{p}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* 2. Batch Selection (Cascades from Programme) */}
+                    <div>
+                      <label className="text-[10px] font-bold text-zinc-500 uppercase block mb-1.5">
+                        2. Select Student Batch
                       </label>
                       <select
                         value={selectedBatchForTemplate}
                         onChange={e => setSelectedBatchForTemplate(e.target.value)}
-                        className="w-full px-3.5 py-2.5 bg-white border border-zinc-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-amber-200"
+                        className="w-full px-3 py-2.5 bg-white border border-zinc-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-600"
                       >
-                        {allAvailableBatches.map(b => (
-                          <option key={b} value={b}>Batch: {b}</option>
+                        {openingDuesBatches.map(b => (
+                          <option key={b} value={b}>{b}</option>
                         ))}
                       </select>
-                      <p className="text-[10px] text-zinc-400 mt-1">
-                        {new Set(students.filter(s => isBatchMatch(s.batch || s._profile_data?.batch, selectedBatchForTemplate)).map(s => (s.regNo || s.examNumber || s.rollNo || "").trim().toUpperCase()).filter(Boolean)).size} unique students enrolled in this batch
-                      </p>
                     </div>
 
+                    {/* 3. Academic Year Selection (Cascades from Batch) */}
                     <div>
                       <label className="text-[10px] font-bold text-zinc-500 uppercase block mb-1.5">
-                        Previous Academic Year
+                        3. Select Academic Year
                       </label>
-                      <input
-                        type="text"
+                      <select
                         value={selectedYearForTemplate}
                         onChange={e => setSelectedYearForTemplate(e.target.value)}
-                        placeholder="e.g. 2024-2025"
-                        className="w-full px-3.5 py-2.5 bg-white border border-zinc-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-amber-200"
-                      />
-                      <p className="text-[10px] text-zinc-400 mt-1">
-                        Academic year for which pending arrears are being imported
-                      </p>
+                        className="w-full px-3 py-2.5 bg-white border border-zinc-200 rounded-xl text-xs font-bold outline-none focus:ring-2 focus:ring-amber-200 focus:border-amber-600"
+                      >
+                        {openingDuesYears.map(y => (
+                          <option key={y} value={y}>{y}</option>
+                        ))}
+                      </select>
                     </div>
                   </div>
 
-                  <div className="flex justify-end pt-2">
+                  {/* Summary & Download Button */}
+                  <div className="bg-white border border-zinc-200 rounded-2xl p-5 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm">
+                    <div className="space-y-1">
+                      <p className="text-xs font-bold text-zinc-700">
+                        Targeting: <span className="text-amber-700 font-black">{openingDuesProg} • Batch {selectedBatchForTemplate || "—"} • {selectedYearForTemplate || "—"}</span>
+                      </p>
+                      <p className="text-[11px] text-zinc-400">
+                        {new Set(students.filter(s => isBatchMatch(s.batch || s._profile_data?.batch, selectedBatchForTemplate)).map(s => (s.regNo || s.examNumber || s.rollNo || "").trim().toUpperCase()).filter(Boolean)).size} registered students ready to be pre-filled with {activeHeadsList.length} fee heads.
+                      </p>
+                    </div>
+
                     <button
                       type="button"
                       onClick={handleDownloadOpeningDuesTemplate}
-                      className="px-6 py-3 bg-[#120c7a] hover:bg-blue-900 text-white text-xs font-bold rounded-xl shadow-lg shadow-[#120c7a]/20 flex items-center gap-2 cursor-pointer transition-all"
+                      className="w-full sm:w-auto px-5 py-2.5 bg-[#120c7a] hover:bg-blue-900 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-md shadow-[#120c7a]/20 transition-all cursor-pointer"
                     >
-                      <Download size={16} />
+                      <Download size={15} />
                       Download Excel Template for Batch {selectedBatchForTemplate}
                     </button>
                   </div>

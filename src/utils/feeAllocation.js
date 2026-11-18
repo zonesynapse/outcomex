@@ -79,8 +79,42 @@ export function computePaidByConfig({ configs = [], portalPayments = [], appPaym
     remaining.set(c.id, Math.max(0, (Number(c.amount) || 0) - (paid.get(c.id) || 0)));
   });
 
+  // Expand multi-allocation payments into atomic head-wise allocation entries
+  const parentOrderIds = new Set(
+    (portalPayments || []).filter(p => p.parentOrderId).map(p => String(p.parentOrderId).trim().toLowerCase())
+  );
+
+  const expandedPortalPayments = [];
+  (portalPayments || []).forEach((p) => {
+    // Skip child sub-order if parent order is present to prevent double-counting
+    if (p.parentOrderId && parentOrderIds.has(String(p.parentOrderId).trim().toLowerCase())) {
+      return;
+    }
+
+    const allocs = Array.isArray(p.allocations) && p.allocations.length > 0
+      ? p.allocations
+      : Array.isArray(p.items) && p.items.length > 1
+        ? p.items
+        : null;
+
+    if (allocs && allocs.length > 1) {
+      allocs.forEach((a) => {
+        expandedPortalPayments.push({
+          ...p,
+          feeHead: a.feeHead || a.head,
+          amount: Number(a.allocatedAmount || a.amount || 0),
+          chargedAmount: Number(a.allocatedAmount || a.amount || 0),
+          academicYear: a.academicYear || p.academicYear,
+          semester: a.semester || p.semester
+        });
+      });
+    } else {
+      expandedPortalPayments.push(p);
+    }
+  });
+
   // Oldest-first chronological order for deterministic allocation.
-  const chrono = [...(portalPayments || [])].sort((a, b) => payTime(a) - payTime(b));
+  const chrono = [...expandedPortalPayments].sort((a, b) => payTime(a) - payTime(b));
   const untagged = [];
 
   // 2. Year-tagged payments → that exact year's config (semester-narrowed when possible).
@@ -415,6 +449,77 @@ export const filterActiveStudyingStudents = (students = [], semesterConfigs = []
   const activeConfigs = getActiveSemesterConfigs(semesterConfigs);
   if (!activeConfigs || activeConfigs.length === 0) return students;
   return (students || []).filter(s => isStudentInActiveConfigs(s, activeConfigs));
+};
+
+/**
+ * Formats any receipt number into the official standard: FEE<academic year>-MMDD-XXXX
+ * Preserves COE / Application receipts and converts legacy receipt strings deterministically.
+ */
+export const normalizeStandardReceiptNo = (rawNo, academicYear, paymentDate, studentReg = "") => {
+  if (!rawNo && !paymentDate) return "";
+  const str = String(rawNo || "").trim();
+
+  // If it's a demand notice
+  if (str.startsWith("DEM-")) return str;
+
+  // Preserve Exam Cell COE receipts (e.g. REC-ESE-, REC-PHOTO-, REC-REVAL-, REC-REVIEW-, REC-EXAM-, ESE-)
+  if (/^(?:REC-)?(?:ESE|PHOTO|REVAL|REVIEW|EXAM)-/i.test(str)) {
+    return str.startsWith("REC-") ? str : `REC-${str}`;
+  }
+
+  // Preserve Application fee receipts (e.g. REC-APP- or APP )
+  if (/^(?:REC-APP-|APP\s+)/i.test(str)) {
+    return str;
+  }
+
+  // Preserve Consolidated statement identifier
+  if (/^REC-CONS-/i.test(str)) {
+    return str;
+  }
+
+  // Resolve Date
+  const d = paymentDate instanceof Date ? paymentDate : (paymentDate?.toDate ? paymentDate.toDate() : new Date(paymentDate || Date.now()));
+  const validDate = isNaN(d.getTime()) ? new Date() : d;
+
+  // Resolve Academic Year
+  let ay = String(academicYear || "").trim();
+  if (!ay) {
+    const m = validDate.getMonth() + 1;
+    const y = validDate.getFullYear();
+    ay = m >= 6 ? `${y}-${y + 1}` : `${y - 1}-${y}`;
+  }
+  const cleanAy = ay.replace(/[^A-Za-z0-9-]/g, "");
+  const mm = String(validDate.getMonth() + 1).padStart(2, "0");
+  const dd = String(validDate.getDate()).padStart(2, "0");
+  const mmdd = `${mm}${dd}`;
+
+  // If already in FEE<AY>-MMDD-XXXX format (e.g. FEE2026-2027-1118-0001 or FEE2026-1118-0001)
+  const exactMatch = str.match(/^FEE([0-9]{4}(?:-[0-9]{4})?)-([0-9]{4})-([0-9]{4})$/i);
+  if (exactMatch) {
+    return `FEE${exactMatch[1]}-${exactMatch[2]}-${exactMatch[3]}`;
+  }
+
+  // If starts with REC-FEE<AY>-MMDD-XXXX, strip the accidental REC- prefix
+  const recFeeMatch = str.match(/^REC-FEE([0-9]{4}(?:-[0-9]{4})?)-([0-9]{4})-([0-9]{4})$/i);
+  if (recFeeMatch) {
+    return `FEE${recFeeMatch[1]}-${recFeeMatch[2]}-${recFeeMatch[3]}`;
+  }
+
+  // Legacy format conversion (e.g. FEE2026-56564, REC-FEE2026-56564, FEEMWD8B6HL8F997E13, 76980-FEEMW...)
+  let seqStr = "0001";
+  const trailingDigits = str.match(/(\d{4,5})(?:-\d+)?$/);
+  if (trailingDigits) {
+    seqStr = trailingDigits[1].slice(-4);
+  } else {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = ((hash << 5) - hash) + str.charCodeAt(i);
+      hash |= 0;
+    }
+    seqStr = String(Math.abs(hash) % 10000).padStart(4, "0");
+  }
+
+  return `FEE${cleanAy}-${mmdd}-${seqStr}`;
 };
 
 

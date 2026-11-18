@@ -1,6 +1,7 @@
 import React from "react";
 import { X, Printer, CheckCircle2 } from "lucide-react";
 import { formatProgDisplay, formatBatchDisplay, formatDepartmentDisplay } from "../lib/utils";
+import { normalizeStandardReceiptNo } from "../utils/feeAllocation";
 
 const cleanDeptName = (dept) => {
   if (!dept) return "";
@@ -148,23 +149,6 @@ export default function OfficialFeeReceiptModal({
     ? String(p.orderId || p.rawRecord?.orderId).replace(/^7698[03]-/, "").replace(/-\d+$/, "")
     : "";
 
-  const formatAsReceiptNo = (val) => {
-    if (!val) return "";
-    const s = String(val).trim();
-    if (s.startsWith("REC-")) return s;
-    return `REC-${s}`;
-  };
-
-  const resolvedReceiptNo = isDueDemand
-    ? (p.demandNo || `DEM-${resolvedReg}-${Date.now().toString(36).slice(-4).toUpperCase()}`)
-    : p.receiptNo
-      ? (String(p.receiptNo).startsWith("REC-") ? String(p.receiptNo) : `REC-${p.receiptNo}`)
-      : p.rawRecord?.receiptNo
-        ? formatAsReceiptNo(p.rawRecord.receiptNo)
-        : cleanOrderId
-          ? formatAsReceiptNo(cleanOrderId)
-          : `REC-FEE-${resolvedReg}-${Date.now().toString(36).slice(-4).toUpperCase()}`;
-
   // Date and Time resolution
   const effectiveDate = (() => {
     const raw = p.paymentDate || p.createdAt || p.verifiedAt || p.paidDate || p.demandDate;
@@ -173,6 +157,15 @@ export default function OfficialFeeReceiptModal({
     const d = new Date(raw);
     return isNaN(d.getTime()) ? new Date() : d;
   })();
+
+  const resolvedReceiptNo = isDueDemand
+    ? (p.demandNo || `DEM-${resolvedReg}-${Date.now().toString(36).slice(-4).toUpperCase()}`)
+    : normalizeStandardReceiptNo(
+        p.receiptNo || p.rawRecord?.receiptNo || cleanOrderId,
+        p.academicYear || p.rawRecord?.academicYear || displayAY,
+        effectiveDate,
+        resolvedReg
+      );
 
   const dateStr = effectiveDate.toLocaleDateString("en-IN", {
     day: "2-digit",
@@ -187,22 +180,25 @@ export default function OfficialFeeReceiptModal({
 
   // Items resolution
   const receiptItems = (() => {
-    if (Array.isArray(p.items) && p.items.length > 0) {
-      return p.items.map((it) => ({
+    const rawItems = (Array.isArray(p.items) && p.items.length > 0)
+      ? p.items
+      : (Array.isArray(p.rawRecord?.items) && p.rawRecord.items.length > 0)
+        ? p.rawRecord.items
+        : (Array.isArray(p.allocations) && p.allocations.length > 0)
+          ? p.allocations
+          : (Array.isArray(p.rawRecord?.allocations) && p.rawRecord.allocations.length > 0)
+            ? p.rawRecord.allocations
+            : null;
+
+    if (rawItems && rawItems.length > 0) {
+      return rawItems.map((it) => ({
         head: it.head || it.feeHead || "Fee Head",
         amount: Number(it.amount || it.allocatedAmount || it.due || 0),
         academicYear: it.academicYear || displayAY,
-        semester: it.semester || p.semester || "",
+        semester: it.semester || p.semester || "All",
       }));
     }
-    if (Array.isArray(p.allocations) && p.allocations.length > 0) {
-      return p.allocations.map((it) => ({
-        head: it.head || it.feeHead || "Fee Head",
-        amount: Number(it.allocatedAmount || it.amount || 0),
-        academicYear: it.academicYear || displayAY,
-        semester: it.semester || p.semester || "",
-      }));
-    }
+
     if (p.feeHead && p.feeHead.includes(" + ")) {
       const parts = p.feeHead.split(" + ").map((h) => h.trim());
       const displayTotal = Number(p.chargedAmount || p.amount || 0);
@@ -210,7 +206,7 @@ export default function OfficialFeeReceiptModal({
         head: h,
         amount: Math.round(displayTotal / parts.length),
         academicYear: displayAY,
-        semester: p.semester || "",
+        semester: p.semester || "All",
       }));
     }
     return [
@@ -218,7 +214,7 @@ export default function OfficialFeeReceiptModal({
         head: p.feeHead || "Semester Fee",
         amount: Number(p.chargedAmount || p.amount || p.totalDue || 0),
         academicYear: displayAY,
-        semester: p.semester || "",
+        semester: p.semester || "All",
       },
     ];
   })();

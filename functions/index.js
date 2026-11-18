@@ -141,6 +141,69 @@ function generateOrderId() {
   return `FEE${ts}${rand}`;
 }
 
+async function generateUniqueFeeReceiptNo(academicYear, paymentDate = new Date()) {
+  const d = paymentDate instanceof Date ? paymentDate : (paymentDate && paymentDate.toDate ? paymentDate.toDate() : new Date(paymentDate || Date.now()));
+  const validDate = isNaN(d.getTime()) ? new Date() : d;
+
+  let ay = String(academicYear || "").trim();
+  if (!ay) {
+    const m = validDate.getMonth() + 1;
+    const y = validDate.getFullYear();
+    ay = m >= 6 ? `${y}-${y + 1}` : `${y - 1}-${y}`;
+  }
+  const cleanAy = ay.replace(/[^A-Za-z0-9-]/g, "");
+  const mm = String(validDate.getMonth() + 1).padStart(2, "0");
+  const dd = String(validDate.getDate()).padStart(2, "0");
+  const mmdd = `${mm}${dd}`;
+
+  const counterKey = `fee_receipt_${cleanAy}_${mmdd}`;
+  const counterRef = db.collection("system_counters").doc(counterKey);
+
+  let seq = 1;
+  try {
+    seq = await db.runTransaction(async (transaction) => {
+      const docSnap = await transaction.get(counterRef);
+      let nextSeq = 1;
+      if (docSnap.exists) {
+        nextSeq = (docSnap.data().lastSeq || 0) + 1;
+      }
+      transaction.set(counterRef, {
+        lastSeq: nextSeq,
+        ay: cleanAy,
+        date: mmdd,
+        updatedAt: Timestamp.now(),
+      }, { merge: true });
+      return nextSeq;
+    });
+  } catch (err) {
+    console.error("Counter transaction error, using fallback count:", err);
+    const existingCount = await db.collection("fee_receipts")
+      .where("receiptNo", ">=", `FEE${cleanAy}-${mmdd}-`)
+      .where("receiptNo", "<=", `FEE${cleanAy}-${mmdd}-\uf8ff`)
+      .get()
+      .then(s => s.size)
+      .catch(() => 0);
+    seq = existingCount + 1;
+  }
+
+  let candidateNo = `FEE${cleanAy}-${mmdd}-${String(seq).padStart(4, "0")}`;
+  let attempts = 0;
+  while (attempts < 50) {
+    const [recSnap, paySnap] = await Promise.all([
+      db.collection("fee_receipts").where("receiptNo", "==", candidateNo).limit(1).get().catch(() => ({ empty: true })),
+      db.collection("fee_payments").where("receiptNo", "==", candidateNo).limit(1).get().catch(() => ({ empty: true })),
+    ]);
+    if (recSnap.empty && paySnap.empty) {
+      break;
+    }
+    seq++;
+    candidateNo = `FEE${cleanAy}-${mmdd}-${String(seq).padStart(4, "0")}`;
+    attempts++;
+  }
+
+  return candidateNo;
+}
+
 exports.createPaymentSession = onCall(
   {
     cors: true,
@@ -513,7 +576,17 @@ async function fulfillFeePaymentSuccess(orderId, gatewayData, options = {}) {
   if (paymentRecord.status === "SUCCESS" && existingReceiptNo) {
     const existingRecSnap = await db.collection("fee_receipts").where("receiptNo", "==", existingReceiptNo).limit(1).get();
     if (!existingRecSnap.empty) {
-      return { success: true, alreadyProcessed: true, receiptNo: existingReceiptNo, orderId };
+      const existRec = existingRecSnap.docs[0].data();
+      const pReg = String(paymentRecord.regNo || paymentRecord.examNumber || "").trim().toLowerCase();
+      const rReg = String(existRec.regNo || existRec.examNumber || "").trim().toLowerCase();
+      const pUid = String(paymentRecord.uid || paymentRecord.studentId || "").trim().toLowerCase();
+      const rUid = String(existRec.uid || existRec.studentId || "").trim().toLowerCase();
+      const isSameStudent = (pReg && rReg && pReg === rReg) || (pUid && rUid && pUid === rUid) || (!pReg && !rReg);
+      if (isSameStudent || existRec.orderId === orderId || existRec.refNo === orderId) {
+        return { success: true, alreadyProcessed: true, receiptNo: existingReceiptNo, orderId };
+      }
+      // If it belonged to a different student, reset existingReceiptNo so a genuine unique receipt is generated
+      existingReceiptNo = "";
     }
   }
 
@@ -584,7 +657,10 @@ async function fulfillFeePaymentSuccess(orderId, gatewayData, options = {}) {
   }
   if (isStaffName(studentName)) studentName = "Student";
 
-  const receiptNo = existingReceiptNo || `FEE${new Date().getFullYear()}-${String(Date.now()).slice(-5)}`;
+  let receiptNo = existingReceiptNo;
+  if (!receiptNo) {
+    receiptNo = await generateUniqueFeeReceiptNo(paymentRecord.academicYear, paymentRecord.paymentDate);
+  }
 
   const updateData = {
     status: "SUCCESS",
@@ -644,7 +720,17 @@ async function fulfillFeePaymentSuccess(orderId, gatewayData, options = {}) {
     existingReceiptSnap = await db.collection("fee_receipts").where("orderId", "==", orderId).limit(1).get();
   }
   if (existingReceiptSnap.empty && existingReceiptNo) {
-    existingReceiptSnap = await db.collection("fee_receipts").where("receiptNo", "==", existingReceiptNo).limit(1).get();
+    const candSnap = await db.collection("fee_receipts").where("receiptNo", "==", existingReceiptNo).limit(1).get();
+    if (!candSnap.empty) {
+      const cData = candSnap.docs[0].data();
+      const pReg = String(paymentRecord.regNo || paymentRecord.examNumber || "").trim().toLowerCase();
+      const cReg = String(cData.regNo || cData.examNumber || "").trim().toLowerCase();
+      const pUid = String(paymentRecord.uid || paymentRecord.studentId || "").trim().toLowerCase();
+      const cUid = String(cData.uid || cData.studentId || "").trim().toLowerCase();
+      if ((pReg && cReg && pReg === cReg) || (pUid && cUid && pUid === cUid) || (!cReg && !pReg) || cData.orderId === orderId || cData.refNo === orderId) {
+        existingReceiptSnap = candSnap;
+      }
+    }
   }
 
   if (existingReceiptSnap.empty) {
